@@ -20,16 +20,19 @@ dev:
 shell: dev-image
 	$(RUN) bash
 
-## The targets below get their recipes in later tasks.
+## test: Go tests, then web tests
 test: setup
 	$(RUN) sh -c 'go test ./... && go test -tags dev ./... && pnpm -C web test'
 
+## lint: golangci-lint, Biome (warnings fail) and the TypeScript typecheck
 lint: setup
 	$(RUN) sh -c 'golangci-lint run && pnpm -C web lint && pnpm -C web typecheck'
 
+## fmt: format Go and web sources
 fmt: setup
 	$(RUN) sh -c 'golangci-lint fmt && pnpm -C web format'
 
+## The targets below get their recipes in later tasks.
 typegen: dev-image
 	@echo "typegen: added in a later task"
 
