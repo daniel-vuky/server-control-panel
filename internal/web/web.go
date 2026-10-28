@@ -25,21 +25,27 @@ func Handler() http.Handler {
 	return newHandler(sub)
 }
 
-// newHandler serves files from fsys. Paths that name no file fall back to
-// index.html so client-side routes survive a reload, except paths whose last
-// segment has an extension: those are asset requests, and a missing asset must
-// be a 404 rather than HTML.
+// newHandler serves files from fsys. Asset requests are paths under /assets/
+// and single top-level segments with a dot (such as /favicon.png): a missing
+// asset is a 404 rather than HTML. Every other path that names no file falls
+// back to index.html so client-side routes survive a reload, including routes
+// whose id has a dot (such as /projects/example.com).
 func newHandler(fsys fs.FS) http.Handler {
 	files := http.FileServerFS(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		clean := path.Clean("/" + r.URL.Path)
+		name := strings.TrimPrefix(clean, "/")
 
 		if name != "" && name != "index.html" {
 			if info, err := fs.Stat(fsys, name); err == nil && !info.IsDir() {
+				if strings.HasPrefix(clean, assetsPrefix) {
+					// Vite hashes asset file names, so they never change.
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				files.ServeHTTP(w, r)
 				return
 			}
-			if strings.Contains(path.Base(name), ".") {
+			if isAssetPath(clean) {
 				http.NotFound(w, r)
 				return
 			}
@@ -47,6 +53,18 @@ func newHandler(fsys fs.FS) http.Handler {
 
 		serveIndex(w, fsys)
 	})
+}
+
+const assetsPrefix = "/assets/"
+
+// isAssetPath reports whether the cleaned path is an asset request: under
+// /assets/, or a single top-level segment containing a dot.
+func isAssetPath(clean string) bool {
+	if strings.HasPrefix(clean, assetsPrefix) {
+		return true
+	}
+	segment := strings.TrimPrefix(clean, "/")
+	return !strings.Contains(segment, "/") && strings.Contains(segment, ".")
 }
 
 func serveIndex(w http.ResponseWriter, fsys fs.FS) {

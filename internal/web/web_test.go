@@ -30,12 +30,24 @@ func TestServesExistingAsset(t *testing.T) {
 	if got := rec.Body.String(); got != "console.log('app')" {
 		t.Errorf("body = %q, want the asset", got)
 	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Errorf("Cache-Control = %q, want a long-lived immutable policy", cc)
+	}
+}
+
+func TestHeadRouteFallsBackToIndex(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newHandler(testFS()).ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/backups", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
 }
 
 func TestFallsBackToIndexForRoutes(t *testing.T) {
 	h := newHandler(testFS())
 
-	for _, path := range []string{"/", "/backups", "/projects/shop-api"} {
+	for _, path := range []string{"/", "/backups", "/projects/shop-api", "/projects/example.com", "/../index.html", "/assets/../../x"} {
 		t.Run(path, func(t *testing.T) {
 			rec := get(h, path)
 
@@ -55,7 +67,7 @@ func TestFallsBackToIndexForRoutes(t *testing.T) {
 func TestMissingAssetIs404(t *testing.T) {
 	h := newHandler(testFS())
 
-	for _, path := range []string{"/assets/missing.js", "/favicon.png"} {
+	for _, path := range []string{"/assets/missing.js", "/favicon.png", "/assets/../../x.js"} {
 		t.Run(path, func(t *testing.T) {
 			if rec := get(h, path); rec.Code != http.StatusNotFound {
 				t.Errorf("status = %d, want 404", rec.Code)
