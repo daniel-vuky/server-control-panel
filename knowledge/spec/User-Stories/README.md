@@ -6,7 +6,9 @@ source: "Server Control Panel – Product Spec & E2E Flow"
 ---
 # Server Control Panel — User Stories
 
-65 user stories in 8 epics and 26 features, covering the full v1 scope of the product spec: sections 1–7 and flows A–F. Each story lives in its epic's folder; IDs follow `E<epic>-F<feature>-US<story>`, with features numbered across the whole backlog.
+64 user stories in 8 epics and 26 features, covering the full v1 scope of the product spec: sections 1–7 and flows A–F. Each story lives in its epic's folder; IDs follow `E<epic>-F<feature>-US<story>`, with features numbered across the whole backlog.
+
+v1 supports docker compose projects only. The architecture decisions behind these stories are recorded in [docs/decisions/](../../../docs/decisions/).
 
 ## Personas
 
@@ -20,15 +22,15 @@ v1 has no fine-grained permissions (spec §1, out of scope), so both personas ca
 | Flow | Stories |
 |---|---|
 | A — Sign in | E1-F01-US01, E1-F01-US02 |
-| B — Add workspace and scan | E2-F04-US01, E2-F04-US02, E2-F05-US01, E2-F05-US02, E2-F05-US03, E2-F06-US01, E2-F06-US02 |
+| B — Add workspace and scan | E2-F04-US01, E2-F04-US02, E2-F05-US01, E2-F05-US02, E2-F06-US01, E2-F06-US02 |
 | C — Status and resources | E3-F09-US01, E3-F11-US01, E3-F11-US02, E3-F11-US04, E6-F19-US01 |
 | D — Start / Stop / Restart | E4-F12-US01 – US05, E1-F03-US01 |
 | E — Manual backup to Google Drive | E5-F15-US01 – US03 |
 | F — Connect Drive and schedule backups | E5-F14-US01, E5-F14-US02, E5-F16-US01, E7-F23-US02 |
 
-## Additions beyond the spec — please confirm
+## Additions beyond the spec — Accepted 2026-10-28
 
-The spec does not say these, but a story needed a decision to be testable. Each is a proposal:
+The spec does not say these, but a story needed a decision to be testable. Each was proposed and accepted on 2026-10-28:
 
 1. Requests that reach the panel without a Cloudflare Access identity are refused (E1-F01-US01).
 2. Secrets the panel knows are masked in errors and logs (E1-F02-US03).
@@ -42,14 +44,16 @@ The spec does not say these, but a story needed a decision to be testable. Each 
 10. Only scheduled backup failures send external alerts; manual failures are shown on screen (E7-F23-US02).
 11. The panel lists its own resource usage in usage by app (E6-F20-US01).
 
-## Open questions
+<a id="open-questions"></a>
+## Decisions (2026-10-28)
 
-- **Restore** — the spec covers backing up but not restoring. Is restore out of scope for v1?
-- **Stopping `nextjs-node` projects** — with no process manager, which command stops and starts them?
-- **Encryption** — where is the backup passphrase set and kept (E5-F16-US03)?
-- **Retention period** — the spec says 7–30 days. Is it fixed or a setting?
-- **Domain checks** — how often is each public domain checked for E7-F23-US01?
-- **Partial status** — should **Back up** be allowed while a project is Partial? The spec's status table leaves it out.
+- **Restore** — out of scope for v1. The spec covers backing up only.
+- **Stack support** — v1 supports docker compose projects only, so the question of how to stop and start projects without a process manager no longer applies ([ADR 5](../../../docs/decisions/0005-run-only-whitelisted-docker-compose-commands-without-a-shell.md)).
+- **Encryption** — removed from v1. Backups are not encrypted by the panel (E5-F16-US03).
+- **Retention period** — a setting from 7 to 30 days, default 7 (E6-F20-US01).
+- **Domain checks** — each public domain is checked every 60 seconds, and an alert is sent after 3 consecutive failures (E7-F23-US01).
+- **Partial status** — **Back up** is allowed while a project is Partial, as long as the database's container is running (E3-F10-US01).
+- **Allowed directories** — the allowed directories are the `WORKSPACE_ROOTS` of the install ([ADR 8](../../../docs/decisions/0008-deploy-the-panel-as-a-docker-compose-project-with-pull-based-updates.md)); a path outside them is refused (E1-F02-US02, E2-F04-US01).
 
 ## Stories
 
@@ -72,7 +76,7 @@ The spec does not say these, but a story needed a decision to be testable. Each 
 - [[E1-F03-US01 - Attribute Every Action to a Person]] · Server Owner
 
 
-## E2 — Discover Projects (10 stories)
+## E2 — Discover Projects (9 stories)
 
 **F04 — Workspaces**
 
@@ -80,11 +84,10 @@ The spec does not say these, but a story needed a decision to be testable. Each 
 - [[E2-F04-US02 - Follow Scan Progress]] · Server Owner
 - [[E2-F04-US03 - Manage Workspaces]] · Server Owner
 
-**F05 — Stack and Database Detection**
+**F05 — Project and Database Detection**
 
-- [[E2-F05-US01 - Detect the Stack of Each Project]] · Server Owner
+- [[E2-F05-US01 - Detect Compose Projects]] · Server Owner
 - [[E2-F05-US02 - Detect the Databases a Project Uses]] · Server Owner
-- [[E2-F05-US03 - Correct or Assign a Stack]] · Server Owner
 
 **F06 — Tracked Projects**
 
@@ -136,7 +139,7 @@ The spec does not say these, but a story needed a decision to be testable. Each 
 
 **F13 — Runtime Availability**
 
-- [[E4-F13-US01 - Lock Controls When Docker or pm2 Is Unresponsive]] · Operator
+- [[E4-F13-US01 - Lock Controls When Docker Is Unresponsive]] · Operator
 
 
 ## E5 — Back Up Databases (14 stories)

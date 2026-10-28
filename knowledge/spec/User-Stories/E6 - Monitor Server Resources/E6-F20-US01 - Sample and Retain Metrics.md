@@ -25,7 +25,7 @@ As the Server Owner, I want metrics sampled regularly and kept for a set time, s
 ### Scenario: Retention
 
 - **Given** stored metrics
-- **When** they become older than the retention period, between 7 and 30 days
+- **When** they become older than the retention period, a setting from 7 to 30 days with a default of 7
 - **Then** they are deleted
 
 ### Scenario: Sampling continues without anyone watching

@@ -12,7 +12,7 @@ source: "Server Control Panel – Product Spec & E2E Flow — §4.7 Backup defau
 
 ## User Story
 
-As the Server Owner, I want defaults for schedule, retention, compression and encryption, so that each new database starts with sensible backup settings.
+As the Server Owner, I want defaults for schedule, retention and compression, so that each new database starts with sensible backup settings.
 
 ## Acceptance Criteria
 
@@ -20,7 +20,7 @@ As the Server Owner, I want defaults for schedule, retention, compression and en
 
 - **Given** Settings
 - **When** I open backup defaults
-- **Then** I can set the schedule, the time, the number of copies to keep, whether to compress, and whether to encrypt
+- **Then** I can set the schedule, the time, the number of copies to keep, and whether to compress
 
 ### Scenario: Defaults apply to new databases only
 
@@ -28,9 +28,3 @@ As the Server Owner, I want defaults for schedule, retention, compression and en
 - **When** I save
 - **Then** databases found from then on start with them
 - **And** databases that already have their own settings are not changed
-
-### Scenario: Turning encryption on
-
-- **Given** I turn encryption on
-- **When** I save
-- **Then** I am told the passphrase must be kept elsewhere and that copies cannot be restored without it

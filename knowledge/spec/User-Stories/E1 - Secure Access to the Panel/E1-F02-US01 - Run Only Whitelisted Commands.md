@@ -20,7 +20,7 @@ As the Server Owner, I want the panel to run only a fixed set of commands, so th
 
 - **Given** any action the panel offers — start, stop, restart, backup, scan, read logs, read metrics
 - **When** it runs
-- **Then** the command it runs is one of a fixed list for that action and that stack
+- **Then** the command it runs is one of a fixed list for that action
 - **And** no command outside that list can be run by any means
 
 ### Scenario: Values are passed as arguments, never as shell text
@@ -34,7 +34,7 @@ As the Server Owner, I want the panel to run only a fixed set of commands, so th
 
 - **Given** I change how a project is started or stopped
 - **When** I open the choice
-- **Then** I pick from a list of templates for that stack
+- **Then** I pick from a list of templates
 - **And** there is no field where a free-form command can be typed
 
 ### Scenario: There is no terminal

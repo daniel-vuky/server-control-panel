@@ -24,8 +24,8 @@ As an Operator, I want to be alerted when a project goes into Error or its site 
 
 ### Scenario: A domain stops responding
 
-- **Given** a project with a public domain
-- **When** the domain fails to respond on 2 checks in a row
+- **Given** a project with a public domain, checked every 60 seconds
+- **When** the domain fails to respond on 3 consecutive checks
 - **Then** an alert is sent naming the project and the domain
 
 ### Scenario: One alert per incident

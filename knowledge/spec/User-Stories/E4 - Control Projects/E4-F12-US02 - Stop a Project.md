@@ -35,7 +35,7 @@ As an Operator, I want to stop a project only after confirming what that will ta
 - **Given** the stop confirmation is open
 - **When** I choose **Stop**
 - **Then** the project goes into Stopping, following [[E4-F12-US04 - Lock a Project While a Command Runs]]
-- **And** the stop command for its stack runs — `docker compose stop` or `pm2 stop <app>` — with a 60-second limit
+- **And** the stop command runs — `docker compose stop` — with a 60-second limit
 
 ### Scenario: Stopping succeeds
 

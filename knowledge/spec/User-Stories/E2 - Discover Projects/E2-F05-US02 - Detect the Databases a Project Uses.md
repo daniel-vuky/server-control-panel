@@ -2,7 +2,7 @@
 id: E2-F05-US02
 type: user-story
 epic: Discover Projects
-feature: Stack and Database Detection
+feature: Project and Database Detection
 status: Draft
 personas:
   - Server Owner

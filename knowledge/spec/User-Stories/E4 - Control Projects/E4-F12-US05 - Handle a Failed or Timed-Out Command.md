@@ -34,7 +34,7 @@ As an Operator, I want a failed start, stop or restart to tell me clearly what h
 
 - **Given** a command has failed or timed out
 - **When** its status is shown afterwards
-- **Then** it is the status actually read from Docker or pm2, not the one I asked for
+- **Then** it is the status actually read from Docker, not the one I asked for
 
 ### Scenario: The failure is recorded
 

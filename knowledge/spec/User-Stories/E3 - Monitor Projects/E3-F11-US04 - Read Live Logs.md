@@ -23,9 +23,9 @@ As an Operator, I want to read a project's logs live in the panel, so that I can
 - **Then** I see its 500 most recent log lines
 - **And** new lines appear at the bottom as they are written
 
-### Scenario: Choosing a container or process
+### Scenario: Choosing a container
 
-- **Given** a project with more than one container or process
+- **Given** a project with more than one container
 - **When** I choose one
 - **Then** only its lines are shown
 - **And** I can also choose all of them together

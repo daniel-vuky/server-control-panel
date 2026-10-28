@@ -1,0 +1,13 @@
+.DS_Store
+
+# Local design and plan docs (superpowers), not committed
+docs/superpowers/
+
+# Build output and local data
+/bin/
+/data/
+node_modules/
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+*.local
+/tmp/

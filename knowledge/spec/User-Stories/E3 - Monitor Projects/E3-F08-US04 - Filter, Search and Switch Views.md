@@ -23,12 +23,6 @@ As an Operator, I want to narrow the projects shown and choose between cards and
 - **Then** only projects with that status are shown
 - **And** each filter shows how many projects it holds
 
-### Scenario: Filtering by stack
-
-- **Given** the Dashboard
-- **When** I choose a stack — Docker, Next.js or Node
-- **Then** only projects of that stack are shown
-
 ### Scenario: Searching by name
 
 - **Given** the Dashboard
@@ -37,9 +31,9 @@ As an Operator, I want to narrow the projects shown and choose between cards and
 
 ### Scenario: Filters combine
 
-- **Given** a status, a stack and a search are all set
+- **Given** a status and a search are both set
 - **When** the list is shown
-- **Then** only projects matching all three appear
+- **Then** only projects matching both appear
 
 ### Scenario: Switching between cards and a table
 

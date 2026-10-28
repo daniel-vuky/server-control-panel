@@ -1,0 +1,27 @@
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - depguard
+    - errorlint
+    - gosec
+    - misspell
+    - revive
+  settings:
+    depguard:
+      rules:
+        # ADR 0005: one package runs processes, so command safety is reviewed in one place.
+        no-os-exec:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/runner/**"
+          deny:
+            - pkg: os/exec
+              desc: only internal/runner may run processes (ADR 0005)
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

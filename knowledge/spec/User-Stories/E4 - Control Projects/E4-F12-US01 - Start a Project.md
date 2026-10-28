@@ -22,11 +22,11 @@ As an Operator, I want to start a project with one action, so that I can bring a
 - **When** I choose **Start** on its card, its table row or its detail
 - **Then** it starts at once, with no confirmation asked
 
-### Scenario: The command follows the stack
+### Scenario: The command is a compose command
 
 - **Given** I start a project
 - **When** the command runs
-- **Then** it is the start command for its stack — `docker compose up -d` for compose, `pm2 start` for pm2, or the template chosen in its settings
+- **Then** it is `docker compose up -d`, or the template chosen in its settings
 
 ### Scenario: Starting succeeds
 

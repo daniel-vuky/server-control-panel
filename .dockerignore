@@ -1,0 +1,7 @@
+**/node_modules
+bin
+data
+tmp
+.git
+docs/superpowers
+internal/web/dist

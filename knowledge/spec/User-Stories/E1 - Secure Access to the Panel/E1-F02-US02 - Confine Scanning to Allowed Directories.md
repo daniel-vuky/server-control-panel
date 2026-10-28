@@ -18,9 +18,9 @@ As the Server Owner, I want scanning and file reading to stay inside the directo
 
 ### Scenario: A path outside the allowed directories is refused
 
-- **Given** a path that is not inside any allowed directory
+- **Given** a path that is not inside any of the allowed directories, which are the `WORKSPACE_ROOTS` ([ADR 0008](../../../../docs/decisions/0008-deploy-the-panel-as-a-docker-compose-project-with-pull-based-updates.md))
 - **When** I submit it as a workspace
-- **Then** it is refused with a message under the field naming the allowed directories
+- **Then** it is refused with a message under the field: "add it to WORKSPACE_ROOTS and re-run install.sh"
 - **And** nothing is scanned
 
 ### Scenario: Paths that climb out are refused

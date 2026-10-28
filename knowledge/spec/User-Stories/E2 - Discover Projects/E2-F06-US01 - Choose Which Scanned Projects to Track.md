@@ -20,7 +20,7 @@ As the Server Owner, I want to review what a scan found and pick what to track, 
 
 - **Given** a scan has finished
 - **When** I see its results
-- **Then** each project found is a row with a checkbox, its display name, its path, its stack, its current status and the databases detected
+- **Then** each project found is a row with a checkbox, its display name, its path, its current status and the databases detected
 - **And** every row starts checked
 
 ### Scenario: Leaving a project out
