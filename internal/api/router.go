@@ -28,6 +28,7 @@ func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.Handle("GET /api/health", healthHandler(d.Version))
+	mux.Handle("GET /api/me", protect(meHandler()))
 	mux.Handle("/api/", protect(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})))

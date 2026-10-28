@@ -131,3 +131,33 @@ func TestUnknownAPIRouteIs404JSON(t *testing.T) {
 		t.Errorf("GET /backups = %d %q, want 200 \"web\"", rec.Code, rec.Body.String())
 	}
 }
+
+func TestMeReturnsVerifiedEmail(t *testing.T) {
+	h := NewRouter(Deps{Version: "1.2.3", Verifier: allowVerifier{}, Web: webStub()})
+
+	rec := do(h, http.MethodGet, "/api/me")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var got MeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body %q is not JSON: %v", rec.Body.String(), err)
+	}
+	if got != (MeResponse{Email: "test@example.com"}) {
+		t.Errorf("body = %+v, want {test@example.com}", got)
+	}
+}
+
+func TestMeNeedsIdentity(t *testing.T) {
+	h := NewRouter(Deps{Version: "1.2.3", Verifier: auth.RejectAll{}, Web: webStub()})
+
+	rec := do(h, http.MethodGet, "/api/me")
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}

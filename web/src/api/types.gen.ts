@@ -10,3 +10,13 @@ export interface HealthResponse {
   status: string;
   version: string;
 }
+
+//////////
+// source: me.go
+
+/**
+ * MeResponse is the body of GET /api/me.
+ */
+export interface MeResponse {
+  email: string;
+}
