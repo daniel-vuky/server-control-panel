@@ -5,9 +5,12 @@ go 1.27.3
 tool github.com/gzuidhof/tygo
 
 require (
-	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
+	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/go-jose/go-jose/v4 v4.1.6
+)
+
+require (
 	github.com/fatih/structtag v1.2.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/gzuidhof/tygo v0.2.21 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/spf13/cobra v1.3.0 // indirect
