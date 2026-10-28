@@ -1,6 +1,7 @@
 import { Server } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router'
 import { appRoutes } from './routes'
+import UserChip from './UserChip'
 
 const navRoutes = appRoutes.filter((r) => r.nav)
 
@@ -43,6 +44,7 @@ export default function AppShell() {
             )
           })}
         </div>
+        <UserChip />
       </nav>
       <main className="min-w-0 flex-1 px-8 pt-7 pb-14">
         <Outlet />
