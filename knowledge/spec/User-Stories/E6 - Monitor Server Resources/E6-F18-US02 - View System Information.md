@@ -21,7 +21,7 @@ As an Operator, I want the server's basic facts in one place, so that I can answ
 - **Given** I open Server
 - **When** I look at system information
 - **Then** I see the operating system, the kernel, the number of CPU cores and the total RAM
-- **And** the versions of Docker, Node and pm2
+- **And** the version of Docker
 
 ### Scenario: Disks
 
@@ -31,6 +31,6 @@ As an Operator, I want the server's basic facts in one place, so that I can answ
 
 ### Scenario: A tool is missing
 
-- **Given** Docker, Node or pm2 is not installed
+- **Given** Docker is not installed
 - **When** its version is shown
 - **Then** it says "Not installed" rather than leaving a blank

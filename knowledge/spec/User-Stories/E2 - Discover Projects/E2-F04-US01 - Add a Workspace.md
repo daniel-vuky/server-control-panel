@@ -20,7 +20,8 @@ As the Server Owner, I want to point the panel at the root directory where my pr
 
 - **Given** I am adding a workspace
 - **When** I enter a root path, such as `/home/deploy/projects`, choose a scan depth of 1, 2 or 3 levels and choose **Scan**
-- **Then** the path is checked, following [[E1-F02-US02 - Confine Scanning to Allowed Directories]]
+- **Then** the path is checked against the allowed directories (`WORKSPACE_ROOTS`), following [[E1-F02-US02 - Confine Scanning to Allowed Directories]]
+- **And** a path outside them is refused with "add it to WORKSPACE_ROOTS and re-run install.sh"
 - **And** if it passes, scanning starts, following [[E2-F04-US02 - Follow Scan Progress]]
 
 ### Scenario: Depth decides what counts as a project folder

@@ -20,7 +20,7 @@ As an Operator, I want each project shown as a card with its essentials, so that
 
 - **Given** a tracked project
 - **When** I look at its card
-- **Then** I see its name, its stack (Docker, Next.js or Node), its status, its public domain, its CPU % and RAM, its uptime and its last backup
+- **Then** I see its name, its status, its public domain, its CPU % and RAM, its uptime and its last backup
 
 ### Scenario: Opening the domain
 

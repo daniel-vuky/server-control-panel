@@ -27,7 +27,7 @@ As the Server Owner, I want to remove a project from the panel, so that projects
 
 - **Given** I confirmed stopping tracking
 - **When** the project is removed
-- **Then** its containers or processes keep their current state
+- **Then** its containers keep their current state
 - **And** its files and its backups on Google Drive are left as they are
 - **And** its scheduled backups no longer run
 

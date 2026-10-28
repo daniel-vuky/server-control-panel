@@ -20,7 +20,7 @@ As an Operator, I want a page for each project with its identity and its main ac
 
 - **Given** I open a project's detail
 - **When** I look at its header
-- **Then** I see its name, stack, status, path on the server, public domain and uptime
+- **Then** I see its name, status, path on the server, public domain and uptime
 - **And** **Start**, **Stop**, **Restart** and **Back up now**, each enabled only when its status allows it
 
 ### Scenario: Four tabs

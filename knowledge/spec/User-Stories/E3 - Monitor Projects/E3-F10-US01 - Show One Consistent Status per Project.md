@@ -16,7 +16,7 @@ As an Operator, I want every project to be in exactly one clearly named status, 
 
 ## Acceptance Criteria
 
-### Scenario: The seven statuses
+### Scenario: The six statuses
 
 - **Given** any tracked project
 - **When** its status is shown
@@ -24,13 +24,12 @@ As an Operator, I want every project to be in exactly one clearly named status, 
 
 | Status | When | Colour | Actions allowed |
 |---|---|---|---|
-| Running | All containers or processes are running | Green | Stop, Restart, Back up |
-| Partial | Docker: only some containers are running | Yellow | Start, Stop, Restart |
+| Running | All containers are running | Green | Stop, Restart, Back up |
+| Partial | Only some containers are running | Yellow | Start, Stop, Restart, Back up (while the database's container is running) |
 | Stopped | Nothing is running, stopped by a person | Grey | Start, Back up (if the database still runs) |
-| Error | A container exited with an error, pm2 reports `errored`, or it keeps restarting | Red | Start, Restart, View logs |
+| Error | A container exited with an error, or it keeps restarting | Red | Start, Restart, View logs |
 | Starting / Stopping | A command is running | Blue with spinner | None (locked) |
 | Not found | Its folder disappeared after a rescan | Grey, struck through | Remove from list |
-| Unknown | Its stack was not recognised | Pale yellow | Assign stack |
 
 ### Scenario: Status is never colour alone
 

@@ -26,7 +26,7 @@ As an Operator, I want to restart a project in one action, so that I can recover
 
 - **Given** I choose **Restart**
 - **When** the command runs
-- **Then** it is the restart command for its stack
+- **Then** it is the compose restart command
 - **And** the project is locked while it runs, following [[E4-F12-US04 - Lock a Project While a Command Runs]]
 
 ### Scenario: Restart succeeds

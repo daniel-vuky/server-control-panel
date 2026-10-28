@@ -38,6 +38,6 @@ As the Server Owner, I want to rescan a workspace and see what has appeared and 
 
 ### Scenario: Tracked projects keep what I set
 
-- **Given** a tracked project I renamed or whose stack I corrected
+- **Given** a tracked project I renamed
 - **When** the workspace is rescanned
-- **Then** my name and my stack are kept
+- **Then** my name is kept

@@ -20,13 +20,13 @@ As the Server Owner, I want to adjust how a project is named, run and watched, s
 
 - **Given** a project's Settings tab
 - **When** I look at it
-- **Then** I can change its display name, its stack, its public domain, its start/stop command template and its own alert thresholds
+- **Then** I can change its display name, its public domain, its start/stop command template and its own alert thresholds
 
 ### Scenario: Start and stop commands come from templates
 
 - **Given** I change the start/stop command
 - **When** I open the choice
-- **Then** I pick from templates for its stack, following [[E1-F02-US01 - Run Only Whitelisted Commands]]
+- **Then** I pick from templates, following [[E1-F02-US01 - Run Only Whitelisted Commands]]
 
 ### Scenario: Saving
 
