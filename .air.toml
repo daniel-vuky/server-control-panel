@@ -1,0 +1,9 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -tags dev -o ./tmp/panel ./cmd/panel"
+  bin = "./tmp/panel"
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "web", "node_modules", "data", "bin"]
+  delay = 500

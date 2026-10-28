@@ -1,10 +1,15 @@
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm tools
 
-.PHONY: setup dev shell test lint fmt typegen build ci
+.DEFAULT_GOAL := dev
+.PHONY: dev-image setup dev shell test lint fmt typegen build ci
+
+## dev-image: build the dev toolchain image (cached after the first run)
+dev-image:
+	$(COMPOSE) build api
 
 ## setup: install web dependencies (frozen lockfile) into the node_modules volume
-setup:
+setup: dev-image
 	$(RUN) pnpm -C web install --frozen-lockfile
 
 ## dev: start the Go (air) and Vite dev servers; http://localhost:5173
@@ -12,24 +17,24 @@ dev:
 	$(COMPOSE) up --build api web
 
 ## shell: open a shell in the dev image
-shell:
+shell: dev-image
 	$(RUN) bash
 
 ## The targets below get their recipes in later tasks.
-test:
-	@echo "test: added in a later task"
+test: dev-image
+	$(RUN) sh -c 'go test ./... && go test -tags dev ./...'
 
-lint:
+lint: dev-image
 	@echo "lint: added in a later task"
 
-fmt:
+fmt: dev-image
 	@echo "fmt: added in a later task"
 
-typegen:
+typegen: dev-image
 	@echo "typegen: added in a later task"
 
-build:
+build: dev-image
 	@echo "build: added in a later task"
 
-ci:
+ci: dev-image
 	@echo "ci: added in a later task"
