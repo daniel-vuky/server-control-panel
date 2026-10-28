@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard – Server Control Panel</title>
+<script src="./assets/support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0A0C0F}
+a{color:#C9CED6}a:hover{color:#FFFFFF}
+button,input,select{font:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #5AA7FF;outline-offset:2px}
+@keyframes scp-spin{to{transform:rotate(360deg)}}
+@keyframes scp-pulse{0%,100%{opacity:.45}50%{opacity:.9}}
+</style>
+</helmet>
+<div style="position: relative; min-height: 100vh; background: #0A0C0F; color: #E7E9EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; display: flex; flex-wrap: wrap; align-items: stretch">
+
+  <nav aria-label="Main navigation" style="flex: 1 1 220px; box-sizing: border-box; padding: 20px 14px; background: #0D1013; border-right: 1px solid #1E232A; display: flex; flex-direction: column; gap: 28px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 6px">
+      <div aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #E7E9EC; color: #0A0C0F; display: flex; align-items: center; justify-content: center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"></rect><rect x="3" y="13" width="18" height="7" rx="1.5"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+        <span style="font-weight: 600; font-size: 14px; letter-spacing: -0.01em">Server Control Panel</span>
+        <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: #949CA8">prod-01 · Ubuntu 24.04</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <a href="01-dashboard.html" aria-current="page" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; background: #1A1F26; color: #FFFFFF; text-decoration: none; font-weight: 500">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+        Dashboard
+      </a>
+      <a href="02-project-detail.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+        Projects
+        <span style="margin-left: auto; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #949CA8">5</span>
+      </a>
+      <a href="04-backups.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg>
+        Backups
+        <span style="margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: #FF6B6E" aria-label="1 failed backup"></span>
+      </a>
+      <a href="05-server.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"></rect><rect x="3" y="13" width="18" height="7" rx="1.5"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+        Server
+      </a>
+      <a href="06-activity.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg>
+        Activity
+      </a>
+      <a href="07-settings.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+        Settings
+      </a>
+    </div>
+    <div style="margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 12px 8px 0; border-top: 1px solid #1E232A">
+      <div aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 50%; background: #262C35; color: #E7E9EC; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600">AD</div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+        <span style="font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">admin@company.vn</span>
+        <span style="font-size: 11.5px; color: #949CA8">Via Cloudflare Access</span>
+      </div>
+    </div>
+  </nav>
+
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 28px 32px 56px; display: flex; flex-direction: column; gap: 22px">
+
+    <header style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em">Dashboard</h1>
+        <p style="margin: 0; color: #949CA8; font-size: 13px">Workspace <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #C9CED6">/home/deploy/projects</span> · last scanned 09:42</p>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+        <span style="{{liveStyle}}">
+          <span style="{{liveDotStyle}}"></span>{{liveLabel}}
+        </span>
+        <button type="button" style="height: 36px; padding: 0 14px; border-radius: 7px; border: 1px solid #2C323A; background: #14181D; color: #E7E9EC; display: flex; align-items: center; gap: 8px; cursor: pointer">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+          Rescan
+        </button>
+      </div>
+    </header>
+
+    <sc-if value="{{isError}}" hint-placeholder-val="{{ false }}">
+      <div role="alert" style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 8px; background: #2A1215; border: 1px solid #5C2228; color: #FFD7D8">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6B6E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
+        <span style="font-weight: 600">Docker daemon is not responding.</span>
+        <span style="color: #F2B8BB">Start/Stop for Docker projects is locked. Check <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">systemctl status docker</span> on the server.</span>
+        <button type="button" style="margin-left: auto; height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid #7A2F36; background: transparent; color: #FFD7D8; cursor: pointer">Retry</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isEmpty}}" hint-placeholder-val="{{ false }}">
+      <section aria-labelledby="empty-title" style="min-height: 520px; border: 1px dashed #2C323A; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 48px 24px; text-align: center">
+        <svg aria-hidden="true" width="72" height="72" viewBox="0 0 72 72" fill="none" stroke="#3A414B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 22a5 5 0 0 1 5-5h12l5 5h25a5 5 0 0 1 5 5v26a5 5 0 0 1-5 5H15a5 5 0 0 1-5-5z"></path><path d="M36 33v14M29 40h14" stroke="#5AA7FF"></path></svg>
+        <h2 id="empty-title" style="margin: 0; font-size: 18px; font-weight: 600">No workspaces yet</h2>
+        <p style="margin: 0; max-width: 420px; color: #949CA8; line-height: 1.55">Add a folder containing projects on the server. The tool will scan it, detect Docker / Next.js / pm2, and find databases.</p>
+        <a href="03-onboarding.html" style="height: 40px; padding: 0 18px; border-radius: 8px; background: #E7E9EC; color: #0A0C0F; text-decoration: none; font-weight: 600; display: flex; align-items: center; gap: 8px">Add project folder</a>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{isLoading}}" hint-placeholder-val="{{ false }}">
+      <div aria-busy="true" aria-label="Loading" style="display: flex; flex-direction: column; gap: 22px">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 12px">
+          <sc-for list="{{skelTiles}}" as="s" hint-placeholder-count="6">
+            <div style="height: 112px; border-radius: 10px; background: #14181D; border: 1px solid #1E232A; animation: scp-pulse 1.4s ease-in-out infinite"></div>
+          </sc-for>
+        </div>
+        <div style="height: 36px; width: 60%; border-radius: 8px; background: #14181D; animation: scp-pulse 1.4s ease-in-out infinite"></div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 14px">
+          <sc-for list="{{skelCards}}" as="s" hint-placeholder-count="6">
+            <div style="height: 210px; border-radius: 12px; background: #111418; border: 1px solid #1E232A; padding: 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px">
+              <div style="height: 14px; width: 40%; border-radius: 4px; background: #1E232A; animation: scp-pulse 1.4s ease-in-out infinite"></div>
+              <div style="height: 22px; width: 65%; border-radius: 4px; background: #1E232A; animation: scp-pulse 1.4s ease-in-out infinite"></div>
+              <div style="height: 12px; width: 50%; border-radius: 4px; background: #1E232A; animation: scp-pulse 1.4s ease-in-out infinite"></div>
+              <div style="margin-top: auto; height: 32px; border-radius: 6px; background: #1A1F26; animation: scp-pulse 1.4s ease-in-out infinite"></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{hasData}}" hint-placeholder-val="{{ true }}">
+      <div style="{{dataWrapStyle}}">
+
+        <section aria-label="Server summary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 12px">
+          <sc-for list="{{tiles}}" as="t" hint-placeholder-count="6">
+            <div style="{{t.boxStyle}}">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.06em">{{t.label}}</span>
+                <span style="{{t.flagStyle}}">{{t.flag}}</span>
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap">
+                <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">{{t.value}}</span>
+                <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #949CA8">{{t.sub}}</span>
+              </div>
+              <svg aria-hidden="true" viewBox="0 0 160 32" preserveAspectRatio="none" style="width: 100%; height: 32px; display: block">
+                <polygon points="{{t.area}}" fill="{{t.fill}}"></polygon>
+                <polyline points="{{t.line}}" fill="none" stroke="{{t.color}}" stroke-width="1.5" vector-effect="non-scaling-stroke"></polyline>
+              </svg>
+            </div>
+          </sc-for>
+        </section>
+
+        <section aria-label="Quick counts" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 12px 16px; border-radius: 10px; background: #111418; border: 1px solid #1E232A">
+          <span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E"></span><b style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">{{countRunning}}</b> running</span>
+          <span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #E5B93B"></span><b style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">{{countPartial}}</b> partial</span>
+          <span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #9AA3AF"></span><b style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">{{countStopped}}</b> stopped</span>
+          <span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #FF6B6E"></span><b style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">{{countError}}</b> error</span>
+          <span aria-hidden="true" style="width: 1px; height: 18px; background: #2C323A"></span>
+          <span style="display: flex; align-items: center; gap: 8px; color: #C9CED6">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#949CA8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 7 4.5 4.5 0 0 1 18 18z"></path><path d="M12 11v6M9.5 13.5 12 11l2.5 2.5"></path></svg>
+            Latest backup: <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">shop-api · 02:00 today</span>
+            <span style="padding: 2px 8px; border-radius: 999px; background: rgba(63,207,142,0.12); color: #3FCF8E; font-size: 12px; font-weight: 500">OK</span>
+          </span>
+          <a href="04-backups.html" style="margin-left: auto; font-size: 13px">View Backups →</a>
+        </section>
+
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+          <div role="group" aria-label="Filter by status" style="display: flex; flex-wrap: wrap; gap: 6px">
+            <sc-for list="{{filters}}" as="f" hint-placeholder-count="5">
+              <button type="button" aria-pressed="{{f.pressed}}" onClick="{{f.pick}}" style="{{f.style}}">{{f.label}}<span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; opacity: 0.75">{{f.count}}</span></button>
+            </sc-for>
+          </div>
+          <label style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 7px; border: 1px solid #2C323A; background: #111418; color: #949CA8; font-size: 13px">
+            Stack
+            <select style="background: transparent; border: 0; color: #E7E9EC; font-size: 13px">
+              <option>All</option>
+              <option>Docker</option>
+              <option>Next.js</option>
+              <option>Node</option>
+            </select>
+          </label>
+          <label style="flex: 1 1 200px; max-width: 320px; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 7px; border: 1px solid #2C323A; background: #111418">
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#949CA8" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+            <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search projects by name</span>
+            <input type="search" placeholder="Search by name…" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #E7E9EC; font-size: 13px; outline: none">
+          </label>
+          <div role="group" aria-label="View mode" style="margin-left: auto; display: flex; padding: 3px; border-radius: 8px; background: #111418; border: 1px solid #2C323A">
+            <button type="button" aria-pressed="{{viewCardPressed}}" onClick="{{showCards}}" style="{{viewCardStyle}}">
+              <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>Card
+            </button>
+            <button type="button" aria-pressed="{{viewTablePressed}}" onClick="{{showTable}}" style="{{viewTableStyle}}">
+              <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>Table
+            </button>
+          </div>
+        </div>
+
+        <sc-if value="{{isCards}}" hint-placeholder-val="{{ true }}">
+          <section aria-label="Project list" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 14px">
+            <sc-for list="{{shown}}" as="p" hint-placeholder-count="5">
+              <article style="{{p.cardStyle}}">
+                <div style="display: flex; align-items: center; gap: 8px">
+                  <span style="{{p.pillStyle}}">
+                    <sc-if value="{{p.busy}}" hint-placeholder-val="{{ false }}">
+                      <span aria-hidden="true" style="width: 9px; height: 9px; box-sizing: border-box; border: 2px solid #5AA7FF; border-right-color: transparent; border-radius: 50%; animation: scp-spin 0.8s linear infinite"></span>
+                    </sc-if>
+                    <sc-if value="{{p.idle}}" hint-placeholder-val="{{ true }}">
+                      <span aria-hidden="true" style="{{p.dotStyle}}"></span>
+                    </sc-if>
+                    {{p.statusLabel}}
+                  </span>
+                  <span style="display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; border: 1px solid #2C323A; color: #C9CED6; font-size: 12px">{{p.stack}}<span style="color: #949CA8">· {{p.stackNote}}</span></span>
+                  <button type="button" aria-label="More actions for {{p.id}}" aria-haspopup="menu" aria-expanded="{{p.menuOpen}}" onClick="{{p.toggleMenu}}" style="margin-left: auto; width: 32px; height: 32px; border-radius: 6px; border: 0; background: transparent; color: #C9CED6; display: flex; align-items: center; justify-content: center; cursor: pointer">
+                    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg>
+                  </button>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <a href="02-project-detail.html" style="color: #FFFFFF; text-decoration: none; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; font-family: 'JetBrains Mono', ui-monospace, monospace">{{p.id}}</a>
+                  <a href="https://{{p.domain}}" target="_blank" rel="noopener" style="display: flex; align-items: center; gap: 5px; color: #949CA8; font-size: 13px; text-decoration: none; width: fit-content">{{p.domain}}
+                    <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>
+                  </a>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px 0; border-top: 1px solid #1E232A; border-bottom: 1px solid #1E232A">
+                  <div style="display: flex; flex-direction: column; gap: 6px">
+                    <span style="font-size: 11.5px; color: #949CA8">CPU</span>
+                    <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 15px">{{p.cpuLabel}}</span>
+                    <span aria-hidden="true" style="height: 3px; border-radius: 2px; background: #1E232A; display: flex"><span style="{{p.cpuBar}}"></span></span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 6px">
+                    <span style="font-size: 11.5px; color: #949CA8">RAM</span>
+                    <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 15px">{{p.ram}}</span>
+                    <span aria-hidden="true" style="height: 3px; border-radius: 2px; background: #1E232A; display: flex"><span style="{{p.ramBar}}"></span></span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 6px">
+                    <span style="font-size: 11.5px; color: #949CA8">{{p.uptimeLabel}}</span>
+                    <span style="{{p.uptimeStyle}}">{{p.uptime}}</span>
+                  </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px">
+                  <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+                    <span style="font-size: 11.5px; color: #949CA8">Last backup</span>
+                    <span style="display: flex; align-items: center; gap: 6px; font-size: 13px"><span style="{{p.backupDot}}"></span>{{p.backup}}</span>
+                  </div>
+                  <div style="margin-left: auto; display: flex; align-items: center; gap: 10px">
+                    <span style="font-size: 12.5px; color: #C9CED6">{{p.switchLabel}}</span>
+                    <button type="button" role="switch" aria-checked="{{p.onStr}}" aria-label="{{p.switchAria}}" disabled="{{p.locked}}" onClick="{{p.toggle}}" style="{{p.switchStyle}}"><span style="{{p.knobStyle}}"></span></button>
+                  </div>
+                </div>
+                <sc-if value="{{p.menuIsOpen}}" hint-placeholder-val="{{ false }}">
+                  <div role="menu" aria-label="Actions for {{p.id}}" style="position: absolute; top: 52px; right: 14px; z-index: 5; width: 200px; padding: 6px; border-radius: 9px; background: #181C22; border: 1px solid #2C323A; box-shadow: 0 12px 32px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 2px">
+                    <button type="button" role="menuitem" onClick="{{closeMenu}}" style="height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #E7E9EC; text-align: left; cursor: pointer">Restart</button>
+                    <button type="button" role="menuitem" onClick="{{closeMenu}}" style="height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #E7E9EC; text-align: left; cursor: pointer">Back up now</button>
+                    <button type="button" role="menuitem" onClick="{{closeMenu}}" style="height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #E7E9EC; text-align: left; cursor: pointer">View logs</button>
+                    <a role="menuitem" href="02-project-detail.html" style="height: 36px; padding: 0 10px; border-radius: 6px; color: #E7E9EC; text-decoration: none; display: flex; align-items: center">Open details</a>
+                  </div>
+                </sc-if>
+              </article>
+            </sc-for>
+          </section>
+        </sc-if>
+
+        <sc-if value="{{isTable}}" hint-placeholder-val="{{ false }}">
+          <section aria-label="Projects table" style="border: 1px solid #1E232A; border-radius: 10px; background: #111418; overflow-x: auto">
+            <div style="min-width: 900px">
+              <div style="display: grid; grid-template-columns: 1.3fr 1fr 1.4fr 0.7fr 0.8fr 1.2fr 1.3fr; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1E232A; font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.05em">
+                <span>Project</span><span>Status</span><span>Domain</span><span>CPU</span><span>RAM</span><span>Last backup</span><span style="text-align: right">Start / Stop</span>
+              </div>
+              <sc-for list="{{shown}}" as="p" hint-placeholder-count="5">
+                <div style="display: grid; grid-template-columns: 1.3fr 1fr 1.4fr 0.7fr 0.8fr 1.2fr 1.3fr; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #1A1E24">
+                  <div style="display: flex; flex-direction: column; gap: 2px">
+                    <a href="02-project-detail.html" style="color: #FFFFFF; text-decoration: none; font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">{{p.id}}</a>
+                    <span style="font-size: 12px; color: #949CA8">{{p.stack}} · {{p.stackNote}}</span>
+                  </div>
+                  <span style="{{p.pillStyle}}"><span aria-hidden="true" style="{{p.dotStyle}}"></span>{{p.statusLabel}}</span>
+                  <a href="https://{{p.domain}}" target="_blank" rel="noopener" style="font-size: 13px; color: #C9CED6">{{p.domain}}</a>
+                  <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums">{{p.cpuLabel}}</span>
+                  <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums">{{p.ram}}</span>
+                  <span style="display: flex; align-items: center; gap: 6px; font-size: 13px"><span style="{{p.backupDot}}"></span>{{p.backup}}</span>
+                  <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px">
+                    <span style="font-size: 12.5px; color: #C9CED6">{{p.switchLabel}}</span>
+                    <button type="button" role="switch" aria-checked="{{p.onStr}}" aria-label="{{p.switchAria}}" disabled="{{p.locked}}" onClick="{{p.toggle}}" style="{{p.switchStyle}}"><span style="{{p.knobStyle}}"></span></button>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+        </sc-if>
+      </div>
+    </sc-if>
+  </main>
+
+  <sc-if value="{{hasConfirm}}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; z-index: 20; background: rgba(5,6,8,0.72); display: flex; align-items: flex-start; justify-content: center; padding: 180px 16px 16px">
+      <div role="dialog" aria-modal="true" aria-labelledby="stop-title" style="width: 440px; max-width: 100%; box-sizing: border-box; padding: 22px; border-radius: 12px; background: #14181D; border: 1px solid #2C323A; box-shadow: 0 24px 64px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 14px">
+        <h2 id="stop-title" style="margin: 0; font-size: 17px; font-weight: 600">Stop <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">{{confirmName}}</span>?</h2>
+        <p style="margin: 0; color: #C9CED6; line-height: 1.55">Domain <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #FFFFFF">{{confirmDomain}}</span> will stop serving until you start it again.</p>
+        <p style="margin: 0; padding: 10px 12px; border-radius: 8px; background: #0F1215; border: 1px solid #1E232A; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: #949CA8">$ {{confirmCmd}}</p>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px">
+          <button type="button" onClick="{{cancelStop}}" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC; cursor: pointer">Cancel</button>
+          <button type="button" onClick="{{confirmStop}}" style="height: 38px; padding: 0 18px; border-radius: 8px; border: 0; background: #D93A40; color: #FFFFFF; font-weight: 600; cursor: pointer">Stop</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+    <div role="status" style="{{toastStyle}}">
+      <span aria-hidden="true" style="{{toastDot}}"></span>
+      <span>{{toastText}}</span>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"screenState":{"editor":"enum","options":["data","loading","empty","error"],"default":"data"},"$preview":{"width":1440,"height":1120}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      statuses: { 'shop-api': 'running', 'shop-web': 'running', 'crm': 'partial', 'landing': 'stopped', 'blog': 'error' },
+      filter: 'all', view: 'card', confirm: null, toast: null, menu: null
+    };
+    this._timers = [];
+  }
+  componentWillUnmount() { this._timers.forEach(clearTimeout); }
+  later(fn, ms) { this._timers.push(setTimeout(fn, ms)); }
+  setStatus(id, s) { this.setState(st => ({ statuses: Object.assign({}, st.statuses, { [id]: s }) })); }
+  toast(kind, text) {
+    this.setState({ toast: { kind, text } });
+    this.later(() => this.setState({ toast: null }), 3200);
+  }
+  renderVals() {
+    const mode = this.props.screenState ?? 'data';
+    const isError = mode === 'error';
+    const mono = "font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums;";
+    const STATUS = {
+      running: { label: 'Running', c: '#3FCF8E', bg: 'rgba(63,207,142,0.12)' },
+      partial: { label: 'Partial', c: '#E5B93B', bg: 'rgba(229,185,59,0.13)' },
+      stopped: { label: 'Stopped', c: '#9AA3AF', bg: 'rgba(154,163,175,0.12)' },
+      error: { label: 'Error', c: '#FF6B6E', bg: 'rgba(242,85,90,0.14)' },
+      starting: { label: 'Starting…', c: '#5AA7FF', bg: 'rgba(76,155,245,0.14)' },
+      stopping: { label: 'Stopping…', c: '#5AA7FF', bg: 'rgba(76,155,245,0.14)' }
+    };
+    const BASE = [
+      { id: 'shop-api', stack: 'Docker', stackNote: '3 containers', domain: 'api.shop.vn', cpu: 12, ram: '640 MB', ramPct: 8, uptime: '12d 4h', backup: '02:00 today', bk: 'ok', cmd: 'docker compose stop' },
+      { id: 'shop-web', stack: 'Next.js', stackNote: 'pm2', domain: 'shop.vn', cpu: 4, ram: '310 MB', ramPct: 4, uptime: '3d 7h', backup: 'No backups yet', bk: 'none', cmd: 'pm2 stop shop-web' },
+      { id: 'crm', stack: 'Docker', stackNote: '1/2 containers', domain: 'crm.company.vn', cpu: 8, ram: '420 MB', ramPct: 5, uptime: '1d 2h', backup: 'Yesterday · failed', bk: 'fail', cmd: 'docker compose stop' },
+      { id: 'landing', stack: 'Next.js', stackNote: 'node', domain: 'landing.company.vn', cpu: 0, ram: '0 MB', ramPct: 0, uptime: '—', backup: 'No backups yet', bk: 'none', cmd: 'kill node (landing)' },
+      { id: 'blog', stack: 'Docker', stackNote: '2 containers', domain: 'blog.company.vn', cpu: 0, ram: '45 MB', ramPct: 1, uptime: 'Restarted 14 times / 1 h', backup: '3 days ago', bk: 'ok', cmd: 'docker compose stop' }
+    ];
+    const st = this.state;
+    const all = BASE.map(b => {
+      const status = st.statuses[b.id];
+      const m = STATUS[status];
+      const busy = status === 'starting' || status === 'stopping';
+      const on = status === 'running' || status === 'partial' || status === 'starting';
+      const locked = busy || (isError && b.stack === 'Docker');
+      const bkColor = b.bk === 'ok' ? '#3FCF8E' : b.bk === 'fail' ? '#FF6B6E' : '#4A515C';
+      return Object.assign({}, b, {
+        status, busy, idle: !busy, locked,
+        statusLabel: m.label,
+        pillStyle: `display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 9px; border-radius: 999px; background: ${m.bg}; color: ${m.c}; font-size: 12.5px; font-weight: 500; white-space: nowrap; width: fit-content`,
+        dotStyle: `width: 7px; height: 7px; border-radius: 50%; background: ${m.c}; box-shadow: 0 0 0 3px ${m.bg}`,
+        cardStyle: `position: relative; display: flex; flex-direction: column; gap: 14px; padding: 16px 16px 14px 18px; border-radius: 12px; background: #111418; border: 1px solid ${status === 'error' ? '#5C2228' : '#1E232A'}; ${status === 'error' ? 'box-shadow: inset 0 0 0 1px rgba(242,85,90,0.08);' : ''}`,
+        cpuLabel: b.cpu + '%',
+        cpuBar: `width: ${Math.max(b.cpu, 0)}%; border-radius: 2px; background: #5AA7FF`,
+        ramBar: `width: ${b.ramPct}%; border-radius: 2px; background: #F0913A`,
+        uptimeLabel: status === 'error' ? 'Issue' : 'Uptime',
+        uptimeStyle: status === 'error' ? 'font-size: 13px; color: #FF8C8F; line-height: 1.3' : mono + ' font-size: 15px',
+        backupDot: `width: 7px; height: 7px; border-radius: 50%; flex: none; background: ${bkColor}`,
+        onStr: on ? 'true' : 'false',
+        switchLabel: busy ? (status === 'starting' ? 'Starting' : 'Stopping') : (on ? 'On' : 'Off'),
+        switchAria: (on ? 'Stop ' : 'Start ') + b.id,
+        switchStyle: `position: relative; width: 44px; height: 26px; flex: none; border-radius: 999px; border: 0; padding: 0; cursor: ${locked ? 'not-allowed' : 'pointer'}; opacity: ${locked ? 0.5 : 1}; background: ${on ? (busy ? '#2B5C99' : '#2F9E6B') : '#2C323A'}; transition: background .2s`,
+        knobStyle: `position: absolute; top: 3px; left: ${on ? 21 : 3}px; width: 20px; height: 20px; border-radius: 50%; background: #FFFFFF; transition: left .2s`,
+        menuIsOpen: st.menu === b.id,
+        menuOpen: st.menu === b.id ? 'true' : 'false',
+        toggleMenu: () => this.setState({ menu: st.menu === b.id ? null : b.id }),
+        toggle: () => {
+          if (locked) return;
+          if (on) { this.setState({ confirm: b.id, menu: null }); return; }
+          this.setStatus(b.id, 'starting');
+          this.later(() => { this.setStatus(b.id, 'running'); this.toast('ok', `Started ${b.id}`); }, 1600);
+        }
+      });
+    });
+    const count = s => all.filter(p => p.status === s).length;
+    const FILTERS = [['all', 'All', all.length], ['running', 'Running', count('running')], ['partial', 'Partial', count('partial')], ['stopped', 'Stopped', count('stopped')], ['error', 'Error', count('error')]];
+    const filters = FILTERS.map(([k, label, n]) => {
+      const on = st.filter === k;
+      return {
+        label, count: n, pressed: on ? 'true' : 'false',
+        pick: () => this.setState({ filter: k }),
+        style: `height: 34px; padding: 0 12px; border-radius: 7px; border: 1px solid ${on ? '#E7E9EC' : '#2C323A'}; background: ${on ? '#E7E9EC' : '#111418'}; color: ${on ? '#0A0C0F' : '#C9CED6'}; display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13px; font-weight: ${on ? 600 : 400}`
+      };
+    });
+    const shown = st.filter === 'all' ? all : all.filter(p => p.status === st.filter);
+
+    const wave = (n, base, amp, seed) => Array.from({ length: n }, (_, i) => base + amp * Math.sin(i * 0.5 + seed) + amp * 0.45 * Math.sin(i * 1.9 + seed * 2.3));
+    const line = (arr, max) => arr.map((v, i) => `${(i * 160 / (arr.length - 1)).toFixed(1)},${(32 - Math.min(v / max, 1) * 30).toFixed(1)}`).join(' ');
+    const tile = (label, value, sub, color, data, max, flag, warn) => {
+      const l = line(data, max);
+      return {
+        label, value, sub, color, line: l, area: `0,32 ${l} 160,32`,
+        fill: warn ? 'rgba(242,85,90,0.14)' : color === '#3FCF8E' ? 'rgba(63,207,142,0.10)' : color === '#F0913A' ? 'rgba(240,145,58,0.12)' : 'rgba(90,167,255,0.12)',
+        flag, flagStyle: flag ? `font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: ${warn ? 'rgba(242,85,90,0.16)' : 'rgba(63,207,142,0.12)'}; color: ${warn ? '#FF8C8F' : '#3FCF8E'}` : 'display: none',
+        boxStyle: `display: flex; flex-direction: column; gap: 8px; padding: 14px 14px 10px; border-radius: 10px; background: #111418; border: 1px solid ${warn ? '#5C2228' : '#1E232A'}`
+      };
+    };
+    const tiles = [
+      tile('CPU', '34%', '4 vCPU', '#5AA7FF', wave(40, 32, 8, 1), 100, '', false),
+      tile('RAM', '5.2 / 8', 'GB · 65%', '#F0913A', wave(40, 62, 3, 2), 100, '', false),
+      tile('Disk', '92 / 160', 'GB · 58%', '#5AA7FF', wave(40, 57, 0.6, 3), 100, '', false),
+      tile('Load avg', '1.36', '1.12 · 0.98', '#5AA7FF', wave(40, 1.3, 0.35, 4), 4, '', false),
+      tile('Uptime', '23 days', '6 h', '#3FCF8E', wave(40, 50, 0, 0), 100, '', false),
+      tile('CF Tunnel', 'Connected', 'cloudflared', '#3FCF8E', wave(40, 80, 4, 5), 100, 'Healthy', false)
+    ];
+
+    const cp = all.find(p => p.id === st.confirm);
+    const tk = st.toast;
+    return {
+      isError, isEmpty: mode === 'empty', isLoading: mode === 'loading', hasData: mode === 'data' || mode === 'error',
+      dataWrapStyle: `display: flex; flex-direction: column; gap: 22px; ${isError ? 'opacity: 0.55; filter: saturate(0.6);' : ''}`,
+      liveLabel: isError ? 'Connection lost, retrying…' : 'Realtime',
+      liveStyle: `display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; border: 1px solid ${isError ? '#5C4A1E' : '#1E3A2D'}; background: ${isError ? '#221C0E' : '#0F1A15'}; color: ${isError ? '#F2CF6B' : '#8FE3B9'}`,
+      liveDotStyle: `width: 7px; height: 7px; border-radius: 50%; background: ${isError ? '#E5B93B' : '#3FCF8E'}`,
+      skelTiles: [1, 2, 3, 4, 5, 6], skelCards: [1, 2, 3, 4, 5, 6],
+      tiles, filters, shown,
+      countRunning: count('running'), countPartial: count('partial'), countStopped: count('stopped'), countError: count('error'),
+      isCards: st.view === 'card', isTable: st.view === 'table',
+      viewCardPressed: st.view === 'card' ? 'true' : 'false', viewTablePressed: st.view === 'table' ? 'true' : 'false',
+      viewCardStyle: `height: 28px; padding: 0 10px; border-radius: 6px; border: 0; display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; background: ${st.view === 'card' ? '#262C35' : 'transparent'}; color: ${st.view === 'card' ? '#FFFFFF' : '#949CA8'}`,
+      viewTableStyle: `height: 28px; padding: 0 10px; border-radius: 6px; border: 0; display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; background: ${st.view === 'table' ? '#262C35' : 'transparent'}; color: ${st.view === 'table' ? '#FFFFFF' : '#949CA8'}`,
+      showCards: () => this.setState({ view: 'card' }),
+      showTable: () => this.setState({ view: 'table', menu: null }),
+      closeMenu: () => this.setState({ menu: null }),
+      hasConfirm: !!cp, confirmName: cp ? cp.id : '', confirmDomain: cp ? cp.domain : '', confirmCmd: cp ? cp.cmd : '',
+      cancelStop: () => this.setState({ confirm: null }),
+      confirmStop: () => {
+        const id = st.confirm;
+        this.setState({ confirm: null });
+        this.setStatus(id, 'stopping');
+        this.later(() => { this.setStatus(id, 'stopped'); this.toast('ok', `Stopped ${id}`); }, 1600);
+      },
+      hasToast: !!tk, toastText: tk ? tk.text : '',
+      toastStyle: 'position: absolute; right: 24px; bottom: 24px; z-index: 30; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; background: #14181D; border: 1px solid #1E3A2D; color: #E7E9EC; box-shadow: 0 12px 32px rgba(0,0,0,0.5)',
+      toastDot: 'width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E'
+    };
+  }
+}
+</script>
+</body>
+</html>

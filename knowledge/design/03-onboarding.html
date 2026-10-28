@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Onboarding – add workspace and scan projects</title>
+<script src="./assets/support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0A0C0F}
+a{color:#C9CED6}a:hover{color:#FFFFFF}
+button,input,select{font:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #5AA7FF;outline-offset:2px}
+@keyframes scp-spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #0A0C0F; color: #E7E9EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; display: flex; flex-direction: column; align-items: center; padding: 40px 16px 64px; box-sizing: border-box; gap: 32px">
+
+  <div style="width: 100%; max-width: 980px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <div aria-hidden="true" style="width: 30px; height: 30px; border-radius: 7px; background: #E7E9EC; color: #0A0C0F; display: flex; align-items: center; justify-content: center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"></rect><rect x="3" y="13" width="18" height="7" rx="1.5"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+      </div>
+      <span style="font-weight: 600">Server Control Panel</span>
+      <span style="font-size: 12.5px; color: #949CA8">· First-time setup</span>
+    </div>
+    <ol aria-label="Setup steps" style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+      <sc-for list="{{steps}}" as="s" hint-placeholder-count="4">
+        <li style="display: flex; align-items: center; gap: 8px">
+          <span aria-hidden="true" style="{{s.numStyle}}">{{s.mark}}</span>
+          <span style="{{s.labelStyle}}">{{s.label}}</span>
+          <span aria-hidden="true" style="{{s.sepStyle}}"></span>
+        </li>
+      </sc-for>
+    </ol>
+  </div>
+
+  <sc-if value="{{isStep1}}" hint-placeholder-val="{{ true }}">
+    <section aria-labelledby="s1-title" style="width: 100%; max-width: 640px; box-sizing: border-box; padding: 32px; border-radius: 14px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column; gap: 22px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h1 id="s1-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Add project folder</h1>
+        <p style="margin: 0; color: #949CA8; line-height: 1.55">Enter the root folder containing projects on the server. The tool only reads inside this folder and never moves or modifies any files.</p>
+      </div>
+      <label style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #C9CED6">Root folder path
+        <span style="display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid {{pathBorder}}; background: #0F1215">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#949CA8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+          <input type="text" value="/home/deploy/projects" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 14px">
+        </span>
+      </label>
+      <sc-if value="{{showPathError}}" hint-placeholder-val="{{ false }}">
+        <p role="alert" style="margin: -12px 0 0; display: flex; align-items: center; gap: 7px; font-size: 13px; color: #FF8C8F">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>
+          This folder is not in the list of allowed scan paths (<span style="font-family: 'JetBrains Mono', ui-monospace, monospace">/home/deploy</span>, <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">/srv</span>).
+        </p>
+      </sc-if>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <span id="depth-label" style="font-size: 13px; color: #C9CED6">Scan depth</span>
+        <div role="radiogroup" aria-labelledby="depth-label" style="display: flex; padding: 3px; border-radius: 8px; background: #0F1215; border: 1px solid #2C323A; width: fit-content">
+          <sc-for list="{{depths}}" as="d" hint-placeholder-count="3">
+            <button type="button" role="radio" aria-checked="{{d.sel}}" onClick="{{d.pick}}" style="{{d.style}}">{{d.label}}</button>
+          </sc-for>
+        </div>
+        <span style="font-size: 12.5px; color: #949CA8">1 level: each subfolder is one project. Increase it if projects are nested deeper, e.g. <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">clients/acme/web</span>.</span>
+      </div>
+
+      <sc-if value="{{scanning}}" hint-placeholder-val="{{ false }}">
+        <div role="status" style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 10px; background: #0F1215; border: 1px solid #1E232A">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <span aria-hidden="true" style="width: 14px; height: 14px; box-sizing: border-box; border: 2px solid #5AA7FF; border-right-color: transparent; border-radius: 50%; animation: scp-spin 0.8s linear infinite"></span>
+            <span>Scanning… <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">12/30</span> folders</span>
+          </div>
+          <span aria-hidden="true" style="height: 4px; border-radius: 2px; background: #1E232A; display: flex"><span style="width: 40%; border-radius: 2px; background: #5AA7FF"></span></span>
+          <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #949CA8">reading /home/deploy/projects/crm/docker-compose.yml</span>
+        </div>
+      </sc-if>
+
+      <div style="display: flex; align-items: center; gap: 12px">
+        <button type="button" onClick="{{startScan}}" style="height: 42px; padding: 0 22px; border-radius: 8px; border: 0; background: #E7E9EC; color: #0A0C0F; font-weight: 600; display: flex; align-items: center; gap: 8px; cursor: pointer">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>Scan
+        </button>
+        <span style="font-size: 12.5px; color: #949CA8">Detects: docker compose, Next.js (pm2 / node), Node (pm2)</span>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isStep2}}" hint-placeholder-val="{{ false }}">
+    <section aria-labelledby="s2-title" style="width: 100%; max-width: 980px; box-sizing: border-box; border-radius: 14px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column">
+      <div style="padding: 24px 24px 18px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <h1 id="s2-title" style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em">Found 6 projects</h1>
+          <p style="margin: 0; color: #949CA8">In <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #C9CED6">/home/deploy/projects</span> · depth 1 · 30 folders scanned</p>
+        </div>
+        <span style="display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: #F2CF6B"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 2px; background: #E5B93B"></span>1 project with an unrecognized stack</span>
+      </div>
+      <div style="overflow-x: auto; border-top: 1px solid #1E232A">
+        <div style="min-width: 880px">
+          <div style="display: grid; grid-template-columns: 44px 1.2fr 1.8fr 1.3fr 0.9fr 1.2fr; gap: 12px; padding: 10px 24px 10px 16px; font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1E232A">
+            <span></span><span>Display name</span><span>Path</span><span>Stack</span><span>Status</span><span>Database</span>
+          </div>
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+            <div style="{{r.rowStyle}}">
+              <span style="display: flex; justify-content: center"><input type="checkbox" checked="{{r.checked}}" onChange="{{r.toggle}}" aria-label="Track {{r.name}}" style="width: 18px; height: 18px; accent-color: #E7E9EC; cursor: pointer"></span>
+              <span style="display: flex; align-items: center; gap: 8px">
+                <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">{{r.name}}</span>
+                <button type="button" aria-label="Rename {{r.name}}" style="width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: #949CA8; display: flex; align-items: center; justify-content: center; cursor: pointer">
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg>
+                </button>
+              </span>
+              <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: #949CA8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{r.path}}</span>
+              <span>
+                <sc-if value="{{r.known}}" hint-placeholder-val="{{ true }}">
+                  <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 5px; border: 1px solid #2C323A; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #C9CED6">{{r.stack}}</span>
+                </sc-if>
+                <sc-if value="{{r.unknown}}" hint-placeholder-val="{{ false }}">
+                  <label style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: 6px; border: 1px solid #8A6D1E; background: #221C0E; color: #F2CF6B; font-size: 12px">
+                    <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Choose stack for {{r.name}}</span>
+                    <select style="background: transparent; border: 0; color: #F2CF6B; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px">
+                      <option>unknown – choose stack</option>
+                      <option>docker-compose</option>
+                      <option>nextjs-pm2</option>
+                      <option>nextjs-node</option>
+                      <option>node-pm2</option>
+                    </select>
+                  </label>
+                </sc-if>
+              </span>
+              <span style="{{r.stStyle}}"><span aria-hidden="true" style="{{r.dot}}"></span>{{r.status}}</span>
+              <span style="font-size: 13px; color: {{r.dbColor}}">{{r.db}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="padding: 16px 24px; border-top: 1px solid #1E232A; display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+        <button type="button" onClick="{{back}}" style="height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC; cursor: pointer">Rescan</button>
+        <span style="margin-left: auto; font-size: 13px; color: #949CA8">Selected <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #E7E9EC">{{checkedCount}}</span>/6</span>
+        <button type="button" onClick="{{toDrive}}" style="height: 40px; padding: 0 20px; border-radius: 8px; border: 0; background: #E7E9EC; color: #0A0C0F; font-weight: 600; cursor: pointer">Add {{checkedCount}} projects</button>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isStep3}}" hint-placeholder-val="{{ false }}">
+    <section aria-labelledby="s3-title" style="width: 100%; max-width: 640px; box-sizing: border-box; padding: 32px; border-radius: 14px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column; gap: 22px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h1 id="s3-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Connect Google Drive</h1>
+        <p style="margin: 0; color: #949CA8; line-height: 1.55">Database backups are compressed and uploaded to the folder you choose. The tool only requests access to files it creates itself.</p>
+      </div>
+      <sc-if value="{{driveOff}}" hint-placeholder-val="{{ true }}">
+        <button type="button" onClick="{{connectDrive}}" style="height: 48px; border-radius: 9px; border: 1px solid #2C323A; background: #14181D; color: #E7E9EC; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8.5 3h7l6 10.5-3.5 6h-12L2.5 13.5z"></path><path d="M8.5 3l6.5 11.5M15.5 3 9 14.5M2.5 13.5h19"></path></svg>
+          Connect Google Drive
+        </button>
+      </sc-if>
+      <sc-if value="{{driveOn}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; background: #0F1A15; border: 1px solid #1E3A2D">
+            <span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E"></span>
+            <span>Connected <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">ops.backup@gmail.com</span></span>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: 0; background: transparent; color: #C9CED6; text-decoration: underline; cursor: pointer">Switch account</button>
+          </div>
+          <label style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #C9CED6">Destination folder
+            <select style="height: 42px; padding: 0 10px; border-radius: 8px; border: 1px solid #2C323A; background: #0F1215; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace">
+              <option>My Drive / server-backups</option>
+              <option>+ Create new folder…</option>
+            </select>
+          </label>
+          <span style="font-size: 12.5px; color: #949CA8">File layout: <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #C9CED6">server-backups/&lt;project&gt;/&lt;project&gt;_&lt;db&gt;_YYYYMMDD-HHmm.sql.gz</span></span>
+        </div>
+      </sc-if>
+      <div style="display: flex; align-items: center; gap: 12px">
+        <button type="button" onClick="{{finish}}" style="height: 42px; padding: 0 16px; border-radius: 8px; border: 0; background: transparent; color: #C9CED6; cursor: pointer">Later</button>
+        <button type="button" onClick="{{finish}}" style="{{continueStyle}}">Continue</button>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isStep4}}" hint-placeholder-val="{{ false }}">
+    <section aria-labelledby="s4-title" style="width: 100%; max-width: 560px; box-sizing: border-box; padding: 40px 32px; border-radius: 14px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center">
+      <div aria-hidden="true" style="width: 56px; height: 56px; border-radius: 50%; background: rgba(63,207,142,0.12); color: #3FCF8E; display: flex; align-items: center; justify-content: center">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"></path></svg>
+      </div>
+      <h1 id="s4-title" style="margin: 0; font-size: 22px; font-weight: 600">Added {{checkedCount}} projects</h1>
+      <p style="margin: 0; color: #949CA8; line-height: 1.55; max-width: 400px">Status and resource usage update in real time. Schedule backups in each project's Database &amp; Backup tab.</p>
+      <a href="01-dashboard.html" style="height: 42px; padding: 0 22px; border-radius: 8px; background: #E7E9EC; color: #0A0C0F; text-decoration: none; font-weight: 600; display: flex; align-items: center">Go to Dashboard</a>
+    </section>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"step":{"editor":"enum","options":["1","2","3","4"],"default":"1"},"pathError":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: null, depth: 1, scanning: false, drive: false, unchecked: { 'old-tools': true } };
+    this._t = [];
+  }
+  componentWillUnmount() { this._t.forEach(clearTimeout); }
+  renderVals() {
+    const step = this.state.step || Number(this.props.step ?? '1');
+    const LABELS = ['Workspace', 'Scan results', 'Google Drive', 'Done'];
+    const steps = LABELS.map((label, i) => {
+      const n = i + 1, done = n < step, cur = n === step;
+      return {
+        label, mark: done ? '✓' : String(n),
+        numStyle: `width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; font-family: JetBrains Mono, monospace; background: ${cur ? '#E7E9EC' : done ? '#1E3A2D' : 'transparent'}; color: ${cur ? '#0A0C0F' : done ? '#3FCF8E' : '#949CA8'}; border: 1px solid ${cur ? '#E7E9EC' : done ? '#1E3A2D' : '#2C323A'}`,
+        labelStyle: `font-size: 13px; color: ${cur ? '#FFFFFF' : '#949CA8'}; font-weight: ${cur ? 600 : 400}`,
+        sepStyle: n === 4 ? 'display: none' : 'width: 28px; height: 1px; background: #2C323A'
+      };
+    });
+    const depths = [1, 2, 3].map(d => ({
+      label: d + (d === 1 ? ' level' : ' levels'), sel: this.state.depth === d ? 'true' : 'false', pick: () => this.setState({ depth: d }),
+      style: `height: 32px; padding: 0 16px; border-radius: 6px; border: 0; cursor: pointer; font-size: 13px; background: ${this.state.depth === d ? '#262C35' : 'transparent'}; color: ${this.state.depth === d ? '#FFFFFF' : '#949CA8'}`
+    }));
+    const ST = { Running: '#3FCF8E', Partial: '#E5B93B', Stopped: '#9AA3AF', Error: '#FF6B6E', '—': '#6B7380' };
+    const R = [
+      ['shop-api', '/home/deploy/projects/shop-api', 'docker-compose', 'Running', 'PostgreSQL · container'],
+      ['shop-web', '/home/deploy/projects/shop-web', 'nextjs-pm2', 'Running', 'None detected'],
+      ['crm', '/home/deploy/projects/crm', 'docker-compose', 'Partial', 'MySQL · container'],
+      ['landing', '/home/deploy/projects/landing', 'nextjs-node', 'Stopped', 'None detected'],
+      ['blog', '/home/deploy/projects/blog', 'docker-compose', 'Error', 'MariaDB · container'],
+      ['old-tools', '/home/deploy/projects/old-tools', 'unknown', '—', 'None detected']
+    ];
+    const un = this.state.unchecked;
+    const rows = R.map(([name, path, stack, status, db]) => {
+      const checked = !un[name];
+      const unknown = stack === 'unknown';
+      return {
+        name, path, stack, status: status === '—' ? 'Unknown' : status, db, checked, known: !unknown, unknown,
+        dbColor: db === 'None detected' ? '#949CA8' : '#E7E9EC',
+        toggle: () => this.setState({ unchecked: Object.assign({}, un, { [name]: checked }) }),
+        rowStyle: `display: grid; grid-template-columns: 44px 1.2fr 1.8fr 1.3fr 0.9fr 1.2fr; gap: 12px; align-items: center; padding: 8px 24px 8px 16px; min-height: 52px; border-bottom: 1px solid #1A1E24; background: ${unknown ? 'rgba(229,185,59,0.06)' : 'transparent'}; opacity: ${checked ? 1 : 0.55}`,
+        stStyle: `display: flex; align-items: center; gap: 7px; font-size: 13px; color: ${ST[status]}`,
+        dot: `width: 7px; height: 7px; border-radius: 50%; background: ${ST[status]}`
+      };
+    });
+    const checkedCount = rows.filter(r => r.checked).length;
+    return {
+      steps, depths, rows, checkedCount,
+      isStep1: step === 1, isStep2: step === 2, isStep3: step === 3, isStep4: step === 4,
+      showPathError: !!this.props.pathError,
+      pathBorder: this.props.pathError ? '#B5373E' : '#2C323A',
+      scanning: this.state.scanning,
+      startScan: () => {
+        this.setState({ scanning: true });
+        this._t.push(setTimeout(() => this.setState({ scanning: false, step: 2 }), 1500));
+      },
+      back: () => this.setState({ step: 1 }),
+      toDrive: () => this.setState({ step: 3 }),
+      driveOff: !this.state.drive, driveOn: this.state.drive,
+      connectDrive: () => this.setState({ drive: true }),
+      continueStyle: `height: 42px; padding: 0 22px; border-radius: 8px; border: 0; font-weight: 600; cursor: pointer; background: ${this.state.drive ? '#E7E9EC' : '#262C35'}; color: ${this.state.drive ? '#0A0C0F' : '#949CA8'}`,
+      finish: () => this.setState({ step: 4 })
+    };
+  }
+}
+</script>
+</body>
+</html>

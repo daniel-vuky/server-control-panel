@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dialogs, menu and toasts</title>
+<script src="./assets/support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0A0C0F}
+a{color:#C9CED6}a:hover{color:#FFFFFF}
+button{font:inherit}
+@keyframes scp-spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="width: 1400px; height: 980px; box-sizing: border-box; padding: 40px; background: #0A0C0F; color: #E7E9EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px 32px; align-content: start">
+
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.08em">Confirm Stop · Flow D</span>
+    <div role="dialog" aria-labelledby="d1" style="padding: 22px; border-radius: 12px; background: #14181D; border: 1px solid #2C323A; box-shadow: 0 24px 64px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 14px">
+      <h2 id="d1" style="margin: 0; font-size: 17px; font-weight: 600">Stop <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">shop-api</span>?</h2>
+      <p style="margin: 0; color: #C9CED6; line-height: 1.55">Domain <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #FFFFFF">api.shop.vn</span> will stop serving traffic until you start it again.</p>
+      <p style="margin: 0; padding: 10px 12px; border-radius: 8px; background: #0F1215; border: 1px solid #1E232A; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: #949CA8">$ docker compose stop · timeout 60s</p>
+      <div style="display: flex; justify-content: flex-end; gap: 10px">
+        <button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC">Cancel</button>
+        <button type="button" style="height: 38px; padding: 0 18px; border-radius: 8px; border: 0; background: #D93A40; color: #FFFFFF; font-weight: 600">Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.08em">Choose DB · Flow E step 1</span>
+    <div role="dialog" aria-labelledby="d2" style="padding: 22px; border-radius: 12px; background: #14181D; border: 1px solid #2C323A; box-shadow: 0 24px 64px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 14px">
+      <h2 id="d2" style="margin: 0; font-size: 17px; font-weight: 600">Backup <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">crm</span></h2>
+      <p style="margin: 0; color: #949CA8">This project has 2 databases. Choose the one to back up.</p>
+      <fieldset style="margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px">
+        <legend style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Database</legend>
+        <label style="display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 8px; border: 1px solid #5AA7FF; background: #0F141B; cursor: pointer">
+          <input type="radio" name="db" checked="" style="width: 18px; height: 18px; accent-color: #5AA7FF">
+          <span style="display: flex; flex-direction: column; gap: 2px"><span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">crm_db</span><span style="font-size: 12.5px; color: #949CA8">MySQL 8 · container crm-db-1</span></span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 8px; border: 1px solid #2C323A; cursor: pointer">
+          <input type="radio" name="db" style="width: 18px; height: 18px; accent-color: #5AA7FF">
+          <span style="display: flex; flex-direction: column; gap: 2px"><span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">crm_analytics</span><span style="font-size: 12.5px; color: #949CA8">MongoDB 7 · container crm-mongo-1</span></span>
+        </label>
+      </fieldset>
+      <div style="display: flex; justify-content: flex-end; gap: 10px">
+        <button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC">Cancel</button>
+        <button type="button" style="height: 38px; padding: 0 18px; border-radius: 8px; border: 0; background: #E7E9EC; color: #0A0C0F; font-weight: 600">Back up now</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.08em">Drive not connected · Flow E step 2</span>
+    <div role="dialog" aria-labelledby="d3" style="padding: 22px; border-radius: 12px; background: #14181D; border: 1px solid #2C323A; box-shadow: 0 24px 64px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 14px">
+      <div aria-hidden="true" style="width: 40px; height: 40px; border-radius: 10px; background: #1A1F26; color: #E7E9EC; display: flex; align-items: center; justify-content: center">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8.5 3h7l6 10.5-3.5 6h-12L2.5 13.5z"></path><path d="M8.5 3l6.5 11.5M15.5 3 9 14.5M2.5 13.5h19"></path></svg>
+      </div>
+      <h2 id="d3" style="margin: 0; font-size: 17px; font-weight: 600">Connect Google Drive first</h2>
+      <p style="margin: 0; color: #C9CED6; line-height: 1.55">Backups need a storage location. After connecting, you will return here and continue backing up <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">crm_db</span>.</p>
+      <div style="display: flex; justify-content: flex-end; gap: 10px">
+        <button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC">Later</button>
+        <button type="button" style="height: 38px; padding: 0 18px; border-radius: 8px; border: 0; background: #E7E9EC; color: #0A0C0F; font-weight: 600">Connect Google Drive</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px; grid-column: span 2">
+    <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.08em">Failed backup progress · Flow E steps 3–5</span>
+    <div role="dialog" aria-labelledby="d4" style="padding: 22px; border-radius: 12px; background: #14181D; border: 1px solid #2C323A; box-shadow: 0 24px 64px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <h2 id="d4" style="margin: 0; font-size: 17px; font-weight: 600">Backup <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">crm · crm_db</span></h2>
+        <span style="margin-left: auto; padding: 3px 9px; border-radius: 999px; background: rgba(242,85,90,0.14); color: #FF8C8F; font-size: 12px; font-weight: 500">Failed</span>
+      </div>
+      <ol style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px">
+        <li style="display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 8px; background: #1E0F11; border: 1px solid #6B262C">
+          <span style="display: flex; align-items: center; gap: 8px; color: #FF8C8F; font-weight: 600; font-size: 13px">
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg>1. Dump
+          </span>
+          <span style="font-size: 12.5px; color: #F2B8BB; line-height: 1.45">Access denied for user 'crm'. Check <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">MYSQL_PASSWORD</span> in <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">.env</span>.</span>
+        </li>
+        <li style="display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 8px; background: #111418; border: 1px solid #1E232A">
+          <span style="display: flex; align-items: center; gap: 8px; color: #949CA8; font-size: 13px"><span aria-hidden="true" style="width: 11px; height: 11px; box-sizing: border-box; border: 2px solid #3A414B; border-radius: 50%"></span>2. Compress</span>
+          <span style="font-size: 12.5px; color: #949CA8">Skipped</span>
+        </li>
+        <li style="display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 8px; background: #111418; border: 1px solid #1E232A">
+          <span style="display: flex; align-items: center; gap: 8px; color: #949CA8; font-size: 13px"><span aria-hidden="true" style="width: 11px; height: 11px; box-sizing: border-box; border: 2px solid #3A414B; border-radius: 50%"></span>3. Upload to Drive</span>
+          <span style="font-size: 12.5px; color: #949CA8">Skipped</span>
+        </li>
+        <li style="display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 8px; background: #111418; border: 1px solid #1E232A">
+          <span style="display: flex; align-items: center; gap: 8px; color: #949CA8; font-size: 13px"><span aria-hidden="true" style="width: 11px; height: 11px; box-sizing: border-box; border: 2px solid #3A414B; border-radius: 50%"></span>4. Prune old backups</span>
+          <span style="font-size: 12.5px; color: #949CA8">Skipped · temp file deleted</span>
+        </li>
+      </ol>
+      <div style="display: flex; justify-content: flex-end; gap: 10px">
+        <button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC">Close</button>
+        <button type="button" style="height: 38px; padding: 0 18px; border-radius: 8px; border: 0; background: #E7E9EC; color: #0A0C0F; font-weight: 600; display: flex; align-items: center; gap: 7px">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>Retry
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.08em">⋯ menu on card</span>
+    <div role="menu" aria-label="crm actions" style="width: 220px; padding: 6px; border-radius: 9px; background: #181C22; border: 1px solid #2C323A; box-shadow: 0 12px 32px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 2px">
+      <button type="button" role="menuitem" style="height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: #222830; color: #E7E9EC; text-align: left; display: flex; align-items: center; gap: 10px">
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>Restart</button>
+      <button type="button" role="menuitem" style="height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #E7E9EC; text-align: left; display: flex; align-items: center; gap: 10px">
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 7 4.5 4.5 0 0 1 18 18z"></path><path d="M12 11v6M9.5 13.5 12 11l2.5 2.5"></path></svg>Back up now</button>
+      <button type="button" role="menuitem" style="height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #E7E9EC; text-align: left; display: flex; align-items: center; gap: 10px">
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 6h14M5 10h14M5 14h9M5 18h6"></path></svg>View logs</button>
+      <span aria-hidden="true" style="height: 1px; margin: 4px 6px; background: #2C323A"></span>
+      <a role="menuitem" href="02-project-detail.html" style="height: 36px; padding: 0 10px; border-radius: 6px; color: #E7E9EC; text-decoration: none; display: flex; align-items: center; gap: 10px">
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>Open details</a>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px; grid-column: span 2">
+    <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.08em">Toast</span>
+    <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start">
+      <div role="status" style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; background: #14181D; border: 1px solid #1E3A2D; box-shadow: 0 12px 32px rgba(0,0,0,0.5)">
+        <span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E"></span>
+        <span>Stopped <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">landing</span></span>
+      </div>
+      <div role="status" style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; background: #14181D; border: 1px solid #1E3A2D; box-shadow: 0 12px 32px rgba(0,0,0,0.5)">
+        <span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E"></span>
+        <span>Added 5 projects</span>
+      </div>
+      <div role="alert" style="display: flex; align-items: flex-start; gap: 10px; padding: 12px 16px; border-radius: 10px; background: #1A1012; border: 1px solid #5C2228; box-shadow: 0 12px 32px rgba(0,0,0,0.5); max-width: 420px">
+        <span aria-hidden="true" style="width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: #FF6B6E; flex: none"></span>
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <span style="font-weight: 600">Couldn't stop <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">crm</span></span>
+          <span style="font-size: 13px; color: #F2B8BB">Timed out after 60 seconds: container crm-app-1 did not respond to SIGTERM. Status unchanged.</span>
+          <a href="02-project-detail.html" style="font-size: 13px; color: #FFD7D8">View logs</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <span style="font-size: 12px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.08em">Backup blocked · disk almost full</span>
+    <div role="alert" style="padding: 16px; border-radius: 10px; background: #1A1012; border: 1px solid #5C2228; display: flex; flex-direction: column; gap: 8px">
+      <span style="font-weight: 600; color: #FFD7D8">Not enough space to dump</span>
+      <span style="font-size: 13px; color: #F2B8BB; line-height: 1.5">Needs about <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">2.1 GB</span> free, the server has <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">1.4 GB</span> left. Free up some disk space and try again.</span>
+      <a href="05-server.html" style="font-size: 13px; color: #FFD7D8">View disk usage by app</a>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1400,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

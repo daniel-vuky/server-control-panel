@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mobile – Dashboard</title>
+<script src="./assets/support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0A0C0F}
+a{color:#C9CED6}a:hover{color:#FFFFFF}
+button,input,select{font:inherit}
+button:focus-visible,a:focus-visible{outline:2px solid #5AA7FF;outline-offset:2px}
+@keyframes scp-spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="position: relative; width: 390px; height: 1560px; overflow: hidden; box-sizing: border-box; background: #0A0C0F; color: #E7E9EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; display: flex; flex-direction: column">
+
+  <header style="display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid #1E232A; background: #0D1013">
+    <button type="button" aria-label="Open menu" style="width: 44px; height: 44px; margin-left: -8px; border: 0; border-radius: 8px; background: transparent; color: #E7E9EC; display: flex; align-items: center; justify-content: center; cursor: pointer">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+    </button>
+    <div style="display: flex; flex-direction: column; gap: 1px">
+      <span style="font-weight: 600; font-size: 16px">Dashboard</span>
+      <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: #949CA8">prod-01</span>
+    </div>
+    <span style="margin-left: auto; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid #1E3A2D; background: #0F1A15; color: #8FE3B9; font-size: 12px"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: #3FCF8E"></span>Realtime</span>
+  </header>
+
+  <div style="flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 16px">
+    <section aria-label="Server summary" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+      <div style="padding: 12px; border-radius: 10px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 11.5px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.06em">CPU</span>
+        <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 20px; font-weight: 600">34%</span>
+        <span aria-hidden="true" style="height: 4px; border-radius: 2px; background: #1E232A; display: flex"><span style="width: 34%; border-radius: 2px; background: #5AA7FF"></span></span>
+      </div>
+      <div style="padding: 12px; border-radius: 10px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 11.5px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.06em">RAM</span>
+        <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 20px; font-weight: 600">5.2<span style="font-size: 13px; color: #949CA8"> / 8 GB</span></span>
+        <span aria-hidden="true" style="height: 4px; border-radius: 2px; background: #1E232A; display: flex"><span style="width: 65%; border-radius: 2px; background: #F0913A"></span></span>
+      </div>
+      <div style="padding: 12px; border-radius: 10px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 11.5px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.06em">Disk</span>
+        <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 20px; font-weight: 600">92<span style="font-size: 13px; color: #949CA8"> / 160 GB</span></span>
+        <span aria-hidden="true" style="height: 4px; border-radius: 2px; background: #1E232A; display: flex"><span style="width: 58%; border-radius: 2px; background: #5AA7FF"></span></span>
+      </div>
+      <div style="padding: 12px; border-radius: 10px; background: #111418; border: 1px solid #1E232A; display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 11.5px; color: #949CA8; text-transform: uppercase; letter-spacing: 0.06em">CF Tunnel</span>
+        <span style="display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 600; color: #3FCF8E"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E"></span>Connected</span>
+        <span style="font-size: 12px; color: #949CA8">Uptime 23 days</span>
+      </div>
+    </section>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: #C9CED6">
+      <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: #3FCF8E"></span>{{cRun}} running</span>
+      <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: #E5B93B"></span>{{cPart}} partial</span>
+      <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: #9AA3AF"></span>{{cStop}} stopped</span>
+      <span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: #FF6B6E"></span>{{cErr}} error</span>
+    </div>
+
+    <section aria-label="Projects" style="display: flex; flex-direction: column; gap: 12px">
+      <sc-for list="{{projects}}" as="p" hint-placeholder-count="5">
+        <article style="{{p.card}}">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <a href="02-project-detail.html" style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 17px; font-weight: 600; color: #FFFFFF; text-decoration: none">{{p.id}}</a>
+            <span style="margin-left: auto; {{p.pill}}">
+              <sc-if value="{{p.busy}}" hint-placeholder-val="{{ false }}"><span aria-hidden="true" style="width: 9px; height: 9px; box-sizing: border-box; border: 2px solid #5AA7FF; border-right-color: transparent; border-radius: 50%; animation: scp-spin 0.8s linear infinite"></span></sc-if>
+              <sc-if value="{{p.idle}}" hint-placeholder-val="{{ true }}"><span aria-hidden="true" style="{{p.dot}}"></span></sc-if>
+              {{p.label}}
+            </span>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: #949CA8">
+            <span>{{p.stack}}</span>
+            <span>{{p.domain}}</span>
+          </div>
+          <div style="display: flex; gap: 16px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; font-variant-numeric: tabular-nums">
+            <span><span style="color: #949CA8">CPU </span>{{p.cpu}}</span>
+            <span><span style="color: #949CA8">RAM </span>{{p.ram}}</span>
+            <span style="margin-left: auto; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12.5px; color: #949CA8">Backup: {{p.backup}}</span>
+          </div>
+          <button type="button" onClick="{{p.act}}" disabled="{{p.busy}}" style="{{p.btn}}">{{p.btnLabel}}</button>
+        </article>
+      </sc-for>
+    </section>
+  </div>
+
+  <sc-if value="{{hasSheet}}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; top: 0; left: 0; right: 0; height: 844px; z-index: 10; background: rgba(5,6,8,0.7); display: flex; flex-direction: column; justify-content: flex-end">
+      <div role="dialog" aria-modal="true" aria-labelledby="m-stop" style="padding: 20px 16px 24px; border-radius: 16px 16px 0 0; background: #14181D; border-top: 1px solid #2C323A; display: flex; flex-direction: column; gap: 12px">
+        <span aria-hidden="true" style="align-self: center; width: 40px; height: 4px; border-radius: 2px; background: #3A414B"></span>
+        <h2 id="m-stop" style="margin: 0; font-size: 18px; font-weight: 600">Stop <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">{{sheetId}}</span>?</h2>
+        <p style="margin: 0; color: #C9CED6; line-height: 1.5">Domain <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #FFFFFF">{{sheetDomain}}</span> will stop serving traffic.</p>
+        <button type="button" onClick="{{confirmStop}}" style="height: 50px; border-radius: 10px; border: 0; background: #D93A40; color: #FFFFFF; font-weight: 600; font-size: 16px; cursor: pointer">Stop</button>
+        <button type="button" onClick="{{cancel}}" style="height: 50px; border-radius: 10px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC; font-size: 16px; cursor: pointer">Cancel</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1560}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { s: { 'shop-api': 'running', 'shop-web': 'running', 'crm': 'partial', 'landing': 'stopped', 'blog': 'error' }, sheet: null };
+    this._t = [];
+  }
+  componentWillUnmount() { this._t.forEach(clearTimeout); }
+  set(id, v) { this.setState(st => ({ s: Object.assign({}, st.s, { [id]: v }) })); }
+  renderVals() {
+    const M = {
+      running: ['Running', '#3FCF8E', 'rgba(63,207,142,0.12)'], partial: ['Partial', '#E5B93B', 'rgba(229,185,59,0.13)'],
+      stopped: ['Stopped', '#9AA3AF', 'rgba(154,163,175,0.12)'], error: ['Error', '#FF6B6E', 'rgba(242,85,90,0.14)'],
+      starting: ['Starting…', '#5AA7FF', 'rgba(76,155,245,0.14)'], stopping: ['Stopping…', '#5AA7FF', 'rgba(76,155,245,0.14)']
+    };
+    const B = [
+      ['shop-api', 'Docker · 3 container', 'api.shop.vn', '12%', '640 MB', '02:00 OK'],
+      ['shop-web', 'Next.js · pm2', 'shop.vn', '4%', '310 MB', '—'],
+      ['crm', 'Docker · 1/2 container', 'crm.company.vn', '8%', '420 MB', 'failed'],
+      ['landing', 'Next.js · node', 'landing.company.vn', '0%', '0 MB', '—'],
+      ['blog', 'Docker · 2 container', 'blog.company.vn', '0%', '45 MB', '3 days ago'],
+    ];
+    const st = this.state.s;
+    const projects = B.map(([id, stack, domain, cpu, ram, backup]) => {
+      const s = st[id], m = M[s];
+      const busy = s === 'starting' || s === 'stopping';
+      const on = s === 'running' || s === 'partial';
+      return {
+        id, stack, domain, cpu, ram, backup, busy, idle: !busy, label: m[0],
+        pill: `display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 999px; background: ${m[2]}; color: ${m[1]}; font-size: 12.5px; font-weight: 500`,
+        dot: `width: 7px; height: 7px; border-radius: 50%; background: ${m[1]}`,
+        card: `display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: #111418; border: 1px solid ${s === 'error' ? '#5C2228' : '#1E232A'}`,
+        btnLabel: busy ? m[0] : on ? 'Stop' : s === 'error' ? 'Restart' : 'Start',
+        btn: `height: 48px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: ${busy ? 'default' : 'pointer'}; ${busy ? 'border: 1px solid #22344A; background: #0F141B; color: #7FB8FF;' : on ? 'border: 1px solid #6B262C; background: #1E0F11; color: #FF8C8F;' : 'border: 0; background: #E7E9EC; color: #0A0C0F;'}`,
+        act: () => {
+          if (busy) return;
+          if (on) { this.setState({ sheet: id }); return; }
+          this.set(id, 'starting');
+          this._t.push(setTimeout(() => this.set(id, 'running'), 1500));
+        }
+      };
+    });
+    const c = k => Object.values(st).filter(v => v === k).length;
+    const sp = B.find(b => b[0] === this.state.sheet);
+    return {
+      projects, cRun: c('running'), cPart: c('partial'), cStop: c('stopped'), cErr: c('error'),
+      hasSheet: !!sp, sheetId: sp ? sp[0] : '', sheetDomain: sp ? sp[2] : '',
+      cancel: () => this.setState({ sheet: null }),
+      confirmStop: () => {
+        const id = this.state.sheet;
+        this.setState({ sheet: null });
+        this.set(id, 'stopping');
+        this._t.push(setTimeout(() => this.set(id, 'stopped'), 1500));
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

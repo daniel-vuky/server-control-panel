@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings – Server Control Panel</title>
+<script src="./assets/support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0A0C0F}
+a{color:#C9CED6}a:hover{color:#FFFFFF}
+button,input,select{font:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #5AA7FF;outline-offset:2px}
+@keyframes scp-spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="position: relative; min-height: 100vh; background: #0A0C0F; color: #E7E9EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; display: flex; flex-wrap: wrap; align-items: stretch">
+
+  <nav aria-label="Main navigation" style="flex: 1 1 220px; box-sizing: border-box; padding: 20px 14px; background: #0D1013; border-right: 1px solid #1E232A; display: flex; flex-direction: column; gap: 28px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 6px">
+      <div aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #E7E9EC; color: #0A0C0F; display: flex; align-items: center; justify-content: center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"></rect><rect x="3" y="13" width="18" height="7" rx="1.5"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+        <span style="font-weight: 600; font-size: 14px; letter-spacing: -0.01em">Server Control Panel</span>
+        <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: #949CA8">prod-01 · Ubuntu 24.04</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <a href="01-dashboard.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+        Dashboard
+      </a>
+      <a href="02-project-detail.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+        Projects
+        <span style="margin-left: auto; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #949CA8">5</span>
+      </a>
+      <a href="04-backups.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg>
+        Backups
+      </a>
+      <a href="05-server.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"></rect><rect x="3" y="13" width="18" height="7" rx="1.5"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+        Server
+      </a>
+      <a href="06-activity.html" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; color: #B4BAC4; text-decoration: none">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg>
+        Activity
+      </a>
+      <a href="07-settings.html" aria-current="page" style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; background: #1A1F26; color: #FFFFFF; text-decoration: none; font-weight: 500">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+        Settings
+      </a>
+    </div>
+    <div style="margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 12px 8px 0; border-top: 1px solid #1E232A">
+      <div aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 50%; background: #262C35; color: #E7E9EC; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600">AD</div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+        <span style="font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">admin@company.vn</span>
+        <span style="font-size: 11.5px; color: #949CA8">Via Cloudflare Access</span>
+      </div>
+    </div>
+  </nav>
+
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 28px 32px 56px; display: flex; flex-direction: column; gap: 18px; max-width: 1040px">
+    <header style="display: flex; flex-direction: column; gap: 6px">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em">Settings</h1>
+      <p style="margin: 0; color: #949CA8; font-size: 13px">Workspaces, Google Drive, alert channels and backup defaults</p>
+    </header>
+
+    <section aria-labelledby="ws-title" style="border-radius: 10px; background: #111418; border: 1px solid #1E232A">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 18px; border-bottom: 1px solid #1E232A">
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <h2 id="ws-title" style="margin: 0; font-size: 15px; font-weight: 600">Workspaces</h2>
+          <span style="font-size: 12.5px; color: #949CA8">Only scans inside these folders. Blocks <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">..</span> and symlinks pointing outside.</span>
+        </div>
+        <a href="03-onboarding.html" style="height: 34px; padding: 0 14px; border-radius: 7px; border: 1px solid #2C323A; background: #14181D; color: #E7E9EC; text-decoration: none; display: flex; align-items: center; gap: 7px">
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>Add workspace
+        </a>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 18px">
+        <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">/home/deploy/projects</span>
+        <span style="font-size: 13px; color: #949CA8">Depth 1 · 5 projects tracked · 1 ignored · last scanned 09:42</span>
+        <div style="margin-left: auto; display: flex; gap: 8px">
+          <button type="button" style="height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC; cursor: pointer">Rescan</button>
+          <button type="button" style="height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid #6B262C; background: transparent; color: #FF8C8F; cursor: pointer">Remove</button>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="drive-title" style="border-radius: 10px; background: #111418; border: 1px solid #1E232A">
+      <div style="padding: 16px 18px; border-bottom: 1px solid #1E232A; display: flex; flex-direction: column; gap: 4px">
+        <h2 id="drive-title" style="margin: 0; font-size: 15px; font-weight: 600">Google Drive</h2>
+        <span style="font-size: 12.5px; color: #949CA8">Access is limited to files created by the app. Tokens are encrypted at rest.</span>
+      </div>
+      <div style="padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <span style="font-size: 12.5px; color: #949CA8">Connected account</span>
+          <span style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E"></span><span style="font-family: 'JetBrains Mono', ui-monospace, monospace">ops.backup@gmail.com</span></span>
+        </div>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">Destination folder
+          <select style="height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px">
+            <option>My Drive / server-backups</option>
+            <option>+ Create new folder…</option>
+          </select>
+        </label>
+      </div>
+      <div style="padding: 0 18px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+        <button type="button" onClick="{{testDrive}}" style="height: 36px; padding: 0 14px; border-radius: 7px; border: 1px solid #2C323A; background: #14181D; color: #E7E9EC; display: flex; align-items: center; gap: 8px; cursor: pointer">
+          <sc-if value="{{testing}}" hint-placeholder-val="{{ false }}"><span aria-hidden="true" style="width: 12px; height: 12px; box-sizing: border-box; border: 2px solid #5AA7FF; border-right-color: transparent; border-radius: 50%; animation: scp-spin 0.8s linear infinite"></span></sc-if>
+          Test connection
+        </button>
+        <sc-if value="{{tested}}" hint-placeholder-val="{{ true }}">
+          <span role="status" style="display: flex; align-items: center; gap: 7px; font-size: 13px; color: #3FCF8E">
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"></path></svg>
+            Uploaded a 1 KB test file to Drive and deleted it
+          </span>
+        </sc-if>
+        <button type="button" style="margin-left: auto; height: 36px; padding: 0 14px; border-radius: 7px; border: 1px solid #6B262C; background: transparent; color: #FF8C8F; cursor: pointer">Disconnect</button>
+      </div>
+    </section>
+
+    <section aria-labelledby="alert-title" style="border-radius: 10px; background: #111418; border: 1px solid #1E232A">
+      <div style="padding: 16px 18px; border-bottom: 1px solid #1E232A; display: flex; flex-direction: column; gap: 4px">
+        <h2 id="alert-title" style="margin: 0; font-size: 15px; font-weight: 600">Alerts</h2>
+        <span style="font-size: 12.5px; color: #949CA8">Sent when a project enters Error, a domain fails to respond twice, a scheduled backup fails, a threshold is exceeded for 5 minutes, or the Tunnel disconnects.</span>
+      </div>
+      <div style="padding: 6px 18px">
+        <sc-for list="{{channels}}" as="c" hint-placeholder-count="2">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 12px 0; border-bottom: 1px solid #1A1E24">
+            <div style="display: flex; flex-direction: column; gap: 3px; flex: 1 1 260px">
+              <span style="font-weight: 500">{{c.name}}</span>
+              <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: #949CA8">{{c.target}}</span>
+            </div>
+            <button type="button" style="height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid #2C323A; background: transparent; color: #E7E9EC; cursor: pointer">Send test</button>
+            <button type="button" role="switch" aria-checked="{{c.onStr}}" aria-label="Enable alerts via {{c.name}}" onClick="{{c.toggle}}" style="{{c.sw}}"><span style="{{c.knob}}"></span></button>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding: 14px 18px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 14px">
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">CPU threshold
+          <span style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215"><input type="number" value="90" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; color-scheme: dark"><span>%</span></span>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">RAM threshold
+          <span style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215"><input type="number" value="90" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; color-scheme: dark"><span>%</span></span>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">Disk threshold
+          <span style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215"><input type="number" value="85" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; color-scheme: dark"><span>%</span></span>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">Sustained for
+          <span style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215"><input type="number" value="5" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; color-scheme: dark"><span>min</span></span>
+        </label>
+      </div>
+    </section>
+
+    <section aria-labelledby="bk-title" style="border-radius: 10px; background: #111418; border: 1px solid #1E232A">
+      <div style="padding: 16px 18px; border-bottom: 1px solid #1E232A; display: flex; flex-direction: column; gap: 4px">
+        <h2 id="bk-title" style="margin: 0; font-size: 15px; font-weight: 600">Backup defaults</h2>
+        <span style="font-size: 12.5px; color: #949CA8">Applies to new projects. Each project can still be configured individually in the Database &amp; Backup tab.</span>
+      </div>
+      <div style="padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 14px">
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">Schedule
+          <select style="height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215; color: #E7E9EC; font-size: 13px">
+            <option>Daily</option><option>Weekly</option><option>Off</option>
+          </select>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">Run time
+          <input type="time" value="02:00" style="height: 38px; box-sizing: border-box; padding: 0 10px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; color-scheme: dark">
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #949CA8">Copies to keep
+          <input type="number" value="14" style="height: 38px; box-sizing: border-box; padding: 0 10px; border-radius: 7px; border: 1px solid #2C323A; background: #0F1215; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; color-scheme: dark">
+        </label>
+      </div>
+      <div style="padding: 0 18px 8px">
+        <sc-for list="{{opts}}" as="o" hint-placeholder-count="2">
+          <div style="display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid #1A1E24">
+            <div style="display: flex; flex-direction: column; gap: 3px; flex: 1">
+              <span style="font-weight: 500">{{o.name}}</span>
+              <span style="font-size: 12.5px; color: #949CA8">{{o.desc}}</span>
+            </div>
+            <button type="button" role="switch" aria-checked="{{o.onStr}}" aria-label="{{o.name}}" onClick="{{o.toggle}}" style="{{o.sw}}"><span style="{{o.knob}}"></span></button>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding: 12px 18px 18px; display: flex; justify-content: flex-end">
+        <button type="button" style="height: 38px; padding: 0 18px; border-radius: 7px; border: 0; background: #E7E9EC; color: #0A0C0F; font-weight: 600; cursor: pointer">Save changes</button>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1220}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { on: { telegram: true, email: true, gzip: true, enc: false }, testing: false, tested: true };
+    this._t = [];
+  }
+  componentWillUnmount() { this._t.forEach(clearTimeout); }
+  renderVals() {
+    const on = this.state.on;
+    const sw = v => `position: relative; width: 44px; height: 26px; flex: none; border-radius: 999px; border: 0; padding: 0; cursor: pointer; background: ${v ? '#2F9E6B' : '#2C323A'}`;
+    const knob = v => `position: absolute; top: 3px; left: ${v ? 21 : 3}px; width: 20px; height: 20px; border-radius: 50%; background: #FFFFFF; transition: left .2s`;
+    const flip = k => () => this.setState({ on: Object.assign({}, on, { [k]: !on[k] }) });
+    const mk = (k, extra) => Object.assign({ onStr: on[k] ? 'true' : 'false', sw: sw(on[k]), knob: knob(on[k]), toggle: flip(k) }, extra);
+    return {
+      channels: [
+        mk('telegram', { name: 'Telegram', target: 'bot ••••••:AAH… → chat -100•••• 4821' }),
+        mk('email', { name: 'Email', target: 'admin@company.vn, dev@company.vn' })
+      ],
+      opts: [
+        mk('gzip', { name: 'Gzip compression', desc: 'Cuts SQL dump size by 70–85%.' }),
+        mk('enc', { name: 'Encrypt backup files', desc: 'Encrypts before uploading to Drive. Store the passphrase elsewhere: if it is lost, backups cannot be restored.' })
+      ],
+      testing: this.state.testing, tested: this.state.tested && !this.state.testing,
+      testDrive: () => {
+        this.setState({ testing: true });
+        this._t.push(setTimeout(() => this.setState({ testing: false, tested: true }), 1200));
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
