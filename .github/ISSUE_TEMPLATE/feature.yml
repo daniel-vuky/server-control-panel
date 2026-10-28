@@ -1,0 +1,38 @@
+name: Feature / task
+description: New functionality or a unit of work. Written so Claude (or anyone) can pick it up without extra context.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this is done, and why it matters. One or two sentences.
+      placeholder: Operators can restart a service from the dashboard without SSH-ing into the server.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist that decides "done". Make each item verifiable (a test, a command, a visible behavior).
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What should NOT be done in this issue, to keep the change small.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / pointers
+      description: Relevant files, links, designs, related issues, constraints.
+      placeholder: "- src/... \n- Related: #12"
+    validations:
+      required: false
