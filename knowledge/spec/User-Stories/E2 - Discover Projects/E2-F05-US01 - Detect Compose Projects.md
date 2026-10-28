@@ -35,3 +35,10 @@ As the Server Owner, I want each docker compose project recognised automatically
 - **When** it is scanned
 - **Then** its current status is taken from Docker
 - **And** it is shown with the scan results
+
+### Scenario: The panel's own project is monitored, never controlled
+
+- **Given** the panel's own compose project lies inside a workspace
+- **When** it is scanned
+- **Then** it is listed and its status, metrics and logs are shown like any project
+- **And** it offers no Start, Stop or Restart, so the panel can never stop itself ([ADR 0008](../../../../docs/decisions/0008-deploy-the-panel-as-a-docker-compose-project-with-pull-based-updates.md))
