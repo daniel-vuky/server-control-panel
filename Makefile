@@ -1,13 +1,13 @@
-VERSION ?= $(shell git rev-parse --short HEAD)
+VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm tools
 
 .DEFAULT_GOAL := dev
 .PHONY: dev-image setup dev shell test lint fmt typegen build ci
 
-## dev-image: build the dev toolchain image (cached after the first run)
+## dev-image: build the dev toolchain image (cached after the first run); SKIP_DEV_IMAGE=1 reuses a prebuilt scp-dev (CI)
 dev-image:
-	$(COMPOSE) build api
+	@if [ -n "$(SKIP_DEV_IMAGE)" ]; then echo "SKIP_DEV_IMAGE set: using the prebuilt scp-dev image"; else $(COMPOSE) build api; fi
 
 ## setup: install web dependencies (frozen lockfile) into the node_modules volume
 setup: dev-image
