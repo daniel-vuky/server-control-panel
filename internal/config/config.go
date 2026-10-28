@@ -14,11 +14,19 @@ const DefaultAddr = "127.0.0.1:8471"
 type Config struct {
 	// Addr is the listen address. It is always 127.0.0.1:<port> (ADR 0006).
 	Addr string
+	// AccessTeamDomain is the raw CF_ACCESS_TEAM_DOMAIN setting. Release builds
+	// validate it in auth.DefaultVerifier; dev builds ignore it.
+	AccessTeamDomain string
+	// AccessAUD is the raw CF_ACCESS_AUD setting, the Cloudflare Access
+	// application audience tag. Release builds validate it in auth.DefaultVerifier;
+	// dev builds ignore it.
+	AccessAUD string
 }
 
 // Load reads configuration through getenv (usually os.Getenv). It refuses any
 // listen address that is not 127.0.0.1 with a port from 1 to 65535, so the panel
-// can only be reached through the Cloudflare Tunnel.
+// can only be reached through the Cloudflare Tunnel. The Cloudflare Access
+// settings are read as they are; auth.DefaultVerifier validates them.
 func Load(getenv func(string) string) (Config, error) {
 	addr := getenv("PANEL_ADDR")
 	if addr == "" {
@@ -27,7 +35,11 @@ func Load(getenv func(string) string) (Config, error) {
 	if err := validateAddr(addr); err != nil {
 		return Config{}, err
 	}
-	return Config{Addr: addr}, nil
+	return Config{
+		Addr:             addr,
+		AccessTeamDomain: getenv("CF_ACCESS_TEAM_DOMAIN"),
+		AccessAUD:        getenv("CF_ACCESS_AUD"),
+	}, nil
 }
 
 func validateAddr(addr string) error {

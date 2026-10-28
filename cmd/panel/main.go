@@ -31,11 +31,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	verifier, err := auth.DefaultVerifier(cfg)
+	if err != nil {
+		log.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: api.NewRouter(api.Deps{
 			Version:  version,
-			Verifier: auth.DefaultVerifier(),
+			Verifier: verifier,
 			Web:      web.Handler(),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

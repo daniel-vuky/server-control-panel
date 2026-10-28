@@ -53,3 +53,30 @@ func TestLoadRejectsNonLoopbackAddr(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadReadsAccessSettingsRaw(t *testing.T) {
+	env := map[string]string{
+		"CF_ACCESS_TEAM_DOMAIN": " HTTPS://X/ ",
+		"CF_ACCESS_AUD":         "zz",
+	}
+	cfg, err := Load(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AccessTeamDomain != " HTTPS://X/ " {
+		t.Errorf("AccessTeamDomain = %q, want the raw value", cfg.AccessTeamDomain)
+	}
+	if cfg.AccessAUD != "zz" {
+		t.Errorf("AccessAUD = %q, want zz", cfg.AccessAUD)
+	}
+}
+
+func TestLoadSucceedsWithoutAccessSettings(t *testing.T) {
+	cfg, err := Load(func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AccessTeamDomain != "" || cfg.AccessAUD != "" {
+		t.Errorf("Access settings = (%q, %q), want both empty", cfg.AccessTeamDomain, cfg.AccessAUD)
+	}
+}
