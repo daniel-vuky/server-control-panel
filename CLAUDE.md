@@ -19,3 +19,40 @@ Skills for the board:
 - `update-issues` — edit issue fields or comment.
 
 `gh` must be logged in as `daniel-vuky` with the `project` scope (`gh auth status`).
+
+## Commands
+
+The host needs only Docker and `make`; Go, Node, pnpm and every tool run in the dev image (ADR 0009). Run them through `make`, never natively.
+
+- `make dev` (the default): start Air (Go hot reload) and Vite (web hot reload). UI at `http://localhost:5173`, API on `127.0.0.1:8471` inside the dev container, with the dev identity `dev@localhost` (build tag `dev`).
+- `make shell`: open a bash shell in the dev image.
+- `make setup`: install web dependencies (frozen lockfile) into the `node_modules` volume.
+- `make dev-image`: build the dev toolchain image (cached). `SKIP_DEV_IMAGE=1` reuses a prebuilt `scp-dev` image (CI does this).
+- `make test`: Go tests (release and `dev` tags), then web tests.
+- `make lint`: golangci-lint, Biome (warnings fail) and the TypeScript typecheck.
+- `make fmt`: format Go and web sources.
+- `make typegen`: regenerate `web/src/api/types.gen.ts` from the Go types in `internal/api` (`tygo.yaml`).
+- `make build`: build the web app, then the single release binary at `bin/panel` (`VERSION` defaults to the short git SHA).
+- `make ci`: lint, test, build, then check that `types.gen.ts` is committed. This is what `.github/workflows/ci.yml` runs on pull requests.
+
+Production deployment (image, install script, updater) is not built yet. It is tracked in #75 and ADR 0008.
+
+## Architecture
+
+One Go binary (`cmd/panel`) serves the JSON API and the embedded React app (`web/`, built into `internal/web/dist`). It binds `127.0.0.1` only and is reached through a Cloudflare Tunnel (ADR 0006).
+
+- `internal/config`: reads `PANEL_ADDR` and refuses any address that is not `127.0.0.1:<port>`.
+- `internal/auth`: the `Verifier` seam and the `Require` middleware. Release builds use `RejectAll`, so every request except `GET /api/health` gets 401 until #10 adds Cloudflare Access verification. The `dev` build tag swaps in the fixed `dev@localhost` identity; it must never reach a release binary.
+- `internal/api`: the router and API types. Only `GET /api/health` is public; everything else goes through `auth.Require`.
+- `internal/web`: serves the embedded single-page app for every non-API path.
+- `web/`: React, Vite and TypeScript. Pages are declared in `web/src/app/routes.ts`; most are placeholders for later issues.
+- Only `internal/runner` may import `os/exec` (depguard in `.golangci.yml`, ADR 0005). That package arrives with #12. It runs whitelisted `docker compose` commands without a shell.
+- v1 manages docker compose projects only.
+
+Decisions live in `docs/decisions/` (ADRs 0001-0009). The product spec and design references are in `knowledge/`.
+
+## Conventions
+
+- After changing types in `internal/api`, run `make typegen` and commit `web/src/api/types.gen.ts`; `make ci` fails if it is stale.
+- Run Go, pnpm and lint tools through `make`, not natively on the host.
+- `docs/superpowers/` (local design and plan docs) is gitignored; keep it local and do not commit it.
