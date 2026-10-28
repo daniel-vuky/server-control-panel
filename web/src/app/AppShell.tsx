@@ -32,8 +32,8 @@ export default function AppShell() {
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 rounded-md px-2.5 py-[9px] no-underline ${
                     isActive
-                      ? 'bg-[#1A1F26] font-medium text-white'
-                      : 'text-[#B4BAC4] hover:bg-surface'
+                      ? 'bg-nav-active font-medium text-white'
+                      : 'text-nav-text hover:bg-surface'
                   }`
                 }
               >

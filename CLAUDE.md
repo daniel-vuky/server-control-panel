@@ -32,7 +32,7 @@ The host needs only Docker and `make`; Go, Node, pnpm and every tool run in the 
 - `make lint`: golangci-lint, Biome (warnings fail) and the TypeScript typecheck.
 - `make fmt`: format Go and web sources.
 - `make typegen`: regenerate `web/src/api/types.gen.ts` from the Go types in `internal/api` (`tygo.yaml`).
-- `make build`: build the web app, then the single release binary at `bin/panel` (`VERSION` defaults to the short git SHA).
+- `make build`: build the web app, then the single release binary at `bin/panel` (`VERSION` defaults to the short git SHA, or `dev` when git is unavailable).
 - `make ci`: lint, test, build, then check that `types.gen.ts` is committed. This is what `.github/workflows/ci.yml` runs on pull requests.
 
 Production deployment (image, install script, updater) is not built yet. It is tracked in #75 and ADR 0008.

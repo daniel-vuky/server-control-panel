@@ -44,6 +44,7 @@ The spec does not say these, but a story needed a decision to be testable. Each 
 10. Only scheduled backup failures send external alerts; manual failures are shown on screen (E7-F23-US02).
 11. The panel lists its own resource usage in usage by app (E6-F20-US01).
 
+<a id="open-questions"></a>
 ## Decisions (2026-10-28)
 
 - **Restore** — out of scope for v1. The spec covers backing up only.

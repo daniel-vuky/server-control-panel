@@ -15,6 +15,8 @@
   --color-warning: #e5b93b;
   --color-orange: #f0913a;
   --color-danger: #ff6b6e;
+  --color-nav-active: #1a1f26;
+  --color-nav-text: #b4bac4;
 
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;

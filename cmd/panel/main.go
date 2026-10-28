@@ -39,6 +39,7 @@ func main() {
 			Web:      web.Handler(),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -30,7 +30,7 @@ Developing the panel needs Go, golangci-lint, Node, pnpm and shellcheck. The own
 3. **Every `make` target runs inside the dev image**, so the host needs only Docker and `make`:
    - `make dev` starts the environment;
    - `make test`, `make lint`, `make fmt`, `make typegen` and `make build` run one-off containers.
-4. `make image` builds the production image from the host with the regular `Dockerfile` (see [ADR 8](0008-deploy-the-panel-as-a-docker-compose-project-with-pull-based-updates.md)).
+4. `make image` builds the production image from the host with the regular `Dockerfile` (arrives with #75; see [ADR 8](0008-deploy-the-panel-as-a-docker-compose-project-with-pull-based-updates.md)).
 
 ## Consequences
 
