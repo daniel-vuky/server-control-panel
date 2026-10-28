@@ -42,8 +42,8 @@ Production deployment (image, install script, updater) is not built yet. It is t
 One Go binary (`cmd/panel`) serves the JSON API and the embedded React app (`web/`, built into `internal/web/dist`). It binds `127.0.0.1` only and is reached through a Cloudflare Tunnel (ADR 0006).
 
 - `internal/config`: reads `PANEL_ADDR` and refuses any address that is not `127.0.0.1:<port>`.
-- `internal/auth`: the `Verifier` seam and the `Require` middleware. Release builds use `RejectAll`, so every request except `GET /api/health` gets 401 until #10 adds Cloudflare Access verification. The `dev` build tag swaps in the fixed `dev@localhost` identity; it must never reach a release binary.
-- `internal/api`: the router and API types. Only `GET /api/health` is public; everything else goes through `auth.Require`.
+- `internal/auth`: the `Verifier` seam and the `Require` middleware. Release builds use `AccessVerifier`: it checks the `Cf-Access-Jwt-Assertion` JWT (signature, issuer, audience, expiry) and needs `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`, or startup fails. Setup is in `docs/cloudflare-access.md`. The `dev` build tag swaps in the fixed `dev@localhost` identity; it must never reach a release binary.
+- `internal/api`: the router and API types. Only `GET /api/health` is public; everything else goes through `auth.Require`. `GET /api/me` returns the verified email.
 - `internal/web`: serves the embedded single-page app for every non-API path.
 - `web/`: React, Vite and TypeScript. Pages are declared in `web/src/app/routes.ts`; most are placeholders for later issues.
 - Only `internal/runner` may import `os/exec` (depguard in `.golangci.yml`, ADR 0005). That package arrives with #12. It runs whitelisted `docker compose` commands without a shell.
