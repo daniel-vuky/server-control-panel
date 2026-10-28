@@ -1,0 +1,7 @@
+# Generates web/src/api/types.gen.ts from the Go API types (`make typegen`).
+packages:
+  - path: "github.com/daniel-vuky/server-control-panel/internal/api"
+    output_path: "web/src/api/types.gen.ts"
+    # router.go holds the server-side Deps, which the web app must not see.
+    exclude_files:
+      - "router.go"

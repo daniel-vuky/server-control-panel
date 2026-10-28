@@ -1,3 +1,4 @@
+VERSION ?= $(shell git rev-parse --short HEAD)
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm tools
 
@@ -32,12 +33,15 @@ lint: setup
 fmt: setup
 	$(RUN) sh -c 'golangci-lint fmt && pnpm -C web format'
 
-## The targets below get their recipes in later tasks.
+## typegen: regenerate web/src/api/types.gen.ts from the Go API types
 typegen: dev-image
-	@echo "typegen: added in a later task"
+	$(RUN) go tool tygo generate
 
-build: dev-image
-	@echo "build: added in a later task"
+## build: build the web app, then the single release binary into bin/panel
+# emptyOutDir wipes internal/web/dist, so the .gitkeep that keeps go:embed compiling is recreated.
+build: setup
+	$(RUN) sh -c 'pnpm -C web build && touch internal/web/dist/.gitkeep && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/panel ./cmd/panel'
 
-ci: dev-image
-	@echo "ci: added in a later task"
+## ci: everything CI runs, ending with a check that the generated types are committed
+ci: setup lint test build
+	$(RUN) sh -c 'go tool tygo generate && git diff --exit-code web/src/api/types.gen.ts'
