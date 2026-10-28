@@ -35,7 +35,7 @@ func TestRequireRejectsWithoutIdentity(t *testing.T) {
 func TestRequirePutsIdentityInContext(t *testing.T) {
 	var got Identity
 	var ok bool
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		got, ok = FromContext(r.Context())
 	})
 

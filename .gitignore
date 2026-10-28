@@ -10,4 +10,4 @@ node_modules/
 internal/web/dist/*
 !internal/web/dist/.gitkeep
 *.local
-tmp/
+/tmp/

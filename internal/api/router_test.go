@@ -17,7 +17,7 @@ func (allowVerifier) Verify(*http.Request) (auth.Identity, error) {
 }
 
 func webStub() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("web"))
 	})
@@ -69,8 +69,46 @@ func TestHealthRejectsNonGet(t *testing.T) {
 	h := NewRouter(Deps{Version: "1.2.3", Verifier: auth.RejectAll{}, Web: webStub()})
 
 	rec := do(h, http.MethodPost, "/api/health")
-	if rec.Code == http.StatusOK {
-		t.Errorf("POST /api/health status = %d, want non-200", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST /api/health status = %d, want 401", rec.Code)
+	}
+}
+
+func TestHealthAllowsHead(t *testing.T) {
+	h := NewRouter(Deps{Version: "1.2.3", Verifier: auth.RejectAll{}, Web: webStub()})
+
+	rec := do(h, http.MethodHead, "/api/health")
+	if rec.Code != http.StatusOK {
+		t.Errorf("HEAD /api/health status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHealthTrailingSlashNeedsIdentity(t *testing.T) {
+	h := NewRouter(Deps{Version: "1.2.3", Verifier: auth.RejectAll{}, Web: webStub()})
+
+	rec := do(h, http.MethodGet, "/api/health/")
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/health/ status = %d, want 401", rec.Code)
+	}
+}
+
+func TestNewRouterPanicsOnMissingDeps(t *testing.T) {
+	tests := []struct {
+		name string
+		deps Deps
+	}{
+		{"nil Web", Deps{Version: "1", Verifier: auth.RejectAll{}}},
+		{"nil Verifier", Deps{Version: "1", Web: webStub()}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("NewRouter did not panic")
+				}
+			}()
+			NewRouter(tc.deps)
+		})
 	}
 }
 
