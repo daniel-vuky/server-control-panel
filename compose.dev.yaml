@@ -5,6 +5,11 @@ x-volumes: &volumes
   - gomod:/go/pkg/mod
   - gocache:/root/.cache/go-build
   - node_modules:/src/web/node_modules
+  - pnpm-store:/root/.local/share/pnpm/store
+
+# pnpm would otherwise place its store inside the bind-mounted repo (/src/.pnpm-store).
+x-environment: &environment
+  pnpm_config_store_dir: /root/.local/share/pnpm/store
 
 services:
   api:
@@ -16,6 +21,7 @@ services:
     ports:
       - "127.0.0.1:5173:5173"
     volumes: *volumes
+    environment: *environment
 
   web:
     image: scp-dev
@@ -23,6 +29,7 @@ services:
     working_dir: /src/web
     command: sh -c "pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0"
     volumes: *volumes
+    environment: *environment
     depends_on:
       - api
 
@@ -30,8 +37,10 @@ services:
     image: scp-dev
     profiles: [tools]
     volumes: *volumes
+    environment: *environment
 
 volumes:
   gomod:
   gocache:
   node_modules:
+  pnpm-store:

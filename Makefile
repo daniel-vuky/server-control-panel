@@ -21,14 +21,14 @@ shell: dev-image
 	$(RUN) bash
 
 ## The targets below get their recipes in later tasks.
-test: dev-image
-	$(RUN) sh -c 'go test ./... && go test -tags dev ./...'
+test: setup
+	$(RUN) sh -c 'go test ./... && go test -tags dev ./... && pnpm -C web test'
 
-lint: dev-image
-	@echo "lint: added in a later task"
+lint: setup
+	$(RUN) sh -c 'golangci-lint run && pnpm -C web lint && pnpm -C web typecheck'
 
-fmt: dev-image
-	@echo "fmt: added in a later task"
+fmt: setup
+	$(RUN) sh -c 'golangci-lint fmt && pnpm -C web format'
 
 typegen: dev-image
 	@echo "typegen: added in a later task"
