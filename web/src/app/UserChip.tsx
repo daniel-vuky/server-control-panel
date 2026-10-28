@@ -28,7 +28,9 @@ export default function UserChip() {
         {initials(email)}
       </div>
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate text-[13px]">{email}</span>
+        <span className="truncate text-[13px]" title={email}>
+          {email}
+        </span>
         <span className="text-[11.5px] text-muted">Via Cloudflare Access</span>
       </div>
     </div>

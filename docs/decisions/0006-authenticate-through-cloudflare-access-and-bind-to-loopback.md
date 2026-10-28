@@ -47,7 +47,7 @@ E1-F03-US01 requires every action to be attributed to a person. The owner wants 
 4. The server **binds `127.0.0.1` only** and refuses to start with any other bind address. The Cloudflare Tunnel is the only way in.
 5. Local development uses a fixed fake identity compiled in **only under the `dev` build tag**, so release binaries cannot bypass verification.
 
-Until the verification itself is implemented (E1-F01-US01, [#10](https://github.com/daniel-vuky/server-control-panel/issues/10)), release builds reject every request except the health check.
+The verification was implemented in [#10](https://github.com/daniel-vuky/server-control-panel/issues/10) (E1-F01-US01).
 
 ## Consequences
 

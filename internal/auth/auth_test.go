@@ -108,3 +108,23 @@ func TestRequireLogsRefusal(t *testing.T) {
 		}
 	}
 }
+
+func TestRequireTruncatesLongReason(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	v := errVerifier{fmt.Errorf("%w: %s", ErrNoIdentity, strings.Repeat("x", 1000))}
+	rec := httptest.NewRecorder()
+	Require(v)(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/x", nil))
+
+	var line map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &line); err != nil {
+		t.Fatalf("log is not one JSON line: %v\n%s", err, buf.String())
+	}
+	reason, _ := line["reason"].(string)
+	if len(reason) > 260 || !strings.HasSuffix(reason, "…") {
+		t.Errorf("reason has %d bytes and suffix %q, want at most 260 ending in an ellipsis", len(reason), reason[max(0, len(reason)-4):])
+	}
+}

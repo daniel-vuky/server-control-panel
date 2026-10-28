@@ -207,3 +207,26 @@ func TestKeySetRejectsAlgNone(t *testing.T) {
 		t.Fatal("alg none token accepted")
 	}
 }
+
+func TestKeySetEmptyAnswerKeepsCachedKeys(t *testing.T) {
+	k1 := newTestKey(t, "k1")
+	k9 := newTestKey(t, "k9")
+	srv := newJWKSServer(t, k1)
+	clock := newFakeClock()
+	ks := newKeySet(srv.URL, srv.Client(), clock.now)
+
+	if _, err := ks.VerifySignature(context.Background(), k1.sign(t, testClaims)); err != nil {
+		t.Fatalf("good token: %v", err)
+	}
+	srv.setKeys()
+	clock.advance(time.Minute)
+	if _, err := ks.VerifySignature(context.Background(), k9.sign(t, testClaims)); err == nil {
+		t.Fatal("unknown kid was accepted")
+	}
+	if n := srv.fetches.Load(); n != 2 {
+		t.Fatalf("fetches = %d, want 2", n)
+	}
+	if _, err := ks.VerifySignature(context.Background(), k1.sign(t, testClaims)); err != nil {
+		t.Fatalf("cached key lost after an empty key set answer: %v", err)
+	}
+}

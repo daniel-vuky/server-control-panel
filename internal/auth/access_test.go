@@ -73,6 +73,7 @@ func TestAccessVerifierRejects(t *testing.T) {
 		{"unknown key", k9.sign(t, validClaims()), true},
 		{"not a jwt", "not.a.jwt", true},
 		{"alg none", algNoneJWT(validClaims()), true},
+		{"hs256 key confusion", k1.hs256JWT(t, validClaims()), true},
 		{"no email", k1.sign(t, withClaims(func(c map[string]any) { delete(c, "email") })), true},
 		{"empty email", k1.sign(t, withClaims(func(c map[string]any) { c["email"] = "" })), true},
 		{"numeric email", k1.sign(t, withClaims(func(c map[string]any) { c["email"] = 42 })), true},
@@ -133,7 +134,7 @@ func TestNormalizeTeamDomain(t *testing.T) {
 
 func TestNormalizeAUD(t *testing.T) {
 	got, err := NormalizeAUD("  ABCdef0123  ")
-	if err != nil || got != "ABCdef0123" {
+	if err != nil || got != "abcdef0123" {
 		t.Errorf("NormalizeAUD = %q, %v", got, err)
 	}
 	for _, in := range []string{"", "   ", "xyz", "ab cd"} {

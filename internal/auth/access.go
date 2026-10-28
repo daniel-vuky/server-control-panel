@@ -86,9 +86,10 @@ func NormalizeTeamDomain(s string) (string, error) {
 	return d, nil
 }
 
-// NormalizeAUD trims the CF_ACCESS_AUD setting and checks it is a hex string.
+// NormalizeAUD trims and lower-cases the CF_ACCESS_AUD setting, which is how
+// Cloudflare writes the aud claim, and checks it is a hex string.
 func NormalizeAUD(s string) (string, error) {
-	aud := strings.TrimSpace(s)
+	aud := strings.ToLower(strings.TrimSpace(s))
 	if aud == "" {
 		return "", errors.New("application AUD is empty")
 	}

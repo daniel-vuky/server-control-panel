@@ -1,10 +1,14 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -69,6 +73,23 @@ func algNoneJWT(claims map[string]any) string {
 	return enc.EncodeToString([]byte(`{"alg":"none","kid":"k1"}`)) + "." + enc.EncodeToString(payload) + "."
 }
 
+// hs256JWT builds the key-confusion token: alg HS256, kid k.kid, HMAC-signed
+// with the PEM encoding of k's RSA public key as the shared secret.
+func (k testKey) hs256JWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&k.priv.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	pub := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	enc := base64.RawURLEncoding
+	payload, _ := json.Marshal(claims)
+	signingInput := enc.EncodeToString([]byte(`{"alg":"HS256","kid":"`+k.kid+`"}`)) + "." + enc.EncodeToString(payload)
+	mac := hmac.New(sha256.New, pub)
+	mac.Write([]byte(signingInput))
+	return signingInput + "." + enc.EncodeToString(mac.Sum(nil))
+}
+
 // jwksServer serves a JWKS document and counts how often it is fetched.
 type jwksServer struct {
 	*httptest.Server
@@ -91,7 +112,7 @@ func newJWKSServer(t *testing.T, keys ...testKey) *jwksServer {
 			w.WriteHeader(status)
 			return
 		}
-		set := jose.JSONWebKeySet{}
+		set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{}}
 		for _, k := range keys {
 			set.Keys = append(set.Keys, jose.JSONWebKey{Key: &k.priv.PublicKey, KeyID: k.kid, Algorithm: "RS256", Use: "sig"})
 		}
@@ -102,7 +123,8 @@ func newJWKSServer(t *testing.T, keys ...testKey) *jwksServer {
 	return s
 }
 
-// setKeys changes the keys the next fetch returns.
+// setKeys changes the keys the next fetch returns; with none it serves
+// {"keys":[]}.
 func (s *jwksServer) setKeys(keys ...testKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

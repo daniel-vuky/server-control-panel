@@ -28,6 +28,7 @@ describe('user chip', () => {
     stubFetch(async () => new Response('{"email":"admin@company.vn"}', { status: 200 }))
     renderApp()
     expect(await screen.findByText('admin@company.vn')).toBeInTheDocument()
+    expect(screen.getByText('admin@company.vn')).toHaveAttribute('title', 'admin@company.vn')
     expect(screen.getByText('AD')).toBeInTheDocument()
     expect(screen.getByText('Via Cloudflare Access')).toBeInTheDocument()
     const nav = screen.getByRole('navigation', { name: 'Main navigation' })

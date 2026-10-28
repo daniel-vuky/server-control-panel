@@ -123,6 +123,9 @@ func (k *keySet) fetch() (map[string]jose.JSONWebKey, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxKeySetBytes)).Decode(&set); err != nil {
 		return nil, fmt.Errorf("parse key set: %w", err)
 	}
+	if len(set.Keys) == 0 {
+		return nil, errors.New("key set has no keys")
+	}
 	keys := make(map[string]jose.JSONWebKey, len(set.Keys))
 	for _, key := range set.Keys {
 		keys[key.KeyID] = key
