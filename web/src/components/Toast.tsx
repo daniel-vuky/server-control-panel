@@ -17,14 +17,12 @@ const ToastContext = createContext<ToastApi | null>(null)
 
 /** ToastProvider shows one toast at a time, bottom right, for 4 seconds. */
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toast, setToast] = useState<{ id: number; message: string } | null>(null)
-  const nextID = useRef(0)
+  const [toast, setToast] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const show = useCallback((message: string) => {
     clearTimeout(timer.current)
-    nextID.current += 1
-    setToast({ id: nextID.current, message })
+    setToast(message)
     timer.current = setTimeout(() => setToast(null), TOAST_MS)
   }, [])
 
@@ -35,17 +33,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      {toast && (
-        <div className="pointer-events-none fixed right-6 bottom-6 z-50">
-          <div
-            key={toast.id}
-            role="status"
-            className="rounded-lg border border-border-strong bg-surface-2 px-4 py-3 text-sm text-text shadow-lg"
-          >
-            {toast.message}
-          </div>
+      <div className="pointer-events-none fixed right-6 bottom-6 z-50">
+        <div
+          role="status"
+          className={
+            toast
+              ? 'rounded-lg border border-border-strong bg-surface-2 px-4 py-3 text-sm text-text shadow-lg'
+              : undefined
+          }
+        >
+          {toast}
         </div>
-      )}
+      </div>
     </ToastContext.Provider>
   )
 }

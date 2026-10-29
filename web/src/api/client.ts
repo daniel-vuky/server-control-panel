@@ -3,8 +3,8 @@ export class ApiError extends Error {
   status: number
   body: unknown
 
-  constructor(status: number, body: unknown) {
-    super(errorMessage(status, body))
+  constructor(status: number, body: unknown, message?: string) {
+    super(message ?? errorMessage(status, body))
     this.name = 'ApiError'
     this.status = status
     this.body = body
@@ -25,6 +25,9 @@ async function parseBody(res: Response): Promise<unknown> {
   try {
     return JSON.parse(text)
   } catch {
+    // A 2xx that is not JSON is not an API answer: an expired Cloudflare
+    // Access session returns an HTML login page this way.
+    if (res.ok) throw new ApiError(res.status, null, 'Unexpected response from the server.')
     return null
   }
 }

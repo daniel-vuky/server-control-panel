@@ -7,6 +7,7 @@ class StubEventSource {
   static instances: StubEventSource[] = []
   url: string
   closed = false
+  readyState = 0
   onerror: (() => void) | null = null
   private listeners = new Map<string, Listener[]>()
   constructor(url: string) {
@@ -93,6 +94,87 @@ describe('watchScan', () => {
 
     expect(end).not.toHaveBeenCalled()
     expect(es.closed).toBe(false)
+  })
+
+  it('ends as failed when the job is running but the browser closed the source', async () => {
+    vi.stubGlobal('EventSource', StubEventSource)
+    vi.stubGlobal('fetch', stubFetchJSON(200, job('running')))
+    const end = vi.fn()
+    watchScan(3, { progress: vi.fn(), end })
+    const es = StubEventSource.instances[0]
+
+    es.readyState = 2
+    es.fail()
+    await flush()
+
+    expect(end).toHaveBeenCalledExactlyOnceWith('failed')
+    expect(es.closed).toBe(true)
+  })
+
+  it('ends as failed when the job read fails and the browser closed the source', async () => {
+    vi.stubGlobal('EventSource', StubEventSource)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":"x"}', { status: 500 })),
+    )
+    const end = vi.fn()
+    watchScan(3, { progress: vi.fn(), end })
+    const es = StubEventSource.instances[0]
+
+    es.readyState = 2
+    es.fail()
+    await flush()
+
+    expect(end).toHaveBeenCalledExactlyOnceWith('failed')
+  })
+
+  it('keeps waiting when the job read fails but the source is still reconnecting', async () => {
+    vi.stubGlobal('EventSource', StubEventSource)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":"x"}', { status: 500 })),
+    )
+    const end = vi.fn()
+    watchScan(3, { progress: vi.fn(), end })
+    const es = StubEventSource.instances[0]
+
+    es.readyState = 0
+    es.fail()
+    await flush()
+
+    expect(end).not.toHaveBeenCalled()
+    expect(es.closed).toBe(false)
+  })
+
+  it('reads the job once while a fallback read is in flight', async () => {
+    vi.stubGlobal('EventSource', StubEventSource)
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+    watchScan(3, { progress: vi.fn(), end: vi.fn() })
+    const es = StubEventSource.instances[0]
+
+    es.fail()
+    es.fail()
+    await flush()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('stop aborts the fallback read', async () => {
+    vi.stubGlobal('EventSource', StubEventSource)
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      void init
+      return new Promise<Response>(() => {})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const stop = watchScan(3, { progress: vi.fn(), end: vi.fn() })
+    StubEventSource.instances[0].fail()
+    await flush()
+
+    const signal = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].signal
+    expect(signal?.aborted).toBe(false)
+    stop()
+    expect(signal?.aborted).toBe(true)
   })
 
   it('does not end twice when end arrives and then an error', async () => {

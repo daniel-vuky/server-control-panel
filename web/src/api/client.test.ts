@@ -20,6 +20,23 @@ describe('api client', () => {
     expect((err as ApiError).message).toBe('This folder does not exist.')
   })
 
+  it('throws ApiError on a 2xx with a non-JSON body, such as a login page', async () => {
+    vi.stubGlobal('fetch', reply(200, '<html>sign in</html>'))
+    const err = await getJSON('/api/projects').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(200)
+    expect((err as ApiError).body).toBeNull()
+    expect((err as ApiError).message).toBe('Unexpected response from the server.')
+  })
+
+  it('resolves null for an empty 204', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 204 })),
+    )
+    await expect(getJSON('/api/x')).resolves.toBeNull()
+  })
+
   it('keeps a null body when the error body is not JSON', async () => {
     vi.stubGlobal('fetch', reply(502, '<html>bad gateway</html>'))
     const err = await getJSON('/api/x').catch((e: unknown) => e)

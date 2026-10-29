@@ -40,18 +40,18 @@ describe('Toast', () => {
         <Trigger message="3 projects added" />
       </ToastProvider>,
     )
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('status')).toBeEmpty()
     clickGo()
     expect(screen.getByRole('status')).toHaveTextContent('3 projects added')
 
     act(() => {
       vi.advanceTimersByTime(3999)
     })
-    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('3 projects added')
     act(() => {
       vi.advanceTimersByTime(1)
     })
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('status')).toBeEmpty()
   })
 
   it('shows one at a time: a new message replaces the old and restarts the timer', () => {
@@ -74,7 +74,7 @@ describe('Toast', () => {
     act(() => {
       vi.advanceTimersByTime(1000)
     })
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('status')).toBeEmpty()
   })
 
   it('useToast throws outside a provider', () => {

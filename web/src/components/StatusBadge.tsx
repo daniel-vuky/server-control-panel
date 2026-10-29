@@ -9,15 +9,11 @@ const styles: Record<Status, { word: string; dot: string; text: string }> = {
 }
 
 /** A status is always a dot plus its word, never colour alone. */
-export default function StatusBadge({ status }: { status: Status }) {
-  const s = styles[status] ?? styles.unknown
+export default function StatusBadge({ status }: { status: Status | string }) {
+  const s = Object.hasOwn(styles, status) ? styles[status as Status] : styles.unknown
   return (
     <span className={`inline-flex items-center gap-1.5 text-[13px] font-medium ${s.text}`}>
-      <span
-        aria-hidden="true"
-        data-testid="status-dot"
-        className={`size-2 flex-none rounded-full ${s.dot}`}
-      />
+      <span aria-hidden="true" className={`size-2 flex-none rounded-full ${s.dot}`} />
       {s.word}
     </span>
   )

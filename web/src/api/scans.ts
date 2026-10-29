@@ -21,6 +21,9 @@ export function trackScan(id: number, req: TrackRequest): Promise<TrackResponse>
   return postJSON<TrackResponse>(`/api/scans/${id}/track`, req)
 }
 
+// EventSource.CLOSED, spelled out so it needs no EventSource global at load.
+const EVENT_SOURCE_CLOSED = 2
+
 function parseData<T>(e: Event): T | null {
   try {
     return JSON.parse((e as MessageEvent<string>).data) as T
@@ -32,9 +35,10 @@ function parseData<T>(e: Event): T | null {
 /**
  * watchScan follows a scan over SSE. `end` fires once, with done, failed or
  * interrupted. If the connection drops before an end event, the job is read
- * once: if it is no longer running the watch ends with its state; if it still
- * runs, the EventSource is left to reconnect. The returned function stops the
- * watch.
+ * once (one read in flight at a time): if it is no longer running the watch
+ * ends with its state; if it still runs, the EventSource is left to reconnect,
+ * unless the browser has closed it for good, which ends the watch as failed.
+ * The returned function stops the watch.
  */
 export function watchScan(
   id: number,
@@ -42,6 +46,7 @@ export function watchScan(
 ): () => void {
   const source = new EventSource(`/api/scans/${id}/events`)
   let finished = false
+  let fallback: AbortController | null = null
 
   const finish = (state: string) => {
     if (finished) return
@@ -61,19 +66,33 @@ export function watchScan(
     finish(typeof data?.state === 'string' ? data.state : 'failed')
   })
 
+  // When the browser has given up on the stream, no further error event
+  // comes, so the watch would hang: end it as failed.
+  const giveUpIfClosed = () => {
+    if (source.readyState === EVENT_SOURCE_CLOSED) finish('failed')
+  }
+
   source.addEventListener('error', () => {
-    if (finished) return
-    getScan(id)
+    if (finished || fallback) return
+    const ctrl = new AbortController()
+    fallback = ctrl
+    getScan(id, ctrl.signal)
       .then((job) => {
+        fallback = null
+        if (finished) return
         if (job.state !== 'running') finish(job.state)
+        else giveUpIfClosed()
       })
       .catch(() => {
-        // The job cannot be read right now; EventSource keeps retrying.
+        fallback = null
+        if (finished) return
+        giveUpIfClosed()
       })
   })
 
   return () => {
     finished = true
+    fallback?.abort()
     source.close()
   }
 }

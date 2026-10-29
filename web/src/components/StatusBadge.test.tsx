@@ -12,11 +12,11 @@ describe('StatusBadge', () => {
   ])('%s renders the word %s with a dot', (status, word) => {
     const { container } = render(<StatusBadge status={status} />)
     expect(screen.getByText(word)).toBeInTheDocument()
-    expect(container.querySelector('[data-testid="status-dot"]')).not.toBeNull()
+    expect(container.querySelector('[aria-hidden="true"]')).not.toBeNull()
   })
 
   it('falls back to Unknown for a value it does not know', () => {
-    render(<StatusBadge status={'weird' as Status} />)
+    render(<StatusBadge status="weird" />)
     expect(screen.getByText('Unknown')).toBeInTheDocument()
   })
 })
