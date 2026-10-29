@@ -318,36 +318,77 @@ func parseDatabaseURL(raw string) (dbType, name, host string, hasHost, isFile, o
 		return "", "", "", false, false, false
 	}
 	rest = rest[2:]
-	// Cut the query and fragment first; a password never holds a raw ? or #.
-	if i := strings.IndexAny(rest, "?#"); i >= 0 {
-		rest = rest[:i]
+	// The user and password may hold an unencoded /, ?, # or @, so the host
+	// starts after the LAST @ of the whole string. Everything before it is
+	// dropped unread. If what follows is not a clean host[:port], the finding
+	// is refused: a misparse must never put part of a credential in a name.
+	if i := strings.LastIndex(rest, "@"); i >= 0 {
+		rest = rest[i+1:]
 	}
 	authority, path := rest, ""
-	if i := strings.Index(rest, "/"); i >= 0 {
-		authority, path = rest[:i], rest[i+1:]
-	}
-	if i := strings.LastIndex(authority, "@"); i >= 0 {
-		authority = authority[i+1:]
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		authority = rest[:i]
+		if rest[i] == '/' {
+			path = rest[i+1:]
+			if j := strings.IndexAny(path, "?#"); j >= 0 {
+				path = path[:j]
+			}
+		}
 	}
 	if i := strings.Index(authority, ","); i >= 0 { // replica set: first host
 		authority = authority[:i]
 	}
-	host = hostOnly(authority)
+	host, clean := parseHostPort(authority)
+	if !clean {
+		return "", "", "", false, false, false
+	}
 	return dbType, path, host, host != "", false, true
 }
 
-// hostOnly strips the port from host or host:port, and the brackets from an
-// IPv6 literal.
-func hostOnly(authority string) string {
-	if strings.HasPrefix(authority, "[") {
-		if i := strings.Index(authority, "]"); i > 0 {
-			return authority[1:i]
+// parseHostPort splits host[:port] or [ipv6][:port]. It reports false unless
+// the host holds only name characters and the port, when present, is digits.
+func parseHostPort(authority string) (host string, ok bool) {
+	port := ""
+	switch {
+	case strings.HasPrefix(authority, "["):
+		end := strings.Index(authority, "]")
+		if end < 0 {
+			return "", false
+		}
+		host = authority[1:end]
+		tail := authority[end+1:]
+		if tail != "" {
+			if !strings.HasPrefix(tail, ":") {
+				return "", false
+			}
+			port = tail[1:]
+		}
+		for _, r := range host {
+			if r != ':' && r != '.' && r != '%' && !isHexOrLetterDigit(r) {
+				return "", false
+			}
+		}
+	default:
+		host = authority
+		if i := strings.LastIndex(authority, ":"); i >= 0 {
+			host, port = authority[:i], authority[i+1:]
+		}
+		for _, r := range host {
+			if r != '.' && r != '-' && r != '_' && r != '%' && !isHexOrLetterDigit(r) {
+				return "", false
+			}
 		}
 	}
-	if i := strings.LastIndex(authority, ":"); i >= 0 {
-		return authority[:i]
+	for _, r := range port {
+		if r < '0' || r > '9' {
+			return "", false
+		}
 	}
-	return authority
+	return host, true
+}
+
+func isHexOrLetterDigit(r rune) bool {
+	return r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
 }
 
 // sqlitePath returns the file path of a sqlite: or file: URL: "file:./a.db"

@@ -139,6 +139,29 @@ func TestDetectDatabases(t *testing.T) {
 			map[string]string{"DATABASE_URL": "postgres://u:p%zz@rds.example.com/shop"},
 			[]project.Database{db("postgresql", "shop", "external", "rds.example.com", ".env DATABASE_URL")}},
 
+		{"slash in the password", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa/ss@db.example.com/shop"},
+			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
+		{"question mark in the password", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa?ss@db.example.com/shop"},
+			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
+		{"hash in the password", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa#ss@db.example.com:5432/shop"},
+			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
+		{"at sign in the password", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa@ss@db.example.com/shop"},
+			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
+		{"slash and at in the password of a mongodb replica set", cfgOf(),
+			map[string]string{"MONGO_URI": "mongodb://shopuser:p/a@s@h1.example.com:27017,h2.example.com:27017/shop?replicaSet=rs0"},
+			[]project.Database{db("mongodb", "shop", "external", "h1.example.com", ".env MONGO_URI")}},
+		{"unparseable authority is refused, not misread", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa/ss"}, []project.Database{}},
+		{"bad port is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://db.example.com:pa/shop"}, []project.Database{}},
+		{"IPv6 host", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://u:p@[::1]:5432/shop"},
+			[]project.Database{db("postgresql", "shop", "external", "::1", ".env DATABASE_URL")}},
+
 		{"POSTGRES_* with no host and a postgres service merges",
 			cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_USER": "u", "POSTGRES_PASSWORD": "p"},
@@ -226,6 +249,16 @@ func TestNoSecretInResult(t *testing.T) {
 		"MYSQL_DATABASE":    "shop",
 		"MYSQL_PASSWORD":    "devpassword",
 	}
+	dotenv["DATABASE_URL"] = "postgres://shopuser:pa/ssfrag@db2.example.com/orders"
+	dotenv["MONGO_URI"] = "mongodb://shopuser:qu?erypart@mongo.example.com/shop"
+	for name, url := range map[string]string{
+		"hash":  "postgres://shopuser:ha#shfrag@db3.example.com/hashdb",
+		"at":    "postgres://shopuser:at@fragat@db4.example.com/atdb",
+		"slash": "postgres://shopuser:sl/ashfrag@db5.example.com/apidb",
+		"bad":   "postgres://shopuser:ba/dfrag",
+	} {
+		cfg.Services = append(cfg.Services, svc(name, "app", map[string]string{"DATABASE_URL": url}))
+	}
 	got := DetectDatabases(cfg, dotenv)
 	if len(got) == 0 {
 		t.Fatal("expected databases")
@@ -234,7 +267,7 @@ func TestNoSecretInResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"devpassword", "shop:"} {
+	for _, secret := range []string{"devpassword", "shop:", "shopuser", "ssfrag", "erypart", "shfrag", "fragat", "ashfrag", "pa/", "qu?", "ha#"} {
 		if strings.Contains(string(b), secret) {
 			t.Errorf("result contains %q: %s", secret, b)
 		}
