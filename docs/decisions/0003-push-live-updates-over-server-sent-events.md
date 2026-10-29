@@ -52,3 +52,12 @@ Live data goes over **Server-Sent Events**. Actions (start, stop, backup and so 
 
 - The hub has to track subscribers and switch cadence as viewers come and go.
 - Actions and their results travel on different channels (REST for the action, SSE for the resulting status).
+
+## Note (2026-10-29)
+
+The workspace scan (#18) added a second kind of stream next to the hub:
+
+- **Per-job progress streams.** `GET /api/scans/{id}/events` streams the progress of one scan job. It is not the shared `/api/events` hub of decision 1, which arrives with live status (E3-F09). Later long-running jobs, such as backup progress, are expected to get a stream of the same kind.
+- **Behaviour.** A client that connects gets the current snapshot as a `progress` event, then further `progress` events at most about 5 per second (later updates are coalesced), then one `end` event with the final state, and the stream closes. A client that connects after the end gets the snapshot and `end` straight away. A `: ping` heartbeat goes out every 25 seconds (decision 4).
+- **Fan-out.** A small in-memory broadcaster keyed by job id lets several tabs watch one scan. It starts no work of its own.
+- **Client.** The browser uses `EventSource`. On `end` it fetches the job for the result. If the connection drops before `end`, it fetches the job once and reconnects if the job is still running.
