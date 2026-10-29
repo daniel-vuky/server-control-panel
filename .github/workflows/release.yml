@@ -4,14 +4,19 @@ name: Release
 # Everything is derived from the commit CI tested (workflow_run.head_sha): in this event the
 # default SHA context is the current tip of main, which can be newer. So the short SHA is
 # computed from head_sha below and passed to the tags, labels and build args explicitly.
+# metadata-action keeps its default (workflow) context: the git context cannot infer a ref from
+# the detached head_sha checkout and fails. That is safe here because both tags are type=raw and
+# the revision and version labels are overridden from head_sha, so no event SHA reaches the image.
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
 
-# Releases run one after another so every CI-green commit gets its sha- tag (a rollback target)
-# and the last merge ends up as latest.
+# Releases run one after another, so normally every CI-green commit gets its sha- tag (a rollback
+# target) and the last merge ends up as latest. With cancel-in-progress false GitHub keeps one
+# running and one pending run per group (a third queued run replaces the pending one), and runs
+# follow CI-completion order, so this is not a guarantee.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -48,7 +53,6 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          context: git
           images: ghcr.io/daniel-vuky/server-control-panel
           tags: |
             type=raw,value=latest
