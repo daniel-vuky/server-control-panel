@@ -14,9 +14,9 @@ E1-F01-US01 requires that:
 - the panel cannot be reached around Cloudflare by IP address or port;
 - a request without a signed-in identity is refused.
 
-E1-F03-US01 requires every action to be attributed to a person. The owner wants to sign in with Google and keeps the list of allowed emails in Cloudflare. Decided in [#1](https://github.com/daniel-vuky/server-control-panel/issues/1).
+E1-F03-US01 requires every action to be attributed to a person. The owner wants to sign in with a one-time PIN sent by email, as the server's SSH access already does through Cloudflare Access, and keeps the list of allowed emails in Cloudflare. Decided in [#1](https://github.com/daniel-vuky/server-control-panel/issues/1).
 
-### Option A: Cloudflare Access with Google, verified by the panel
+### Option A: Cloudflare Access, verified by the panel
 
 - Pro: no login code in the panel.
 - Pro: people not on the list are stopped before they reach the server.
@@ -36,7 +36,7 @@ E1-F03-US01 requires every action to be attributed to a person. The owner wants 
 
 ## Decision
 
-1. **Cloudflare Access** protects `panel.<domain>`, with **Google** as the identity provider. **The allow list lives only in the Access policy.**
+1. **Cloudflare Access** protects `panel.<domain>`, with **One-time PIN** as the login method: the person enters their email and types the code Cloudflare sends to it. **The allow list lives only in the Access policy.** The panel reads only the token's `email` claim, so it does not depend on the login method. (Changed on 2026-10-29 from Google to One-time PIN, to match the owner's SSH setup.)
 2. The panel **verifies the `Cf-Access-Jwt-Assertion` JWT on every request**:
    - the signature, against the team's JWKS (`https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, cached);
    - the `aud` claim, against the application's AUD tag;

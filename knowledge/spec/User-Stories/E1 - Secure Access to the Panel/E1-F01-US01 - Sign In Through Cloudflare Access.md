@@ -16,18 +16,18 @@ As an Operator, I want to reach the panel only after signing in through Cloudfla
 
 ## Acceptance Criteria
 
-### Scenario: An allowed email signs in with Google
+### Scenario: An allowed email signs in with a one-time PIN
 
 - **Given** my email is allowed by the Cloudflare Access policy, which is the only allow list ([ADR 0006](../../../../docs/decisions/0006-authenticate-through-cloudflare-access-and-bind-to-loopback.md))
-- **When** I open `panel.<domain>` and sign in with that Google account
+- **When** I open `panel.<domain>`, enter that email and type the code Cloudflare Access sends to it
 - **Then** I reach the panel
 - **And** the panel knows who I am from the identity Cloudflare Access passes to it
 
 ### Scenario: An email that is not allowed is stopped before the panel
 
-- **Given** a Google account whose email the Cloudflare Access policy does not allow
+- **Given** an email the Cloudflare Access policy does not allow
 - **When** someone tries to sign in with it
-- **Then** they are stopped at the Cloudflare Access sign-in page
+- **Then** no code is sent and they are stopped at the Cloudflare Access sign-in page
 - **And** no page, data or request of the panel is reached
 
 ### Scenario: The panel cannot be reached around Cloudflare Access
