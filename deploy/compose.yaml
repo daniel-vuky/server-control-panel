@@ -29,6 +29,9 @@ services:
   # reads panel.env into its own environment.
   updater:
     image: docker:29-cli
+    # PID 1 for the shell script: without an init, SIGTERM is ignored and every
+    # stop or recreate waits out the grace period and then SIGKILLs the updater.
+    init: true
     entrypoint: ["/bin/sh", "/opt/server-control-panel/updater.sh"]
     environment:
       UPDATE_INTERVAL: "${UPDATE_INTERVAL:-300}"

@@ -36,4 +36,9 @@ for want in 'name: server-control-panel' 'user: 1000:1000' "source: $T/ws" 'read
     exit 1
   fi
 done
+updater_init=$(printf '%s\n' "$rendered" | awk '/^  updater:/ {u=1; next} /^  [a-z]/ || /^[a-z]/ {u=0} u && /^    init: true$/ {print "yes"}')
+if [[ "$updater_init" != yes ]]; then
+  printf 'updater service lacks init: true:\n%s\n' "$rendered" >&2
+  exit 1
+fi
 echo "compose config ok"

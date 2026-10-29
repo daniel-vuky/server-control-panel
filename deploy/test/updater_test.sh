@@ -81,4 +81,20 @@ assert_eq yes "$alive" "the updater is still running after failed rounds"
 assert_eq yes "$([[ $pulls -ge 2 ]] && echo yes || echo no)" "at least two pull rounds ran (saw $pulls)"
 assert_eq 0 "$(grep -c '^compose up' "$FAKE_DOCKER_LOG")" "no up after a failed pull"
 
+echo "== a malformed UPDATE_INTERVAL does not hammer the registry"
+fresh_case
+export UPDATE_INTERVAL=bogus
+sh "$UPDATER" >"$T/out" 2>&1 &
+pid=$!
+sleep 0.5
+alive=no
+if kill -0 "$pid" 2>/dev/null; then alive=yes; fi
+pkill -P "$pid" 2>/dev/null
+kill "$pid" 2>/dev/null
+wait "$pid" 2>/dev/null
+assert_eq yes "$alive" "the updater keeps waiting"
+assert_eq 0 "$(grep -c "" "$FAKE_DOCKER_LOG")" "no docker call while the interval is malformed"
+assert_contains "$(<"$T/out")" "invalid UPDATE_INTERVAL 'bogus'" "the bad value is logged once"
+assert_eq 1 "$(grep -c "invalid UPDATE_INTERVAL" "$T/out")" "only one line about it"
+
 summary

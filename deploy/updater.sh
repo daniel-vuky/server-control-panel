@@ -34,7 +34,12 @@ round() {
 }
 
 while :; do
-  sleep "${UPDATE_INTERVAL:-300}"
+  if ! sleep "${UPDATE_INTERVAL:-300}"; then
+    # A malformed value (for example 5m) would make sleep fail at once and the
+    # loop would hammer the registry; wait the default instead.
+    log "invalid UPDATE_INTERVAL '${UPDATE_INTERVAL}', waiting 300 seconds"
+    sleep 300
+  fi
   round
   rc=$?
   if [ "${SCP_UPDATER_ONCE:-}" = 1 ]; then
