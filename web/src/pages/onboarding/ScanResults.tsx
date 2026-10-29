@@ -1,8 +1,9 @@
 import { FolderSearch, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 import type { ScanJob, ScanResult, ScanRow, TrackItem } from '../../api/types.gen'
+import DatabaseCell from '../../components/DatabaseCell'
+import MonitorOnlyTag from '../../components/MonitorOnlyTag'
 import StatusBadge from '../../components/StatusBadge'
-import { formatDatabase } from '../../lib/databases'
 
 export const NAME_MAX = 80
 
@@ -204,11 +205,7 @@ function Row({
               invalid ? 'border-danger' : 'border-border-strong'
             }`}
           />
-          {row.self && (
-            <span className="inline-flex h-6 flex-none items-center rounded-[5px] border border-border-strong px-2 text-xs whitespace-nowrap text-text-2">
-              Monitor only
-            </span>
-          )}
+          {row.self && <MonitorOnlyTag />}
         </span>
       </td>
       <td className="px-3 py-3">
@@ -234,15 +231,7 @@ function Row({
       </td>
       <td className="py-3 pr-6 pl-3 text-[13px]">
         <span className="flex min-h-8 flex-col justify-center">
-          {row.databases.length === 0 ? (
-            <span className="text-muted">None detected</span>
-          ) : (
-            row.databases.map((d) => (
-              <span key={`${d.type}|${d.name}|${d.locationKind}|${d.location}`}>
-                {formatDatabase(d)}
-              </span>
-            ))
-          )}
+          <DatabaseCell databases={row.databases} />
         </span>
       </td>
     </tr>

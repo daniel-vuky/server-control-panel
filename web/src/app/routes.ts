@@ -21,7 +21,7 @@ export const appRoutes: AppRoute[] = [
   {
     path: '/',
     title: 'Dashboard',
-    issues: [4],
+    issues: [4, 23],
     nav: { label: 'Dashboard', icon: LayoutDashboard },
   },
   {
@@ -31,7 +31,7 @@ export const appRoutes: AppRoute[] = [
     nav: { label: 'Projects', icon: FolderKanban },
   },
   { path: '/projects/:id', title: 'Project detail', issues: [4, 5] },
-  { path: '/onboarding', title: 'Onboarding', issues: [3] },
+  { path: '/onboarding', title: 'Onboarding', issues: [17, 18, 23, 26] },
   {
     path: '/backups',
     title: 'Backups',
@@ -43,7 +43,7 @@ export const appRoutes: AppRoute[] = [
   {
     path: '/settings',
     title: 'Settings',
-    issues: [3, 6, 8],
+    issues: [3, 6, 8, 17],
     nav: { label: 'Settings', icon: Settings },
   },
 ]
