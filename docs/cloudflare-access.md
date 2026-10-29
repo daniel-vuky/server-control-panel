@@ -6,7 +6,7 @@ The menu names below follow Cloudflare's documentation as of October 2026: the d
 
 ## What this protects
 
-The panel has no login of its own ([ADR 0006](decisions/0006-authenticate-through-cloudflare-access-and-bind-to-loopback.md)). Cloudflare Access signs people in with Google and stops everyone else before they reach the server. The Access policy is the only allow list: the panel does not keep one.
+The panel has no login of its own ([ADR 0006](decisions/0006-authenticate-through-cloudflare-access-and-bind-to-loopback.md)). Cloudflare Access signs people in with a one-time PIN sent to their email, and stops everyone else before they reach the server. The Access policy is the only allow list: the panel does not keep one.
 
 On every request the panel checks the `Cf-Access-Jwt-Assertion` token that Cloudflare adds. It checks the signature, the audience (your application's AUD tag), the issuer (your team domain) and the expiry. A request without a valid token gets 401. The panel listens on `127.0.0.1` only, so the Cloudflare Tunnel is the only way in.
 
@@ -18,29 +18,25 @@ You need:
 - a Zero Trust team (its team name gives the team domain `<team>.cloudflareaccess.com`);
 - a Cloudflare Tunnel with `cloudflared` running on the server, directly on the host and not in a container ([ADR 0008](decisions/0008-deploy-the-panel-as-a-docker-compose-project-with-pull-based-updates.md)).
 
-If you already reach the server over SSH through Cloudflare, you have all three. **Reuse them**: the panel is one more route on the same tunnel and one more Access application in the same team. Do not create a second tunnel. The differences from SSH are that the route's service is `http://` instead of `ssh://`, and people open the panel in a browser, with no `cloudflared` on their machine.
+If you already reach the server over SSH through Cloudflare, you have all three. **Reuse them**: the panel is one more route on the same tunnel and one more Access application in the same team, with the same login method. Do not create a second tunnel. The differences from SSH are that the route's service is `http://` instead of `ssh://`, and people open the panel in a browser, with no `cloudflared` on their machine.
 
 Work in this order: login method, policy, Access application, and only then the tunnel route. That way `panel.<domain>` is never reachable without Access in front of it.
 
-## 1. Add Google as a login method
+## 1. Turn on One-time PIN
 
-Skip this section if Google is already listed under **Zero Trust** > **Integrations** > **Identity providers** (for example, because your SSH sign-in uses it).
+The panel uses Cloudflare's **One-time PIN** login method ([ADR 0006](decisions/0006-authenticate-through-cloudflare-access-and-bind-to-loopback.md)). A person enters their email, Cloudflare emails them a code, and they type it in. This is how the SSH sign-in works too.
 
-In the Google Cloud console:
-
-1. Create a project, or pick an existing one.
-2. Go to **APIs & Services** > **Credentials** and select **Configure Consent Screen**. Select **Get started**, then enter an **App name** and a **User support email**. Choose **External** as the audience, enter your contact information, accept the policy and select **Create**.
-3. On the OAuth overview page, select **Create OAuth client**. Choose **Web application** as the application type, and give it a name.
-4. Under **Authorized JavaScript origins**, add `https://<team>.cloudflareaccess.com`.
-5. Under **Authorized redirect URIs**, add `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`.
-6. Save. Then copy the **Client ID** and the **Client secret**.
-
-In Cloudflare:
+Skip this section if **One-time PIN** is already listed under **Zero Trust** > **Integrations** > **Identity providers**. It is if your SSH sign-in uses it.
 
 1. Go to **Zero Trust** > **Integrations** > **Identity providers**.
-2. Under **Your identity providers**, select **Add new identity provider**, then **Google**.
-3. Paste the Client ID into **App ID**, and the client secret into **Client secret**. Select **Save**.
-4. Back in the list, select **Test** next to Google and sign in once to check it.
+2. Under **Your identity providers**, select **Add new identity provider**.
+3. Select **One-time PIN**.
+
+There is nothing else to configure. A few things worth knowing:
+
+- Cloudflare sends a code only to an email that an Access policy allows. A blocked person still sees "A code has been emailed to you", but nothing arrives.
+- A code expires after 10 minutes and works once. Asking for a new code cancels the previous one.
+- Mail security tools that open links in emails can use up the code first. The person then sees "This One-Time PIN has already been used" and must ask for a new one.
 
 Your team name is under **Zero Trust** > **Settings** > **Team name and domain**.
 
@@ -63,7 +59,7 @@ Anyone not on the list is stopped at the Cloudflare sign-in page. Applications d
 2. Choose **Self-hosted and private**.
 3. Select **Add public hostname**. Enter `panel` as the subdomain and choose your domain in the **Domain** list.
 4. Under **Access policies**, add the policy from section 2.
-5. Under login methods, select **Google**. With Google as the only method you can turn on **Apply instant authentication**, so people go straight to Google without the Cloudflare login page.
+5. Under login methods, select **One-time PIN**, as on your SSH application.
 6. Set the **Session Duration** you want.
 7. Select **Create**.
 
@@ -134,7 +130,7 @@ Every 401 is logged as a `request refused` warning with the `path` and a `reason
 
 Item 2 works as soon as sections 1–5 are done. The others need the panel running on the server. Together they cover the four scenarios in [#10](https://github.com/daniel-vuky/server-control-panel/issues/10).
 
-- [ ] An allowed Google account opens `panel.<domain>`, reaches the panel and sees its email in the sidebar.
-- [ ] A Google account that is not allowed stops at the Cloudflare sign-in page and reaches nothing of the panel.
+- [ ] An allowed email opens `panel.<domain>`, receives a code, signs in, reaches the panel and sees that email in the sidebar.
+- [ ] An email that is not allowed receives no code, stops at the Cloudflare sign-in page and reaches nothing of the panel.
 - [ ] `curl http://<server-ip>:8471` from another machine fails with "connection refused" or times out. Nothing answers.
 - [ ] On the server, `curl -H 'Cf-Access-Jwt-Assertion: x' http://127.0.0.1:8471/api/me` returns 401.
