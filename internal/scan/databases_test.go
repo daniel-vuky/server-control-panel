@@ -209,6 +209,42 @@ func TestDetectDatabases(t *testing.T) {
 			cfgOf(),
 			map[string]string{"MYSQL_DATABASE": "shop", "MYSQL_HOST": "localhost"},
 			[]project.Database{db("mysql", "shop", "host", "", ".env MYSQL_DATABASE MYSQL_HOST")}},
+		{"POSTGRES_HOST with a port matches the service",
+			cfgOf(svc("db", "postgres:16", nil)),
+			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "db:5432"},
+			[]project.Database{db("postgresql", "db", "container", "db", ".env POSTGRES_DB POSTGRES_HOST", "service db")}},
+		{"POSTGRES_HOST external with a port keeps the host only",
+			cfgOf(),
+			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "rds.example.com:5432"},
+			[]project.Database{db("postgresql", "shop", "external", "rds.example.com", ".env POSTGRES_DB POSTGRES_HOST")}},
+		{"MYSQL_HOST with a user and password is unknown, without its value",
+			cfgOf(),
+			map[string]string{"MYSQL_DATABASE": "shop", "MYSQL_HOST": "user:pass@rds.example.com"},
+			[]project.Database{db("mysql", "shop", "unknown", "", ".env MYSQL_DATABASE MYSQL_HOST")}},
+		{"MYSQL_HOST with a user is unknown",
+			cfgOf(),
+			map[string]string{"MYSQL_DATABASE": "shop", "MYSQL_HOST": "user@rds.example.com"},
+			[]project.Database{db("mysql", "shop", "unknown", "", ".env MYSQL_DATABASE MYSQL_HOST")}},
+		{"POSTGRES_HOST holding a URL is unknown",
+			cfgOf(),
+			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "postgres://u:p@rds.example.com/shop"},
+			[]project.Database{db("postgresql", "shop", "unknown", "", ".env POSTGRES_DB POSTGRES_HOST")}},
+		{"unclean POSTGRES_HOST does not merge into the postgres service",
+			cfgOf(svc("db", "postgres:16", nil)),
+			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "u:p@db"},
+			[]project.Database{
+				db("postgresql", "shop", "unknown", "", ".env POSTGRES_DB POSTGRES_HOST"),
+				db("postgresql", "db", "container", "db", "service db"),
+			}},
+		{"sqlite opaque URL with a user and password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "sqlite:user:pass@host/x.db"}, []project.Database{}},
+		{"file opaque URL with a user and password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "file:user:pass@h/x"}, []project.Database{}},
+		{"file URL with a question mark in the password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "file:user:p?ss@h/x"}, []project.Database{}},
+		{"sqlite URL wrapping another URL is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "sqlite:postgres://h/x.db"}, []project.Database{}},
+
 		{"a password variable alone is not a database",
 			cfgOf(),
 			map[string]string{"POSTGRES_PASSWORD": "p", "MYSQL_ROOT_PASSWORD": "p"},
@@ -291,12 +327,22 @@ func TestNoSecretInResult(t *testing.T) {
 		"mongo":    "mongodb://shopuser:p/a@mongofrag@h12.example.com:27017,h13.example.com:27017/mdb",
 		"lite":     "sqlite://shopuser:litepass@host/x.db",
 		"lite2":    "sqlite://shopuser:lite/pass@host/x.db",
+		"lite3":    "sqlite:shopuser:opaquelite@host/x.db",
+		"lite4":    "file:shopuser:filepass@h/x",
+		"lite5":    "file:shopuser:fi?lequery@h/x",
 	} {
 		key := "DATABASE_URL"
 		if name == "mongo" {
 			key = "MONGO_URI"
 		}
 		cfg.Services = append(cfg.Services, svc(name, "app", map[string]string{key: url}))
+	}
+	for name, env := range map[string]map[string]string{
+		"myhost":  {"MYSQL_DATABASE": "hostdb", "MYSQL_HOST": "shopuser:hostpass@rds.example.com"},
+		"pghost":  {"POSTGRES_DB": "pgdb", "POSTGRES_HOST": "shopuser@pg.example.com:5432"},
+		"urlhost": {"POSTGRES_DB": "urldb", "POSTGRES_HOST": "postgres://shopuser:urlhostpass@pg2.example.com/urldb"},
+	} {
+		cfg.Services = append(cfg.Services, svc(name, "app", env))
 	}
 	got := DetectDatabases(cfg, dotenv)
 	if len(got) == 0 {
@@ -306,7 +352,7 @@ func TestNoSecretInResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"devpassword", "shop:", "shopuser", "ssfrag", "erypart", "shfrag", "fragat", "ashfrag", "pa/", "qu?", "ha#", "ssqtail", "btail", "litepass", "lite/pass", "sstail9", "abcnum", "mongofrag", "wd@", "ss/", "123", "p@ss"} {
+	for _, secret := range []string{"devpassword", "shop:", "shopuser", "ssfrag", "erypart", "shfrag", "fragat", "ashfrag", "pa/", "qu?", "ha#", "ssqtail", "btail", "litepass", "lite/pass", "sstail9", "abcnum", "mongofrag", "wd@", "ss/", "123", "p@ss", "opaquelite", "filepass", "fi?", "hostpass", "urlhostpass", "@"} {
 		if strings.Contains(string(b), secret) {
 			t.Errorf("result contains %q: %s", secret, b)
 		}

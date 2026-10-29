@@ -17,18 +17,45 @@ func TestParseDotenv(t *testing.T) {
 		"F=\n" +
 		"G=a#b\n" +
 		"H=\"q\" # tail\r\n" +
+		"I=\"a\\\"b\"\n" +
+		"PASSWORD=\"ab\\\"cd\" # note\n" +
+		"J=\"back\\\\slash\"\n" +
+		"K=\"ends\\\\\"\n" +
 		"not a pair\n"
 	want := map[string]string{
-		"A": "1",
-		"B": "two words",
-		"C": "x#y",
-		"D": "v",
-		"F": "",
-		"G": "a#b",
-		"H": "q",
+		"A":        "1",
+		"B":        "two words",
+		"C":        "x#y",
+		"D":        "v",
+		"F":        "",
+		"G":        "a#b",
+		"H":        "q",
+		"I":        `a"b`,
+		"PASSWORD": `ab"cd`,
+		"J":        `back\slash`,
+		"K":        `ends\`,
 	}
 	if got := ParseDotenv([]byte(in)); !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseDotenv = %v, want %v", got, want)
+	}
+}
+
+func TestSecretValuesRawUserinfo(t *testing.T) {
+	env := map[string]string{ //nolint:gosec // fake credentials, the test subject
+		"LINK":  "postgres://u:p%40ssword@h/d",
+		"OTHER": "postgres://robert:pa/ssword@h/d",
+		"NOTE":  "mysql://ab:cd@h/d",
+	}
+	got := SecretValues(env)
+	for _, want := range []string{"p%40ssword", "p@ssword", "robert", "pa/ssword"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+	for _, not := range []string{"u", "ab", "cd"} {
+		if slices.Contains(got, not) {
+			t.Errorf("unexpected %q in %v", not, got)
+		}
 	}
 }
 

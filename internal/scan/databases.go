@@ -248,8 +248,14 @@ func envFindings(env map[string]string, origin string, hostService map[string]st
 			kind:   locUnknown,
 		}
 		if hasHost {
-			f.host, f.hasHost = strings.TrimSpace(host), true
-			f.kind, f.loc = classifyHost(f.host, hostService, services)
+			// The value is used only when it is a clean host[:port]; anything
+			// else (user:pass@host, a URL) may hold a credential, so the finding
+			// keeps no location and matches no service.
+			f.hasHost = true
+			if h, clean := parseHostPort(strings.TrimSpace(host)); clean && h != "" {
+				f.host = h
+				f.kind, f.loc = classifyHost(h, hostService, services)
+			}
 		}
 		out = append(out, f)
 	}
@@ -427,8 +433,13 @@ func isHexOrLetterDigit(r rune) bool {
 // gives "./a.db", "sqlite:///data/a.db" gives "data/a.db" and
 // "sqlite:////var/a.db" gives "/var/a.db". In the // form the authority must
 // be empty or "localhost"; anything else could be a user and password
-// ("sqlite://user:pass@host/x.db"), so the URL is refused.
+// ("sqlite://user:pass@host/x.db"), so the URL is refused. Any @ or :// in
+// any form ("sqlite:user:pass@host/x.db", "file:u:p?w@h/x") refuses it too,
+// since the path would otherwise carry the credential.
 func sqlitePath(scheme, rest string) (string, bool) {
+	if strings.Contains(rest, "@") || strings.Contains(rest, "://") {
+		return "", false
+	}
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
 		rest = rest[:i]
 	}
