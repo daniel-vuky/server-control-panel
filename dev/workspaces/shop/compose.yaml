@@ -1,0 +1,12 @@
+name: scp-fixture-shop
+
+services:
+  web:
+    image: busybox
+    command: ["sleep", "infinity"]
+    ports:
+      - "18080:80"
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: shop

@@ -3,7 +3,7 @@ COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm tools
 
 .DEFAULT_GOAL := dev
-.PHONY: dev-image setup dev shell test lint fmt typegen build image deploy-test deploy-e2e ci
+.PHONY: dev-image setup dev shell test lint fmt typegen build image deploy-test deploy-e2e ci fixtures-up fixtures-down
 
 ## dev-image: build the dev toolchain image (cached after the first run); SKIP_DEV_IMAGE=1 reuses a prebuilt scp-dev (CI)
 dev-image:
@@ -53,6 +53,18 @@ deploy-test:
 ## deploy-e2e: install, update and uninstall end to end in a throwaway docker:29-dind with a local registry (manual: needs privileged containers; not in CI)
 deploy-e2e:
 	bash deploy/test/e2e.sh
+
+## fixtures-up: start the sample compose projects in dev/workspaces with the host's docker (shop web only so it is Partial, notes; blog stays stopped)
+fixtures-up:
+	docker compose -f dev/workspaces/shop/compose.yaml up -d web
+	docker compose -f dev/workspaces/notes/compose.yml up -d
+
+## fixtures-down: stop and remove every sample compose project (errors ignored)
+fixtures-down:
+	-docker compose -f dev/workspaces/shop/compose.yaml down
+	-docker compose -f dev/workspaces/blog/docker-compose.yml down
+	-docker compose -f dev/workspaces/notes/compose.yml down
+	-docker compose -f dev/workspaces/clients/acme/web/compose.yaml down
 
 ## ci: everything CI runs, ending with a check that the generated types are committed
 ci: setup lint test build

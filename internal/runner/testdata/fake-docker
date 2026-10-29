@@ -1,0 +1,22 @@
+#!/bin/sh
+# Stand-in for the docker binary in runner tests.
+# Prints every argument on its own ARG: line, then the environment on ENV: lines.
+# Knobs come from $HOME/fake.env (the child's environment is minimal):
+#   FAKE_STDERR  text written to stderr
+#   FAKE_EXIT    exit code
+#   FAKE_SLEEP   seconds to sleep instead of exiting
+#   FAKE_BYTES   number of x characters written to stdout
+touch "$HOME/started"
+[ -f "$HOME/fake.env" ] && . "$HOME/fake.env"
+for a in "$@"; do
+	printf 'ARG:%s\n' "$a"
+done
+env | while IFS= read -r line; do
+	printf 'ENV:%s\n' "$line"
+done
+[ -n "$FAKE_STDERR" ] && printf '%s\n' "$FAKE_STDERR" >&2
+if [ -n "$FAKE_BYTES" ]; then
+	head -c "$FAKE_BYTES" /dev/zero | tr '\0' 'x'
+fi
+[ -n "$FAKE_SLEEP" ] && exec sleep "$FAKE_SLEEP"
+exit "${FAKE_EXIT:-0}"

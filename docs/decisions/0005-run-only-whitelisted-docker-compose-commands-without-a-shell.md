@@ -46,3 +46,13 @@ The owner runs projects with docker compose. pm2 and projects started directly w
 
 - Projects not run with docker compose cannot be managed in v1.
 - Every new capability needs a registry entry; there are no ad-hoc commands.
+
+## Note (2026-10-29)
+
+The implementation of #12 refined the decision:
+
+- **Registry.** It holds `compose.config`, `compose.config.override` and `docker.containers`. `config` runs with `--no-env-resolution`, so the panel never prints a project's `env_file` contents. Entries are added only when a flow uses them.
+- **Validation.** Path placeholders accept only absolute, clean paths, so no value can start with `-` and be taken for a flag. An unknown action, a missing or extra value, an empty value and a NUL byte are refused before anything runs.
+- **Masking is per call** (decision 4). The caller passes the secret values for that call. Stderr and the error message are masked (`••••`) before they leave the runner. Stdout goes to the caller unmasked because the caller parses it, and is never logged or stored as it is.
+- **Timeouts.** Read commands get 15 seconds. Lifecycle commands keep the 60 seconds of decision 4 when they arrive. Each output stream is capped at 4 MiB.
+- **Minimal child environment.** The child gets `PATH`, `HOME` and `DOCKER_CONFIG` (both under `$PANEL_DATA_DIR/docker`, created on first use with mode 0700) and `DOCKER_HOST` only if the panel has it set. It never inherits the panel's own environment, so the `CF_ACCESS_*` values stay out of it.

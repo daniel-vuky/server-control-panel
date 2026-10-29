@@ -20,8 +20,19 @@ services:
     command: air
     ports:
       - "127.0.0.1:5173:5173"
-    volumes: *volumes
-    environment: *environment
+    # YAML cannot merge sequences or add keys to an alias, so api spells out its own lists.
+    # The Docker socket goes to api only: tools (tests) never see Docker.
+    volumes:
+      - .:/src
+      - gomod:/go/pkg/mod
+      - gocache:/root/.cache/go-build
+      - node_modules:/src/web/node_modules
+      - pnpm-store:/root/.local/share/pnpm/store
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      pnpm_config_store_dir: /root/.local/share/pnpm/store
+      WORKSPACE_ROOTS: /src/dev/workspaces
+      PANEL_DATA_DIR: /src/data
 
   web:
     image: scp-dev

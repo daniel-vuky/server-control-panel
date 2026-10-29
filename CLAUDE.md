@@ -7,8 +7,8 @@ Work is tracked on the GitHub Project board: https://github.com/users/daniel-vuk
 Columns (the `Status` field): **Backlog → Ready → In progress → In review → Done**.
 
 - Only pick up issues in **Ready**. Backlog items are not specified enough yet.
-- One issue = one branch = one PR. Branches: `feat/<issue>-<slug>` or `fix/<issue>-<slug>`.
-- PR bodies start with `Closes #<issue>` so merging closes the issue.
+- One flow = one branch = one PR. A flow is a group of dependent issues worked end to end in one round (a single issue is a flow of one). Branches: `feat/<first-issue>-<slug>` or `fix/<first-issue>-<slug>`.
+- PR bodies start with one `Closes #<issue>` line per issue in the flow, so merging once closes them all.
 - Claude moves cards to In progress and In review; the user reviews and merges. Never merge PRs yourself.
 
 Skills for the board:
@@ -24,7 +24,8 @@ Skills for the board:
 
 The host needs only Docker and `make`; Go, Node, pnpm and every tool run in the dev image (ADR 0009). Run them through `make`, never natively.
 
-- `make dev` (the default): start Air (Go hot reload) and Vite (web hot reload). UI at `http://localhost:5173`, API on `127.0.0.1:8471` inside the dev container, with the dev identity `dev@localhost` (build tag `dev`).
+- `make dev` (the default): start Air (Go hot reload) and Vite (web hot reload). UI at `http://localhost:5173`, API on `127.0.0.1:8471` inside the dev container, with the dev identity `dev@localhost` (build tag `dev`). The api container gets the host's Docker socket (root-equivalent on the host), `WORKSPACE_ROOTS=/src/dev/workspaces` and `PANEL_DATA_DIR=/src/data` (gitignored).
+- `make fixtures-up` / `make fixtures-down`: start and remove the sample compose projects in `dev/workspaces/` with the host's Docker (`shop` Partial, `notes` Running, `blog` stopped), so a dev scan shows several statuses. `make test` and CI never need Docker.
 - `make shell`: open a bash shell in the dev image.
 - `make setup`: install web dependencies (frozen lockfile) into the `node_modules` volume.
 - `make dev-image`: build the dev toolchain image (cached). `SKIP_DEV_IMAGE=1` reuses a prebuilt `scp-dev` image (CI does this).
@@ -44,13 +45,19 @@ Production deployment is built (ADR 0008). `deploy/` holds the compose project, 
 
 One Go binary (`cmd/panel`) serves the JSON API and the embedded React app (`web/`, built into `internal/web/dist`). It binds `127.0.0.1` only and is reached through a Cloudflare Tunnel (ADR 0006).
 
-- `internal/config`: reads `PANEL_ADDR` and refuses any address that is not `127.0.0.1:<port>`.
+- `internal/config`: reads `PANEL_ADDR` and refuses any address that is not `127.0.0.1:<port>`. It also reads `WORKSPACE_ROOTS` (comma-separated absolute paths, the only folders that may become workspaces) and `PANEL_DATA_DIR` (the panel's own state, default `/data`).
 - `internal/auth`: the `Verifier` seam and the `Require` middleware. Release builds use `AccessVerifier`: it checks the `Cf-Access-Jwt-Assertion` JWT (signature, issuer, audience, expiry) and needs `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`, or startup fails. Setup is in `docs/cloudflare-access.md`. The `dev` build tag swaps in the fixed `dev@localhost` identity; it must never reach a release binary.
-- `internal/api`: the router and API types. Only `GET /api/health` is public; everything else goes through `auth.Require`. `GET /api/me` returns the verified email.
+- `internal/api`: the router and API types. Only `GET /api/health` is public; everything else goes through `auth.Require`. `GET /api/me` returns the verified email. Workspace flow: `POST /api/scans` (starts a scan, 409 while one runs), `GET /api/scans/{id}`, `GET /api/scans/{id}/events` (per-job SSE: `progress`, then `end`), `POST /api/scans/{id}/track` (stores the workspace and its projects, tracked or ignored, in one transaction), `GET /api/workspaces`, `GET /api/projects` (tracked projects with live Docker status; Unknown when Docker cannot be read). Field errors are 422 `{error, field, code}`.
+- `internal/runner`: the only package that runs processes. A registry of argv templates keyed by (action, stack): `compose.config`, `compose.config.override`, `docker.containers`. Values are whole arguments and must be absolute clean paths where they are paths. Read commands time out after 15 s and cap each output stream at 4 MiB. Stderr and error messages are masked (`••••`) for the secret values the caller passes. The child gets a minimal environment (`PATH`, `HOME` and `DOCKER_CONFIG` under `$PANEL_DATA_DIR/docker`), never the panel's own.
+- `internal/roots`: the `WORKSPACE_ROOTS` guard. Resolves a path (symlinks, `..`) to one canonical form and refuses anything outside the roots, with the error codes `not_absolute`, `not_found`, `unreadable`, `outside_roots`, `not_a_folder`.
+- `internal/store`: SQLite at `$PANEL_DATA_DIR/panel.db` (`modernc.org/sqlite`, no cgo), with embedded migrations applied on open. Holds workspaces, projects and scan jobs; a job left running becomes interrupted on reopen.
+- `internal/project`: the `Status` values (`running`, `partial`, `stopped`, `error`, `unknown`) and the mapping from `docker.containers` output.
+- `internal/scan`: the workspace scanner. It walks depth 1-3 (symlinks, hidden folders and `node_modules` skipped; no descent into a project), reads each compose file with `docker compose config --format json --no-env-resolution` through the runner, parses `.env` for masking and database hints, detects databases without keeping any secret, and recognises the panel's own project (Monitor only) by its image label. It runs one scan at a time and fans progress out through a broadcaster.
 - `deploy/`: the shell scripts and `compose.yaml` that install, update and uninstall the panel on a server, with their tests in `deploy/test/`. Run on Linux only; test them through `make deploy-test`.
 - `internal/web`: serves the embedded single-page app for every non-API path.
-- `web/`: React, Vite and TypeScript. Pages are declared in `web/src/app/routes.ts`; most are placeholders for later issues.
-- Only `internal/runner` may import `os/exec` (depguard in `.golangci.yml`, ADR 0005). That package arrives with #12. It runs whitelisted `docker compose` commands without a shell.
+- `web/`: React, Vite and TypeScript. Pages are declared in `web/src/app/routes.ts`. Built: `/onboarding` (path and depth, live scan progress, results table, Add), the `/` Dashboard table of tracked projects, and the Workspaces card on `/settings`. The other pages are placeholders for later issues.
+- Only `internal/runner` may import `os/exec` (depguard in `.golangci.yml`, ADR 0005). It runs whitelisted `docker` commands without a shell; there is no terminal or free-form command anywhere.
+- `dev/workspaces/`: sample compose projects used as the dev `WORKSPACE_ROOTS` (`shop`, `blog`, `notes`, `clients/acme/web`, `broken`, `tools`, and an `outside` symlink that must be skipped). `shop/.env` holds `devpassword`, which must never appear in the DB, logs or API.
 - v1 manages docker compose projects only.
 
 Decisions live in `docs/decisions/` (ADRs 0001-0009). The product spec and design references are in `knowledge/`.

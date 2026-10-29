@@ -25,14 +25,38 @@ describe('app shell', () => {
     ['/', 'Dashboard'],
     ['/projects', 'Projects'],
     ['/projects/shop-api', 'Project detail'],
-    ['/onboarding', 'Onboarding'],
+    ['/onboarding', 'Add a workspace'],
     ['/backups', 'Backups'],
     ['/server', 'Server'],
     ['/activity', 'Activity'],
     ['/settings', 'Settings'],
-  ])('%s renders its placeholder', (path, title) => {
+  ])('%s renders its page heading', (path, title) => {
     renderAt(path)
     expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument()
+  })
+
+  it('maps / to the Dashboard, not its placeholder', async () => {
+    renderAt('/')
+    // The default fetch stub answers 401, so the Dashboard ends in its error state.
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load projects.')
+    expect(screen.queryByText(/Coming in/)).toBeNull()
+  })
+
+  it('maps /settings to the Settings page, not its placeholder', async () => {
+    renderAt('/settings')
+    expect(screen.getByRole('region', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load workspaces.')
+  })
+
+  it('maps /onboarding to the onboarding page, not its placeholder', () => {
+    renderAt('/onboarding')
+    expect(screen.getByRole('region', { name: 'Add project folder' })).toBeInTheDocument()
+    expect(screen.queryByText(/Coming in/)).toBeNull()
+  })
+
+  it('keeps the other routes as placeholders', () => {
+    renderAt('/backups')
+    expect(screen.getByText(/Coming in/)).toBeInTheDocument()
   })
 
   it('marks the current page in the nav', () => {

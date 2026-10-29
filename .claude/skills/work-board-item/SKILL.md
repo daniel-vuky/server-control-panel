@@ -66,12 +66,14 @@ Board reads can lag a few seconds behind an `item-edit`; if a just-moved card is
 
 ## Full workflow
 
-1. **Pick the issue.** With a number, use it. With `next`, take the first Ready item. If nothing is Ready, say so and stop; do not pull from Backlog without the user's OK.
-2. **Read it.** `gh issue view <N> --comments`. If it has no clear goal or acceptance criteria, stop and ask the user (or offer to fill them in via `update-issues`) instead of guessing.
-3. **Claim it.** Move the card to **In progress**. Create a branch from up-to-date `main`: `feat/<N>-<short-slug>` for features, `fix/<N>-<short-slug>` for bugs.
-4. **Implement.** Follow `CLAUDE.md` and the relevant skills. Keep to the issue's scope; note anything out of scope as a follow-up instead of doing it.
-5. **Verify** against every acceptance-criteria checkbox (tests, build, running the app). Do not claim done without evidence.
-6. **Open the PR.** Commit, push, then `gh pr create` with a body that starts with `Closes #<N>` and maps each acceptance criterion to how it was verified. Ask the user before pushing if they have not already approved it in this session.
-7. **Hand off.** Move the card to **In review** and report the PR link. Never merge the PR yourself — merging (which auto-closes the issue) is the user's call.
+Work goes in flows: one flow = one branch = one PR. A flow is a group of dependent issues the user names (for example `#12 → #13 → #17`); a single issue is a flow of one.
+
+1. **Pick the flow.** With numbers, use them. With `next`, take the first Ready item. If nothing is Ready, say so and stop; do not pull from Backlog without the user's OK.
+2. **Read it.** `gh issue view <N> --comments` for every issue in the flow. If one has no clear goal or acceptance criteria, stop and ask the user (or offer to fill them in via `update-issues`) instead of guessing.
+3. **Claim it.** Move every card in the flow to **In progress**. Create one branch from up-to-date `main`, named after the first issue: `feat/<N>-<short-slug>` for features, `fix/<N>-<short-slug>` for bugs.
+4. **Implement.** Follow `CLAUDE.md` and the relevant skills. Keep to the flow's issues; note anything out of scope as a follow-up instead of doing it.
+5. **Verify** against every acceptance-criteria checkbox of every issue (tests, build, running the app). Do not claim done without evidence.
+6. **Open the PR.** Commit, push, then `gh pr create` with a body that starts with one `Closes #<N>` line per issue in the flow and maps each acceptance criterion to how it was verified. Ask the user before pushing if they have not already approved it in this session.
+7. **Hand off.** Move every card in the flow to **In review** and report the PR link. Never merge the PR yourself — merging (which auto-closes the issues) is the user's call.
 
 If work stops partway (blocked, user redirects), leave the card in **In progress** and add an issue comment summarizing where it stands and what is blocking.

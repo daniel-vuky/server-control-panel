@@ -1,0 +1,6 @@
+name: scp-fixture-blog
+
+services:
+  app:
+    image: busybox
+    command: ["sleep", "infinity"]

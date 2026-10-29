@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,5 +79,70 @@ func TestLoadSucceedsWithoutAccessSettings(t *testing.T) {
 	}
 	if cfg.AccessTeamDomain != "" || cfg.AccessAUD != "" {
 		t.Errorf("Access settings = (%q, %q), want both empty", cfg.AccessTeamDomain, cfg.AccessAUD)
+	}
+}
+
+func TestWorkspaceRoots(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    []string
+		wantErr bool
+	}{
+		{name: "empty", env: "", want: []string{}},
+		{name: "trims, cleans and drops empties", env: " /srv , /home/ ,", want: []string{"/srv", "/home"}},
+		{name: "keeps order", env: "/b,/a", want: []string{"/b", "/a"}},
+		{name: "relative", env: "srv", wantErr: true},
+		{name: "one relative among absolute", env: "/srv,srv", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(func(k string) string {
+				if k == "WORKSPACE_ROOTS" {
+					return tt.env
+				}
+				return ""
+			})
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with WORKSPACE_ROOTS=%q: want error, got nil", tt.env)
+				}
+				if !strings.Contains(err.Error(), "WORKSPACE_ROOTS") {
+					t.Errorf("error = %q, want it to name WORKSPACE_ROOTS", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.WorkspaceRoots == nil || !slices.Equal(cfg.WorkspaceRoots, tt.want) {
+				t.Errorf("WorkspaceRoots = %#v, want %#v", cfg.WorkspaceRoots, tt.want)
+			}
+		})
+	}
+}
+
+func TestDataDirDefault(t *testing.T) {
+	cfg, err := Load(func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DataDir != "/data" {
+		t.Errorf("DataDir = %q, want /data", cfg.DataDir)
+	}
+}
+
+func TestDataDirFromEnv(t *testing.T) {
+	cfg, err := Load(func(k string) string {
+		if k == "PANEL_DATA_DIR" {
+			return "/src/data/"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DataDir != "/src/data" {
+		t.Errorf("DataDir = %q, want /src/data", cfg.DataDir)
 	}
 }

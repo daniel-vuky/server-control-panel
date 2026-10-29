@@ -1,0 +1,8 @@
+name: scp-fixture-broken
+
+services:
+  app:
+    image: busybox
+    command: ["sleep", "infinity"]
+    environment:
+      REQUIRED: ${REQUIRED_VAR:?set it}

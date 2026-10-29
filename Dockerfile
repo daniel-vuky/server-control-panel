@@ -33,6 +33,7 @@ LABEL org.opencontainers.image.source="https://github.com/daniel-vuky/server-con
       org.opencontainers.image.revision="$REVISION" \
       org.opencontainers.image.version="$VERSION" \
       io.github.daniel-vuky.server-control-panel.image="panel"
+ENV PANEL_DATA_DIR=/data
 COPY --from=build /out/panel /usr/local/bin/panel
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --start-interval=2s --retries=3 \
     CMD wget -qO- "http://${PANEL_ADDR:-127.0.0.1:8471}/api/health" >/dev/null || exit 1

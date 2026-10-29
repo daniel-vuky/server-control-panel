@@ -1,0 +1,190 @@
+// Package runner is the only place the panel starts a process (ADR 0005,
+// enforced by depguard). It runs the docker commands listed in registry.go,
+// with every value as a separate argument and never through a shell.
+package runner
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	defaultBin     = "docker"
+	defaultTimeout = 15 * time.Second
+	defaultPath    = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	// outputCap is the most bytes kept of each of stdout and stderr.
+	outputCap = 4 << 20
+	// waitDelay bounds how long Run waits for the output pipes after a kill.
+	waitDelay = 2 * time.Second
+	// mask replaces every secret in stderr.
+	mask = "••••"
+	// minSecret is the shortest secret that is masked, so that masking never
+	// shreds common short text.
+	minSecret = 4
+)
+
+var (
+	// ErrUnknownCommand means the stack and action are not in the registry.
+	ErrUnknownCommand = errors.New("runner: unknown command")
+	// ErrBadValue means a value is missing, extra, empty, or not an absolute clean path.
+	ErrBadValue = errors.New("runner: bad value")
+)
+
+// TimeoutError means the command ran past its deadline and was killed.
+type TimeoutError struct{ After time.Duration }
+
+func (e *TimeoutError) Error() string {
+	return "docker command timed out after " + e.After.String()
+}
+
+// ExitError means the command exited with a non-zero status.
+type ExitError struct {
+	Code   int
+	Stderr string // masked, trailing newlines trimmed
+}
+
+func (e *ExitError) Error() string {
+	if first, _, _ := strings.Cut(e.Stderr, "\n"); first != "" {
+		return first
+	}
+	return "exit status " + strconv.Itoa(e.Code)
+}
+
+// Result is what a finished command left. Stdout is raw, because the caller
+// parses it; Stderr is masked. Each is capped at 4 MiB and Truncated says that
+// either lost bytes.
+type Result struct {
+	Stdout, Stderr []byte
+	ExitCode       int
+	Duration       time.Duration
+	Truncated      bool
+}
+
+// Runner runs registry commands with the docker binary.
+type Runner struct {
+	Bin     string        // the docker binary; "docker" when empty
+	DataDir string        // PANEL_DATA_DIR; the child's HOME is DataDir/docker
+	Timeout time.Duration // per command; 15 s when zero
+}
+
+// Run runs the command a and returns its result. v fills the template's
+// placeholders; secrets are masked out of stderr. A non-zero exit gives both
+// the Result and an *ExitError; a missed deadline gives a *TimeoutError.
+func (r *Runner) Run(ctx context.Context, s Stack, a Action, v Values, secrets []string) (Result, error) {
+	args, err := argv(s, a, v)
+	if err != nil {
+		return Result{}, err
+	}
+	env, err := r.childEnv()
+	if err != nil {
+		return Result{}, err
+	}
+	bin, timeout := r.Bin, r.Timeout
+	if bin == "" {
+		bin = defaultBin
+	}
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	//nolint:gosec // G204: the program is configuration and args come from the registry, one element per value, with no shell.
+	cmd := exec.CommandContext(runCtx, bin, args...)
+	cmd.Env = env
+	cmd.WaitDelay = waitDelay
+	var stdout, stderr capWriter
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+
+	start := time.Now()
+	runErr := cmd.Run()
+	res := Result{
+		Stdout:    stdout.buf.Bytes(),
+		Stderr:    []byte(Mask(stderr.buf.String(), secrets)),
+		ExitCode:  cmd.ProcessState.ExitCode(),
+		Duration:  time.Since(start),
+		Truncated: stdout.truncated || stderr.truncated,
+	}
+	if runErr == nil {
+		return res, nil
+	}
+	if ctx.Err() != nil {
+		return res, fmt.Errorf("docker %s: %w", a, ctx.Err())
+	}
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return res, &TimeoutError{After: timeout}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		return res, &ExitError{Code: res.ExitCode, Stderr: strings.TrimRight(string(res.Stderr), "\n")}
+	}
+	return res, fmt.Errorf("docker %s: %s", a, Mask(runErr.Error(), secrets))
+}
+
+// childEnv is the whole environment of the child. It is never the panel's own,
+// which holds the Cloudflare values. HOME and DOCKER_CONFIG point at a private
+// directory because the panel's user has no passwd entry or writable home.
+func (r *Runner) childEnv() ([]string, error) {
+	if r.DataDir == "" {
+		return nil, errors.New("runner: DataDir is not set")
+	}
+	home := filepath.Join(r.DataDir, "docker")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return nil, fmt.Errorf("runner: create %s: %w", home, err)
+	}
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		pathEnv = defaultPath
+	}
+	env := []string{"PATH=" + pathEnv, "HOME=" + home, "DOCKER_CONFIG=" + home}
+	if host := os.Getenv("DOCKER_HOST"); host != "" {
+		env = append(env, "DOCKER_HOST="+host)
+	}
+	return env, nil
+}
+
+// Mask replaces every occurrence of each secret in s with ••••, longest secret
+// first. Secrets shorter than 4 bytes are ignored.
+func Mask(s string, secrets []string) string {
+	var usable []string
+	for _, secret := range secrets {
+		if len(secret) >= minSecret {
+			usable = append(usable, secret)
+		}
+	}
+	if len(usable) == 0 {
+		return s
+	}
+	sort.SliceStable(usable, func(i, j int) bool { return len(usable[i]) > len(usable[j]) })
+	pairs := make([]string, 0, 2*len(usable))
+	for _, secret := range usable {
+		pairs = append(pairs, secret, mask)
+	}
+	return strings.NewReplacer(pairs...).Replace(s)
+}
+
+// capWriter keeps the first outputCap bytes and drops the rest, but keeps
+// accepting writes so that the child never blocks on a full pipe.
+type capWriter struct {
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if room := outputCap - w.buf.Len(); n > room {
+		w.truncated = true
+		p = p[:room]
+	}
+	w.buf.Write(p)
+	return n, nil
+}
