@@ -139,26 +139,37 @@ func TestDetectDatabases(t *testing.T) {
 			map[string]string{"DATABASE_URL": "postgres://u:p%zz@rds.example.com/shop"},
 			[]project.Database{db("postgresql", "shop", "external", "rds.example.com", ".env DATABASE_URL")}},
 
-		{"slash in the password", cfgOf(),
-			map[string]string{"DATABASE_URL": "postgres://shopuser:pa/ss@db.example.com/shop"},
-			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
-		{"question mark in the password", cfgOf(),
-			map[string]string{"DATABASE_URL": "postgres://shopuser:pa?ss@db.example.com/shop"},
-			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
-		{"hash in the password", cfgOf(),
-			map[string]string{"DATABASE_URL": "postgres://shopuser:pa#ss@db.example.com:5432/shop"},
-			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
-		{"at sign in the password", cfgOf(),
-			map[string]string{"DATABASE_URL": "postgres://shopuser:pa@ss@db.example.com/shop"},
-			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
-		{"slash and at in the password of a mongodb replica set", cfgOf(),
+		{"slash in the password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa/ss@db.example.com/shop"}, []project.Database{}},
+		{"question mark in the password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa?ss@db.example.com/shop"}, []project.Database{}},
+		{"hash in the password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa#ss@db.example.com:5432/shop"}, []project.Database{}},
+		{"at sign in the password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:pa@ss@db.example.com/shop"}, []project.Database{}},
+		{"slash and at in the password of a mongodb replica set is refused", cfgOf(),
 			map[string]string{"MONGO_URI": "mongodb://shopuser:p/a@s@h1.example.com:27017,h2.example.com:27017/shop?replicaSet=rs0"},
+			[]project.Database{}},
+		{"mongodb replica set without odd characters", cfgOf(),
+			map[string]string{"MONGO_URI": "mongodb://u:p@h1.example.com:27017,h2.example.com:27017/shop?replicaSet=rs0"},
 			[]project.Database{db("mongodb", "shop", "external", "h1.example.com", ".env MONGO_URI")}},
 		{"password in the query with an at sign is refused", cfgOf(),
 			map[string]string{"DATABASE_URL": "postgres://db.example.com/shop?user=shopuser&password=p@ss"},
 			[]project.Database{}},
 		{"password in the query with a slash and an at sign is refused", cfgOf(),
 			map[string]string{"DATABASE_URL": "postgres://db.example.com/shop?password=a/b@c"},
+			[]project.Database{}},
+		{"unresolved port with a query password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://db.example.com:${DB_PORT}/shop?password=p@ss"},
+			[]project.Database{}},
+		{"two at signs with a query at sign is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://shopuser:p@ss/wd@db.example.com/shop?x=a@b&c=1"},
+			[]project.Database{}},
+		{"numeric password prefix with a slash is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://user:123/abc@host/db?x=a@b=c"},
+			[]project.Database{}},
+		{"benign at sign in the query is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://db.example.com/shop?email=a@b"},
 			[]project.Database{}},
 		{"password in the query without an at sign is fine", cfgOf(),
 			map[string]string{"DATABASE_URL": "postgres://db.example.com/shop?user=shopuser&password=pass"},
@@ -265,19 +276,27 @@ func TestNoSecretInResult(t *testing.T) {
 		"MYSQL_DATABASE":    "shop",
 		"MYSQL_PASSWORD":    "devpassword",
 	}
-	dotenv["DATABASE_URL"] = "postgres://shopuser:pa/ssfrag@db2.example.com/orders"
-	dotenv["MONGO_URI"] = "mongodb://shopuser:qu?erypart@mongo.example.com/shop"
 	for name, url := range map[string]string{
-		"hash":  "postgres://shopuser:ha#shfrag@db3.example.com/hashdb",
-		"at":    "postgres://shopuser:at@fragat@db4.example.com/atdb",
-		"slash": "postgres://shopuser:sl/ashfrag@db5.example.com/apidb",
-		"bad":   "postgres://shopuser:ba/dfrag",
-		"qpw":   "postgres://db6.example.com/qdb?user=shopuser&password=p@ssqtail",
-		"qpw2":  "postgres://db7.example.com/qdb2?password=a/b@btail",
-		"lite":  "sqlite://shopuser:litepass@host/x.db",
-		"lite2": "sqlite://shopuser:lite/pass@host/x.db",
+		"slash":    "postgres://shopuser:pa/ssfrag@db2.example.com/orders",
+		"question": "postgres://shopuser:qu?erypart@db8.example.com/shop",
+		"hash":     "postgres://shopuser:ha#shfrag@db3.example.com/hashdb",
+		"at":       "postgres://shopuser:at@fragat@db4.example.com/atdb",
+		"slash2":   "postgres://shopuser:sl/ashfrag@db5.example.com/apidb",
+		"bad":      "postgres://shopuser:ba/dfrag",
+		"qpw":      "postgres://db6.example.com/qdb?user=shopuser&password=p@ssqtail",
+		"qpw2":     "postgres://db7.example.com/qdb2?password=a/b@btail",
+		"port":     "postgres://db9.example.com:${DB_PORT}/portdb?password=p@sstail9",
+		"twoat":    "postgres://shopuser:p@ss/wd@db10.example.com/twoatdb?x=a@b&c=1",
+		"numeric":  "postgres://shopuser:123/abcnum@host11/numdb?x=a@b=c",
+		"mongo":    "mongodb://shopuser:p/a@mongofrag@h12.example.com:27017,h13.example.com:27017/mdb",
+		"lite":     "sqlite://shopuser:litepass@host/x.db",
+		"lite2":    "sqlite://shopuser:lite/pass@host/x.db",
 	} {
-		cfg.Services = append(cfg.Services, svc(name, "app", map[string]string{"DATABASE_URL": url}))
+		key := "DATABASE_URL"
+		if name == "mongo" {
+			key = "MONGO_URI"
+		}
+		cfg.Services = append(cfg.Services, svc(name, "app", map[string]string{key: url}))
 	}
 	got := DetectDatabases(cfg, dotenv)
 	if len(got) == 0 {
@@ -287,7 +306,7 @@ func TestNoSecretInResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"devpassword", "shop:", "shopuser", "ssfrag", "erypart", "shfrag", "fragat", "ashfrag", "pa/", "qu?", "ha#", "ssqtail", "btail", "litepass", "lite/pass"} {
+	for _, secret := range []string{"devpassword", "shop:", "shopuser", "ssfrag", "erypart", "shfrag", "fragat", "ashfrag", "pa/", "qu?", "ha#", "ssqtail", "btail", "litepass", "lite/pass", "sstail9", "abcnum", "mongofrag", "wd@", "ss/", "123", "p@ss"} {
 		if strings.Contains(string(b), secret) {
 			t.Errorf("result contains %q: %s", secret, b)
 		}

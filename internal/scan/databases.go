@@ -322,61 +322,57 @@ func parseDatabaseURL(raw string) (dbType, name, host string, hasHost, isFile, o
 		return "", "", "", false, false, false
 	}
 	rest = rest[2:]
-	// A credential can hold an unencoded / ? # or @, and libpq also takes
-	// `password` as a query parameter, so no single reading is safe. Read it
-	// twice: lax (the host follows the LAST @ of the whole string, which copes
-	// with a / ? # or @ in the userinfo) and strict (the authority ends at the
-	// first / ? #, as RFC 3986 says). Keep the finding only when the readings
-	// that parse cleanly agree; if only one parses cleanly, use that one; if
-	// they disagree, refuse. A refused URL gives no record, never a wrong one.
-	laxHost, laxPath, laxOK := splitURLRest(rest, true)
-	strictHost, strictPath, strictOK := splitURLRest(rest, false)
-	switch {
-	case laxOK && strictOK:
-		if laxHost != strictHost || laxPath != strictPath {
-			return "", "", "", false, false, false
-		}
-		return dbType, strictPath, strictHost, strictHost != "", false, true
-	case strictOK:
-		return dbType, strictPath, strictHost, strictHost != "", false, true
-	case laxOK:
-		return dbType, laxPath, laxHost, laxHost != "", false, true
+	host, path, ok := splitURLRest(rest)
+	if !ok {
+		return "", "", "", false, false, false
 	}
-	return "", "", "", false, false, false
+	return dbType, path, host, host != "", false, true
 }
 
-// splitURLRest reads what follows "scheme://" into a host and a database
-// path. With lax set, the userinfo ends at the last @ of the whole string;
-// otherwise the authority is cut at the first / ? # and the userinfo ends at
-// the last @ inside it. Nothing before the userinfo's @ is returned. ok is
-// false unless the host and port parse cleanly.
-func splitURLRest(rest string, lax bool) (host, path string, ok bool) {
-	if lax {
-		if i := strings.LastIndex(rest, "@"); i >= 0 {
-			rest = rest[i+1:]
-		}
-	}
-	authority := rest
+// splitURLRest reads what follows "scheme://" into a host and a database path,
+// by one strict rule that refuses anything ambiguous. A credential may hold an
+// unencoded / ? # or @, and libpq also takes `password` as a query parameter,
+// so no guess is safe; missing a database is acceptable, leaking a user or
+// password fragment is not.
+//
+//   - The authority is the text up to the first /, ? or #.
+//   - With no @ in the whole text there is no userinfo.
+//   - With exactly one @, and it inside the authority, the userinfo is
+//     everything up to it and is dropped unread.
+//   - Any other @ (a second one, or one after the authority) refuses the URL.
+//   - The rest of the authority must be a clean host[:port] (each host, for a
+//     replica set); the path is what follows the authority's /, up to ? or #.
+func splitURLRest(rest string) (host, path string, ok bool) {
+	end := len(rest)
 	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
-		authority = rest[:i]
-		if rest[i] == '/' {
-			path = rest[i+1:]
-			if j := strings.IndexAny(path, "?#"); j >= 0 {
-				path = path[:j]
-			}
+		end = i
+	}
+	authority := rest[:end]
+	switch strings.Count(rest, "@") {
+	case 0:
+	case 1:
+		at := strings.Index(rest, "@")
+		if at >= end {
+			return "", "", false
 		}
-	}
-	if !lax {
-		if i := strings.LastIndex(authority, "@"); i >= 0 {
-			authority = authority[i+1:]
-		}
-	}
-	if i := strings.Index(authority, ","); i >= 0 { // replica set: first host
-		authority = authority[:i]
-	}
-	host, ok = parseHostPort(authority)
-	if !ok {
+		authority = authority[at+1:]
+	default:
 		return "", "", false
+	}
+	if end < len(rest) && rest[end] == '/' {
+		path = rest[end+1:]
+		if j := strings.IndexAny(path, "?#"); j >= 0 {
+			path = path[:j]
+		}
+	}
+	for i, h := range strings.Split(authority, ",") { // replica set: first host names it
+		hostName, clean := parseHostPort(h)
+		if !clean {
+			return "", "", false
+		}
+		if i == 0 {
+			host = hostName
+		}
 	}
 	return host, path, true
 }
