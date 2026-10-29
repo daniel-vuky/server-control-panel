@@ -29,6 +29,11 @@ var version = "dev"
 // readTimeout bounds every docker command the panel runs to read state.
 const readTimeout = 15 * time.Second
 
+// scanWait is how long shutdown waits for a running scan to store its outcome
+// before the database closes. A scan still running then is left; the next
+// start marks its job interrupted.
+const scanWait = 5 * time.Second
+
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(log)
@@ -63,6 +68,7 @@ func run(log *slog.Logger) int {
 	}()
 
 	docker := &runner.Runner{Bin: "docker", DataDir: cfg.DataDir, Timeout: readTimeout}
+	scans := scan.NewManager(st, docker, log)
 
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
@@ -77,7 +83,7 @@ func run(log *slog.Logger) int {
 			Web:      web.Handler(),
 			Guard:    roots.New(cfg.WorkspaceRoots, log),
 			Store:    st,
-			Scans:    scan.NewManager(st, docker, log),
+			Scans:    scans,
 			Docker:   docker,
 		}),
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
@@ -112,8 +118,19 @@ func run(log *slog.Logger) int {
 	cancelBase() // shutdown begins: end the SSE streams first
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Error("shutdown failed", "error", err)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		log.Error("shutdown failed", "error", shutdownErr)
+	}
+
+	// The store closes when run returns; let a running scan store its outcome
+	// first, for a short while.
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), scanWait)
+	defer cancelWait()
+	if err := scans.Wait(waitCtx); err != nil {
+		log.Warn("a scan is still running; the next start marks it interrupted", "error", err)
+	}
+	if shutdownErr != nil {
 		return 1
 	}
 	return 0
