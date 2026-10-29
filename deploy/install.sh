@@ -373,15 +373,26 @@ show_logs() {
   docker compose logs --tail 30 panel >&2 || true
 }
 
+# restart_updater: after a failed pull or up, starts the updater stopped by
+# start_panel again, so a failed re-run does not leave updates off. Nothing to
+# start on a fresh install.
+restart_updater() {
+  docker compose start updater >/dev/null 2>&1 || true
+}
+
 # start_panel: pulls the images and (re)creates the containers. Runs in SCP_DIR.
+# The updater is stopped first so its rounds cannot pull or recreate the panel
+# at the same time; `up` starts it again.
 start_panel() {
   local out re='denied|unauthorized|manifest unknown'
+  docker compose stop updater >/dev/null 2>&1 || true
   echo "Pulling images..."
   if ! out=$(docker compose pull 2>&1); then
     printf '%s\n' "$out" >&2
     if [[ "$out" =~ $re ]]; then
       echo "hint: the panel image could not be pulled anonymously. If the GHCR package ghcr.io/daniel-vuky/server-control-panel is still private, make it public (see docs/deploy.md)." >&2
     fi
+    restart_updater
     die "docker compose pull failed; nothing was started"
   fi
   if [[ -n "$out" ]]; then
@@ -390,6 +401,7 @@ start_panel() {
   echo "Starting the panel..."
   if ! docker compose up -d --remove-orphans; then
     show_logs
+    restart_updater
     die "docker compose up failed"
   fi
 }

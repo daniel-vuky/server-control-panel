@@ -57,7 +57,7 @@ TITLES=(
   "re-run after adding a root to panel.env: root mounted, panel.env and .env unchanged"
   "bad AUD in panel.env: install.sh fails and prints the panel log; restored, re-run is healthy"
   "install as root without sudo is refused"
-  "updater: a new image under the same tag runs within 30s, old panel image pruned, alpine kept"
+  "updater: unchanged image leaves the panel alone; a new image under the same tag runs within 30s, old panel image pruned, alpine kept"
   "uninstall.sh (installed copy) with latest and sha-test on one image keeps panel.env and data/; --purge deletes the directory"
 )
 
@@ -423,9 +423,23 @@ check_4() {
   need "the panel is healthy" wait_for 60 healthy || return 1
 }
 
+updater_log_count() {
+  q docker logs server-control-panel-updater-1 2>&1 | grep -c "$1"
+}
+
+# up_to_date_rounds <count before>: at least two more "up to date" rounds.
+up_to_date_rounds() { (($(updater_log_count 'panel is up to date') >= $1 + 2)); }
+
 check_5() {
-  local old cur want start elapsed=-1
-  old=$(inspect "$(panel_cid)" '{{.Image}}')
+  local old cur want start elapsed=-1 cid quiet updates
+  cid=$(panel_cid)
+  quiet=$(updater_log_count 'panel is up to date')
+  updates=$(updater_log_count 'updating panel')
+  need "with an unchanged image the updater logs 'panel is up to date' in two more rounds" \
+    wait_for 30 up_to_date_rounds "$quiet" || return 1
+  need "those rounds did not update the panel" eq "$updates" "$(updater_log_count 'updating panel')" || return 1
+  need "the panel container is the same ($cid)" eq "$cid" "$(panel_cid)" || return 1
+  old=$(inspect "$cid" '{{.Image}}')
   echo "      running image before: $old"
   need "alpine is present before the update" image_id alpine || return 1
   need "build VERSION=e2e-2 and push it as panel:latest" build_push v2 e2e-2 || return 1
