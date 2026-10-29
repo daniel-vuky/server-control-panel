@@ -621,3 +621,76 @@ func TestReadContainers(t *testing.T) {
 		t.Fatal("no error when docker fails")
 	}
 }
+
+func TestConfigWarningSkipsComposeWarnLines(t *testing.T) {
+	fc := newFakeCmd()
+	m, _ := newTestManager(t, fc)
+	secrets := []string{"devpassword"}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"WARN before the error",
+			&runner.ExitError{Code: 1, Stderr: "WARN[0000] /srv/a/docker-compose.yml: the attribute `version` is obsolete, it will be ignored\nrequired variable DB_NAME is missing"},
+			"required variable DB_NAME is missing"},
+		{"blank lines and several WARN lines",
+			&runner.ExitError{Code: 1, Stderr: "\nWARN[0000] one\nWARN[0000] two\n\n  invalid interpolation\nmore"},
+			"invalid interpolation"},
+		{"only WARN lines gives the first",
+			&runner.ExitError{Code: 1, Stderr: "WARN[0000] first warning\nWARN[0000] second"},
+			"WARN[0000] first warning"},
+		{"the chosen line is masked",
+			&runner.ExitError{Code: 1, Stderr: "WARN[0000] obsolete\nbad value devpassword here"},
+			"bad value •••• here"},
+		{"empty stderr gives the exit status",
+			&runner.ExitError{Code: 3},
+			"exit status 3"},
+		{"another error is masked too",
+			errors.New("docker compose.config: devpassword\nnext"),
+			"docker compose.config: ••••"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := "/srv/" + strings.ReplaceAll(tc.name, " ", "-")
+			fc.configs[dir] = fakeReply{err: tc.err}
+			_, got := m.readConfig(context.Background(), runner.ComposeConfig, runner.Values{"dir": dir}, secrets)
+			if got != tc.want {
+				t.Fatalf("warning %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWait(t *testing.T) {
+	root := tempRoot(t)
+	mkfile(t, root, "a/compose.yaml", "")
+	fc := newFakeCmd()
+	fc.gate = make(chan struct{})
+	m, st := newTestManager(t, fc)
+
+	if err := m.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait with no scan: %v", err)
+	}
+	id, err := m.Start(context.Background(), root, 1, "dev@localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	short, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := m.Wait(short); !errors.Is(err, context.DeadlineExceeded) {
+		close(fc.gate)
+		t.Fatalf("Wait on a running scan: %v, want DeadlineExceeded", err)
+	}
+	close(fc.gate)
+	if err := m.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait after the gate opened: %v", err)
+	}
+	// Wait returns only after the job's outcome is stored.
+	job, err := st.Job(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != "done" {
+		t.Fatalf("stored state %q after Wait, want done", job.State)
+	}
+}

@@ -189,6 +189,24 @@ func (m *Manager) Progress(id int64) (Progress, bool) {
 // wait blocks until every started job has finished.
 func (m *Manager) wait() { m.wg.Wait() }
 
+// Wait blocks until the running scan, if any, has finished and stored its
+// outcome, or until ctx is done; then it returns ctx's error. The panel calls
+// it on shutdown, before it closes the store. A scan still running when ctx
+// ends is left: the next start marks its job interrupted.
+func (m *Manager) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // run scans, stores the outcome and then ends the job for its subscribers.
 // FinishJob is written before the job leaves the running set, so a
 // subscriber either is live and sees end, or is not live and finds the
@@ -338,14 +356,20 @@ func (m *Manager) examine(ctx context.Context, f Folder) (row Row, configRead bo
 }
 
 // readConfig runs the config command and parses it. On failure it returns a
-// row warning: the first line of the (masked) error, or a fixed message.
+// row warning: the first line of the (masked) error that is not a compose
+// warning, or a fixed message.
 func (m *Manager) readConfig(ctx context.Context, action runner.Action, values runner.Values, secrets []string) (ComposeConfig, string) {
 	res, err := m.cmd.Run(ctx, runner.StackCompose, action, values, secrets)
 	if err != nil {
+		text := err.Error()
+		var exitErr *runner.ExitError
+		if errors.As(err, &exitErr) && strings.TrimSpace(exitErr.Stderr) != "" {
+			text = exitErr.Stderr
+		}
 		// ExitError carries masked stderr; mask again so no other error text
 		// can carry a value either.
-		first, _, _ := strings.Cut(runner.Mask(err.Error(), secrets), "\n")
-		if first = strings.TrimSpace(first); first == "" {
+		first := firstErrorLine(runner.Mask(text, secrets))
+		if first == "" {
 			first = "docker compose config failed."
 		}
 		return ComposeConfig{}, first
@@ -358,6 +382,27 @@ func (m *Manager) readConfig(ctx context.Context, action runner.Action, values r
 		return ComposeConfig{}, "docker compose config did not return a readable config."
 	}
 	return cfg, ""
+}
+
+// firstErrorLine returns the first non-blank line of text that is not a
+// compose warning, such as "WARN[0000] ... the attribute `version` is
+// obsolete", which compose prints before the error for legacy files. With
+// only warnings it returns the first of them.
+func firstErrorLine(text string) string {
+	fallback := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "WARN") {
+			return line
+		}
+		if fallback == "" {
+			fallback = line
+		}
+	}
+	return fallback
 }
 
 // readDotenv parses a project's .env if it is a regular file. A symlink, a
