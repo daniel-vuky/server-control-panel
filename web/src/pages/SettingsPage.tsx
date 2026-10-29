@@ -4,13 +4,12 @@ import type { Workspace } from '../api/types.gen'
 import { listWorkspaces } from '../api/workspaces'
 import IssueLinks from '../components/IssueLinks'
 import LoadError from '../components/LoadError'
+import { plural } from '../lib/plural'
 import { formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
 
 const card = 'rounded-[10px] border border-border bg-surface'
 const head = 'flex flex-col gap-1 border-b border-border px-[18px] py-4'
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 /** SettingsPage is /settings: the workspaces card, then the sections still to come. */
 export default function SettingsPage() {

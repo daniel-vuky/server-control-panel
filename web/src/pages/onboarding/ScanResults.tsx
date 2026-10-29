@@ -4,10 +4,9 @@ import type { ScanJob, ScanResult, ScanRow, TrackItem } from '../../api/types.ge
 import DatabaseCell from '../../components/DatabaseCell'
 import MonitorOnlyTag from '../../components/MonitorOnlyTag'
 import StatusBadge from '../../components/StatusBadge'
+import { plural } from '../../lib/plural'
 
 export const NAME_MAX = 80
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 /** notShown is "K already tracked · J ignored, not shown" with only the non-zero parts. */
 function notShown(r: ScanResult): string {

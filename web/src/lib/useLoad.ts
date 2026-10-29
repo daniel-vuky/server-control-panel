@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type Load<T> =
   | { state: 'loading' }
@@ -7,7 +7,9 @@ export type Load<T> =
 
 /**
  * useLoad runs fetcher on mount and whenever retry is called, and aborts the
- * request it supersedes or that is still running at unmount.
+ * request it supersedes or that is still running at unmount. The fetcher may
+ * be an inline function: only the latest one is kept, and a new identity does
+ * not refetch.
  */
 export function useLoad<T>(fetcher: (signal: AbortSignal) => Promise<T>): {
   load: Load<T>
@@ -15,12 +17,14 @@ export function useLoad<T>(fetcher: (signal: AbortSignal) => Promise<T>): {
 } {
   const [load, setLoad] = useState<Load<T>>({ state: 'loading' })
   const [attempt, setAttempt] = useState(0)
+  const fetcherRef = useRef(fetcher)
+  fetcherRef.current = fetcher
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt re-runs the fetch on retry.
   useEffect(() => {
     const ctl = new AbortController()
     setLoad({ state: 'loading' })
-    fetcher(ctl.signal).then(
+    fetcherRef.current(ctl.signal).then(
       (data) => {
         if (!ctl.signal.aborted) setLoad({ state: 'ok', data })
       },
@@ -31,7 +35,7 @@ export function useLoad<T>(fetcher: (signal: AbortSignal) => Promise<T>): {
       },
     )
     return () => ctl.abort()
-  }, [fetcher, attempt])
+  }, [attempt])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
   return { load, retry }
