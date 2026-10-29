@@ -48,7 +48,7 @@ image:
 
 ## deploy-test: run the deploy script tests, then render the compose project and check it with docker compose config, in a Linux container (never on the host)
 deploy-test:
-	docker run --rm -v "$(CURDIR)":/src -w /src docker:29-cli sh -c 'apk add --no-cache bash coreutils >/dev/null && bash deploy/test/run.sh && bash deploy/test/compose-config.sh'
+	docker run --rm -v "$(CURDIR)":/src:ro -w /src docker:29-cli sh -c 'apk add --no-cache bash coreutils >/dev/null && bash deploy/test/run.sh && bash deploy/test/compose-config.sh'
 
 ## deploy-e2e: install, update and uninstall end to end in a throwaway docker:29-dind with a local registry (manual: needs privileged containers; not in CI)
 deploy-e2e:

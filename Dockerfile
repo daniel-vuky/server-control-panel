@@ -20,7 +20,8 @@ RUN go mod download
 COPY cmd cmd
 COPY internal internal
 COPY --from=web /src/internal/web/dist internal/web/dist
-# go:embed needs the placeholder; vite's emptyOutDir removed the committed one.
+# go:embed needs the placeholder; dist is not in the build context
+# (.dockerignore), so the committed one is absent here.
 RUN touch internal/web/dist/.gitkeep \
     && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
         -ldflags "-s -w -X main.version=$VERSION" -o /out/panel ./cmd/panel

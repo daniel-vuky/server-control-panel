@@ -14,6 +14,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /proc:/host/proc:ro
       - ./data:/data
+    # It runs as a normal user and needs no capability; no-new-privileges
+    # stops a setuid binary from gaining any back.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     mem_limit: 200m
     cpus: 0.5
     restart: unless-stopped
@@ -25,8 +29,9 @@ services:
 
   # Pulls a newer panel image every UPDATE_INTERVAL seconds and recreates the
   # panel when it changed. It mounts the project directory at the same absolute
-  # path, because the daemon resolves bind-mount paths on the host. It never
-  # reads panel.env into its own environment.
+  # path, because the daemon resolves bind-mount paths on the host, and
+  # read-only, because it only reads the project files. It never reads
+  # panel.env into its own environment.
   updater:
     image: docker:29-cli
     # PID 1 for the shell script: without an init, SIGTERM is ignored and every
@@ -38,7 +43,7 @@ services:
     working_dir: /opt/server-control-panel
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/server-control-panel:/opt/server-control-panel
+      - /opt/server-control-panel:/opt/server-control-panel:ro
     restart: unless-stopped
     logging:
       driver: json-file

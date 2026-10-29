@@ -19,7 +19,7 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       # The workflow builds the dev image below (with the GHA layer cache), so make must not rebuild it.
       SKIP_DEV_IMAGE: "1"
