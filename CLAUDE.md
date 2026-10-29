@@ -7,8 +7,8 @@ Work is tracked on the GitHub Project board: https://github.com/users/daniel-vuk
 Columns (the `Status` field): **Backlog → Ready → In progress → In review → Done**.
 
 - Only pick up issues in **Ready**. Backlog items are not specified enough yet.
-- One issue = one branch = one PR. Branches: `feat/<issue>-<slug>` or `fix/<issue>-<slug>`.
-- PR bodies start with `Closes #<issue>` so merging closes the issue.
+- One flow = one branch = one PR. A flow is a group of dependent issues worked end to end in one round (a single issue is a flow of one). Branches: `feat/<first-issue>-<slug>` or `fix/<first-issue>-<slug>`.
+- PR bodies start with one `Closes #<issue>` line per issue in the flow, so merging once closes them all.
 - Claude moves cards to In progress and In review; the user reviews and merges. Never merge PRs yourself.
 
 Skills for the board:
