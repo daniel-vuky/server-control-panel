@@ -312,20 +312,51 @@ func parseDatabaseURL(raw string) (dbType, name, host string, hasHost, isFile, o
 	}
 	rest := raw[colon+1:]
 	if dbType == dbSQLite {
-		return dbType, sqlitePath(scheme, rest), "", false, true, true
+		path, ok := sqlitePath(scheme, rest)
+		if !ok {
+			return "", "", "", false, false, false
+		}
+		return dbType, path, "", false, true, true
 	}
 	if !strings.HasPrefix(rest, "//") {
 		return "", "", "", false, false, false
 	}
 	rest = rest[2:]
-	// The user and password may hold an unencoded /, ?, # or @, so the host
-	// starts after the LAST @ of the whole string. Everything before it is
-	// dropped unread. If what follows is not a clean host[:port], the finding
-	// is refused: a misparse must never put part of a credential in a name.
-	if i := strings.LastIndex(rest, "@"); i >= 0 {
-		rest = rest[i+1:]
+	// A credential can hold an unencoded / ? # or @, and libpq also takes
+	// `password` as a query parameter, so no single reading is safe. Read it
+	// twice: lax (the host follows the LAST @ of the whole string, which copes
+	// with a / ? # or @ in the userinfo) and strict (the authority ends at the
+	// first / ? #, as RFC 3986 says). Keep the finding only when the readings
+	// that parse cleanly agree; if only one parses cleanly, use that one; if
+	// they disagree, refuse. A refused URL gives no record, never a wrong one.
+	laxHost, laxPath, laxOK := splitURLRest(rest, true)
+	strictHost, strictPath, strictOK := splitURLRest(rest, false)
+	switch {
+	case laxOK && strictOK:
+		if laxHost != strictHost || laxPath != strictPath {
+			return "", "", "", false, false, false
+		}
+		return dbType, strictPath, strictHost, strictHost != "", false, true
+	case strictOK:
+		return dbType, strictPath, strictHost, strictHost != "", false, true
+	case laxOK:
+		return dbType, laxPath, laxHost, laxHost != "", false, true
 	}
-	authority, path := rest, ""
+	return "", "", "", false, false, false
+}
+
+// splitURLRest reads what follows "scheme://" into a host and a database
+// path. With lax set, the userinfo ends at the last @ of the whole string;
+// otherwise the authority is cut at the first / ? # and the userinfo ends at
+// the last @ inside it. Nothing before the userinfo's @ is returned. ok is
+// false unless the host and port parse cleanly.
+func splitURLRest(rest string, lax bool) (host, path string, ok bool) {
+	if lax {
+		if i := strings.LastIndex(rest, "@"); i >= 0 {
+			rest = rest[i+1:]
+		}
+	}
+	authority := rest
 	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
 		authority = rest[:i]
 		if rest[i] == '/' {
@@ -335,14 +366,19 @@ func parseDatabaseURL(raw string) (dbType, name, host string, hasHost, isFile, o
 			}
 		}
 	}
+	if !lax {
+		if i := strings.LastIndex(authority, "@"); i >= 0 {
+			authority = authority[i+1:]
+		}
+	}
 	if i := strings.Index(authority, ","); i >= 0 { // replica set: first host
 		authority = authority[:i]
 	}
-	host, clean := parseHostPort(authority)
-	if !clean {
-		return "", "", "", false, false, false
+	host, ok = parseHostPort(authority)
+	if !ok {
+		return "", "", false
 	}
-	return dbType, path, host, host != "", false, true
+	return host, path, true
 }
 
 // parseHostPort splits host[:port] or [ipv6][:port]. It reports false unless
@@ -393,18 +429,28 @@ func isHexOrLetterDigit(r rune) bool {
 
 // sqlitePath returns the file path of a sqlite: or file: URL: "file:./a.db"
 // gives "./a.db", "sqlite:///data/a.db" gives "data/a.db" and
-// "sqlite:////var/a.db" gives "/var/a.db".
-func sqlitePath(scheme, rest string) string {
+// "sqlite:////var/a.db" gives "/var/a.db". In the // form the authority must
+// be empty or "localhost"; anything else could be a user and password
+// ("sqlite://user:pass@host/x.db"), so the URL is refused.
+func sqlitePath(scheme, rest string) (string, bool) {
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
 		rest = rest[:i]
 	}
 	if strings.HasPrefix(rest, "//") {
 		rest = rest[2:]
+		authority := rest
+		if i := strings.Index(rest, "/"); i >= 0 {
+			authority = rest[:i]
+		}
+		if authority != "" && !strings.EqualFold(authority, "localhost") {
+			return "", false
+		}
+		rest = rest[len(authority):]
 		if scheme == "sqlite" {
 			rest = strings.TrimPrefix(rest, "/")
 		}
 	}
-	return rest
+	return rest, true
 }
 
 func sortedUnique(in []string) []string {

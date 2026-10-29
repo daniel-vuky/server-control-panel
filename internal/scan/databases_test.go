@@ -154,6 +154,22 @@ func TestDetectDatabases(t *testing.T) {
 		{"slash and at in the password of a mongodb replica set", cfgOf(),
 			map[string]string{"MONGO_URI": "mongodb://shopuser:p/a@s@h1.example.com:27017,h2.example.com:27017/shop?replicaSet=rs0"},
 			[]project.Database{db("mongodb", "shop", "external", "h1.example.com", ".env MONGO_URI")}},
+		{"password in the query with an at sign is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://db.example.com/shop?user=shopuser&password=p@ss"},
+			[]project.Database{}},
+		{"password in the query with a slash and an at sign is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://db.example.com/shop?password=a/b@c"},
+			[]project.Database{}},
+		{"password in the query without an at sign is fine", cfgOf(),
+			map[string]string{"DATABASE_URL": "postgres://db.example.com/shop?user=shopuser&password=pass"},
+			[]project.Database{db("postgresql", "shop", "external", "db.example.com", ".env DATABASE_URL")}},
+		{"sqlite URL with a user and password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "sqlite://shopuser:pass@host/x.db"}, []project.Database{}},
+		{"sqlite URL with a slash in the password is refused", cfgOf(),
+			map[string]string{"DATABASE_URL": "sqlite://shopuser:pa/ss@host/x.db"}, []project.Database{}},
+		{"file URL with localhost", cfgOf(),
+			map[string]string{"DATABASE_URL": "file://localhost/var/app.db"},
+			[]project.Database{db("sqlite", "/var/app.db", "file", "/var/app.db", ".env DATABASE_URL")}},
 		{"unparseable authority is refused, not misread", cfgOf(),
 			map[string]string{"DATABASE_URL": "postgres://shopuser:pa/ss"}, []project.Database{}},
 		{"bad port is refused", cfgOf(),
@@ -256,6 +272,10 @@ func TestNoSecretInResult(t *testing.T) {
 		"at":    "postgres://shopuser:at@fragat@db4.example.com/atdb",
 		"slash": "postgres://shopuser:sl/ashfrag@db5.example.com/apidb",
 		"bad":   "postgres://shopuser:ba/dfrag",
+		"qpw":   "postgres://db6.example.com/qdb?user=shopuser&password=p@ssqtail",
+		"qpw2":  "postgres://db7.example.com/qdb2?password=a/b@btail",
+		"lite":  "sqlite://shopuser:litepass@host/x.db",
+		"lite2": "sqlite://shopuser:lite/pass@host/x.db",
 	} {
 		cfg.Services = append(cfg.Services, svc(name, "app", map[string]string{"DATABASE_URL": url}))
 	}
@@ -267,7 +287,7 @@ func TestNoSecretInResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"devpassword", "shop:", "shopuser", "ssfrag", "erypart", "shfrag", "fragat", "ashfrag", "pa/", "qu?", "ha#"} {
+	for _, secret := range []string{"devpassword", "shop:", "shopuser", "ssfrag", "erypart", "shfrag", "fragat", "ashfrag", "pa/", "qu?", "ha#", "ssqtail", "btail", "litepass", "lite/pass"} {
 		if strings.Contains(string(b), secret) {
 			t.Errorf("result contains %q: %s", secret, b)
 		}
