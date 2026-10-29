@@ -113,7 +113,7 @@ A release binary with a missing or malformed `CF_ACCESS_TEAM_DOMAIN` or `CF_ACCE
 
 Dev builds (`make dev`) ignore these variables and use the fixed identity `dev@localhost`.
 
-Packaging and updates are not covered here. They are tracked in [#75](https://github.com/daniel-vuky/server-control-panel/issues/75).
+Installing the panel, updates and rollback are in [Deploy the panel](deploy.md). The install command asks for these values and writes them to `panel.env`.
 
 ## Troubleshooting
 

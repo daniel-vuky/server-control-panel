@@ -65,3 +65,15 @@ The server runs Ubuntu with 8 GB RAM. `cloudflared` is already installed directl
 - **The Docker socket is root-equivalent on the host.** This is accepted because controlling compose projects requires it, and it is why [ADR 5](0005-run-only-whitelisted-docker-compose-commands-without-a-shell.md) and ADR 6 cannot be relaxed.
 - A workspace outside the mounted roots needs a re-install step, because a running container cannot gain new mounts.
 - Updates arrive up to `UPDATE_INTERVAL` after a merge, not instantly.
+
+## Note (2026-10-29)
+
+The implementation of #75 refined the decision:
+
+- **Release trigger.** Images are built after CI passes on `main`, not on every push (decision 2). A push that only changes `docs/`, `knowledge/` or `*.md` files runs no CI and so releases no image.
+- **Updates.** The updater (decision 4) recreates the panel only when the pulled image differs from the running one. After an actual update it removes the panel's old images (filtered by the panel's image label) so disk use stays flat. A failed pull or lookup changes nothing and is retried next round. A panel the owner stopped is left stopped.
+- **Hardening.** The panel drops every capability and runs with `no-new-privileges`; the updater mounts the install directory read-only.
+- **Install.** `install.sh` stops the updater while it works and always starts it again, so the two never recreate the panel at the same time.
+- **Uninstall.** `uninstall.sh` stops the project, removes the panel images and the compose files, and keeps `panel.env` and `data/`. `--purge` removes the whole install directory.
+- **Rollback is manual.** A release that fails its health check is not rolled back automatically. The owner pins the previous `sha-` tag in `.env` (`docs/deploy.md`).
+- **Layout.** The deploy files live in `deploy/`, and `install.sh` downloads them from there.

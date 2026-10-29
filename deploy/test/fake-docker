@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# A stand-in for `docker` in the deploy script tests. Tests install it as
+# `docker` on PATH.
+#
+# Every call appends its arguments, space-joined, as one line to
+# $FAKE_DOCKER_LOG (when set). Behaviour is chosen per subcommand with:
+#   FAKE_DOCKER_<KEY>_RC   exit status (default 0)
+#   FAKE_DOCKER_<KEY>_OUT  stdout (default empty; printed with a newline)
+# KEY is the first argument upper-cased; when the first argument is `compose`
+# or `image` the second argument is appended after an underscore. Examples:
+# COMPOSE_PULL, COMPOSE_UP, COMPOSE_PS, COMPOSE_LOGS, COMPOSE_DOWN,
+# COMPOSE_STOP, COMPOSE_START, COMPOSE_CONFIG, COMPOSE_VERSION, IMAGE_LS,
+# IMAGE_RM, IMAGE_PRUNE, IMAGE_INSPECT, INSPECT, INFO.
+# `docker compose version` prints 2.40.0 unless COMPOSE_VERSION_OUT is set.
+
+if [[ -n "${FAKE_DOCKER_LOG:-}" ]]; then
+  printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
+fi
+
+key=${1:-}
+key=${key^^}
+if [[ "${1:-}" == compose || "${1:-}" == image ]]; then
+  key="${key}_${2:-}"
+  key=${key^^}
+fi
+key=${key//[^A-Z0-9_]/_}
+
+rc_var="FAKE_DOCKER_${key}_RC"
+out_var="FAKE_DOCKER_${key}_OUT"
+
+if [[ "$key" == COMPOSE_VERSION && -z "${!out_var+x}" ]]; then
+  out=2.40.0
+else
+  out=${!out_var:-}
+fi
+if [[ -n "$out" ]]; then
+  printf '%s\n' "$out"
+fi
+exit "${!rc_var:-0}"
