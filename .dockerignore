@@ -5,3 +5,6 @@ tmp
 .git
 docs/superpowers
 internal/web/dist
+deploy
+docs
+knowledge

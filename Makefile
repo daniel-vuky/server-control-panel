@@ -3,7 +3,7 @@ COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm tools
 
 .DEFAULT_GOAL := dev
-.PHONY: dev-image setup dev shell test lint fmt typegen build ci
+.PHONY: dev-image setup dev shell test lint fmt typegen build image ci
 
 ## dev-image: build the dev toolchain image (cached after the first run); SKIP_DEV_IMAGE=1 reuses a prebuilt scp-dev (CI)
 dev-image:
@@ -41,6 +41,10 @@ typegen: dev-image
 # emptyOutDir wipes internal/web/dist, so the .gitkeep that keeps go:embed compiling is recreated.
 build: setup
 	$(RUN) sh -c 'pnpm -C web build && touch internal/web/dist/.gitkeep && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/panel ./cmd/panel'
+
+## image: build the production image scp-panel:local (host docker; not the dev toolchain)
+image:
+	docker build --build-arg VERSION=$(VERSION) --build-arg REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown) -t scp-panel:local .
 
 ## ci: everything CI runs, ending with a check that the generated types are committed
 ci: setup lint test build
