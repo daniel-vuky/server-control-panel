@@ -33,9 +33,12 @@ The host needs only Docker and `make`; Go, Node, pnpm and every tool run in the 
 - `make fmt`: format Go and web sources.
 - `make typegen`: regenerate `web/src/api/types.gen.ts` from the Go types in `internal/api` (`tygo.yaml`).
 - `make build`: build the web app, then the single release binary at `bin/panel` (`VERSION` defaults to the short git SHA, or `dev` when git is unavailable).
+- `make image`: build the production image `scp-panel:local` with the host's Docker (needs BuildKit).
+- `make deploy-test`: run the deploy script tests and render the compose project with `docker compose config`, in a Linux container.
+- `make deploy-e2e`: install, update and uninstall end to end in a throwaway `docker:29-dind` with a local registry (manual, needs privileged containers; not in CI).
 - `make ci`: lint, test, build, then check that `types.gen.ts` is committed. This is what `.github/workflows/ci.yml` runs on pull requests.
 
-Production deployment (image, install script, updater) is not built yet. It is tracked in #75 and ADR 0008.
+Production deployment is built (ADR 0008). `deploy/` holds the compose project, `install.sh`, `uninstall.sh` and the `updater.sh` loop; `.github/workflows/release.yml` pushes `latest` and `sha-<short>` images to GHCR after CI passes on `main` (docs-only pushes do not release). The owner's guide is `docs/deploy.md`.
 
 ## Architecture
 
@@ -44,6 +47,7 @@ One Go binary (`cmd/panel`) serves the JSON API and the embedded React app (`web
 - `internal/config`: reads `PANEL_ADDR` and refuses any address that is not `127.0.0.1:<port>`.
 - `internal/auth`: the `Verifier` seam and the `Require` middleware. Release builds use `AccessVerifier`: it checks the `Cf-Access-Jwt-Assertion` JWT (signature, issuer, audience, expiry) and needs `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`, or startup fails. Setup is in `docs/cloudflare-access.md`. The `dev` build tag swaps in the fixed `dev@localhost` identity; it must never reach a release binary.
 - `internal/api`: the router and API types. Only `GET /api/health` is public; everything else goes through `auth.Require`. `GET /api/me` returns the verified email.
+- `deploy/`: the shell scripts and `compose.yaml` that install, update and uninstall the panel on a server, with their tests in `deploy/test/`. Run on Linux only; test them through `make deploy-test`.
 - `internal/web`: serves the embedded single-page app for every non-API path.
 - `web/`: React, Vite and TypeScript. Pages are declared in `web/src/app/routes.ts`; most are placeholders for later issues.
 - Only `internal/runner` may import `os/exec` (depguard in `.golangci.yml`, ADR 0005). That package arrives with #12. It runs whitelisted `docker compose` commands without a shell.
