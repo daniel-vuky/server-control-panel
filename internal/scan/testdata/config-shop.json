@@ -1,0 +1,41 @@
+{
+  "name": "scp-fixture-shop",
+  "networks": {
+    "default": {
+      "name": "scp-fixture-shop_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "db": {
+      "command": null,
+      "entrypoint": null,
+      "environment": {
+        "POSTGRES_DB": "shop"
+      },
+      "image": "postgres:17-alpine",
+      "networks": {
+        "default": null
+      }
+    },
+    "web": {
+      "command": [
+        "sleep",
+        "infinity"
+      ],
+      "entrypoint": null,
+      "image": "busybox",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "target": 80,
+          "published": "18080",
+          "protocol": "tcp"
+        }
+      ]
+    }
+  }
+}
