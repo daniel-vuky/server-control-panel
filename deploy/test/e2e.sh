@@ -47,7 +47,7 @@ ROOT2=/srv/scp-e2e
 # The answers are only read when panel.env does not exist yet.
 INSTALL="SCP_SOURCE=/src/deploy SCP_TTY=/dev/null CF_ACCESS_TEAM_DOMAIN=$TEAM CF_ACCESS_AUD=$AUD WORKSPACE_ROOTS=$ROOT1 bash /src/deploy/install.sh"
 # The .env written before the first install (and again before the re-install
-# in check 6); install.sh keeps it.
+# in check 7); install.sh keeps it.
 ENV_TEXT='# Written by deploy/test/e2e.sh.\nPANEL_IMAGE=localhost:5000/panel\nPANEL_TAG=latest\nUPDATE_INTERVAL=5\n'
 REVISION=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
 
@@ -58,6 +58,7 @@ TITLES=(
   "bad AUD in panel.env: install.sh fails and prints the panel log; restored, re-run is healthy"
   "install as root without sudo is refused"
   "updater: unchanged image leaves the panel alone; a new image under the same tag runs within 30s, old panel image pruned, alpine kept"
+  "updater: a panel stopped by the owner stays stopped for two rounds, no update, no prune; started again it is healthy"
   "uninstall.sh (installed copy) with latest and sha-test on one image keeps panel.env and data/; --purge deletes the directory"
 )
 
@@ -277,10 +278,10 @@ run_check() {
   fi
 }
 
-# skip_all <from> <reason>: records checks <from>..6 as SKIP.
+# skip_all <from> <reason>: records checks <from>..7 as SKIP.
 skip_all() {
   local n
-  for ((n = $1; n <= 6; n++)); do
+  for ((n = $1; n <= 7; n++)); do
     record "SKIP  $n  ${TITLES[$n]}: $2"
   done
 }
@@ -380,7 +381,11 @@ check_1() {
   need "the panel runs as 1000:1000" eq 1000:1000 "$(inspect "$cid" '{{.Config.User}}')" || return 1
   need "group_add is the socket GID $SOCK_GID" eq "[\"$SOCK_GID\"]" "$(inspect "$cid" '{{json .HostConfig.GroupAdd}}')" || return 1
   need "every root mount is read-only ($ROOT1 mounted once)" roots_read_only "$ROOT1" || return 1
+  need "the panel drops every capability" eq '["ALL"]' "$(inspect "$cid" '{{json .HostConfig.CapDrop}}')" || return 1
+  need "the panel has no-new-privileges" eq '["no-new-privileges:true"]' "$(inspect "$cid" '{{json .HostConfig.SecurityOpt}}')" || return 1
   need "the updater runs" eq running "$(inspect server-control-panel-updater-1 '{{.State.Status}}')" || return 1
+  need "the updater mounts $DIR read-only" eq false \
+    "$(inspect server-control-panel-updater-1 "{{range .Mounts}}{{if eq .Destination \"$DIR\"}}{{.RW}}{{end}}{{end}}")" || return 1
 }
 
 check_2() {
@@ -463,7 +468,36 @@ check_5() {
   q docker logs --tail 8 server-control-panel-updater-1 | indent
 }
 
+# stopped_rounds <count before>: at least two more "panel is stopped" rounds.
+stopped_rounds() { (($(updater_log_count 'panel is stopped, leaving it') >= $1 + 2)); }
+
+# panel_any_cid: the panel container, running or not.
+panel_any_cid() {
+  q docker ps -aq --filter label=com.docker.compose.project=server-control-panel \
+    --filter label=com.docker.compose.service=panel | head -n 1
+}
+
 check_6() {
+  local cid stopped updates prunes
+  cid=$(panel_cid)
+  stopped=$(updater_log_count 'panel is stopped, leaving it')
+  updates=$(updater_log_count 'updating panel')
+  prunes=$(updater_log_count 'pruning old panel images')
+  need "docker compose stop panel as u1000" as_user "cd $DIR && docker compose stop panel" || return 1
+  need "the updater logs 'panel is stopped, leaving it' in two rounds" \
+    wait_for 30 stopped_rounds "$stopped" || return 1
+  need "the panel container is still stopped ($cid)" eq "$cid exited" \
+    "$(panel_any_cid) $(inspect "$cid" '{{.State.Status}}')" || return 1
+  need "no panel container is running" eq "" "$(panel_cid)" || return 1
+  need "those rounds did not update the panel" eq "$updates" "$(updater_log_count 'updating panel')" || return 1
+  need "those rounds did not prune" eq "$prunes" "$(updater_log_count 'pruning old panel images')" || return 1
+  q docker logs --tail 4 server-control-panel-updater-1 | indent
+  need "docker compose start panel as u1000" as_user "cd $DIR && docker compose start panel" || return 1
+  need "the panel is healthy" wait_for 60 healthy || return 1
+  need "it is the same container" eq "$cid" "$(panel_cid)" || return 1
+}
+
+check_7() {
   local id_latest id_sha
   need "tag the running image as sha-test" q docker tag "$REF" "$SHA_REF" || return 1
   id_latest=$(image_id "$REF")
@@ -502,7 +536,7 @@ run_check 1
 if [[ "$FAILED" == 1 ]]; then
   skip_all 2 "check 1 (install) failed"
 else
-  for n in 2 3 4 5 6; do
+  for n in 2 3 4 5 6 7; do
     run_check "$n"
   done
 fi

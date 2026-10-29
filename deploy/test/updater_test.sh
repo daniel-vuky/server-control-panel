@@ -36,9 +36,9 @@ run_once() {
 PULL='compose pull --quiet panel'
 LOOKUP='compose config --images panel
 image inspect -f {{.Id}} localhost:5000/panel:latest
-compose ps -q panel'
+compose ps -aq panel'
 CHECK="$LOOKUP
-inspect -f {{.Image}} c0ffee"
+inspect -f {{.State.Running}} {{.Image}} c0ffee"
 
 # panel_running <running image id>: stages a running panel container c0ffee on
 # that image, with the pulled image sha256:new under localhost:5000/panel:latest.
@@ -46,7 +46,7 @@ panel_running() {
   export FAKE_DOCKER_COMPOSE_CONFIG_OUT=localhost:5000/panel:latest
   export FAKE_DOCKER_IMAGE_INSPECT_OUT=sha256:new
   export FAKE_DOCKER_COMPOSE_PS_OUT=c0ffee
-  export FAKE_DOCKER_INSPECT_OUT=$1
+  export FAKE_DOCKER_INSPECT_OUT="true $1"
 }
 
 stamped_lines() { grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z ' "$T/out"; }
@@ -72,7 +72,7 @@ compose up -d panel
 $PRUNE" "$LOG" "docker calls are pull, lookups, up, prune, in that order"
 assert_eq 4 "$(stamped_lines)" "each step and the round end log a UTC-timestamped line"
 
-echo "== no running panel container: up, prune"
+echo "== no panel container at all: up, prune"
 fresh_case
 panel_running sha256:new
 export FAKE_DOCKER_COMPOSE_PS_OUT=""
@@ -82,6 +82,21 @@ assert_eq "$PULL
 $LOOKUP
 compose up -d panel
 $PRUNE" "$LOG" "no docker inspect of an empty ID; up and prune run"
+
+# The owner ran `docker compose stop panel`: the container exists but is not
+# running. It stays stopped, even when a new image was pulled, and the round
+# neither recreates it nor prunes.
+for img in sha256:new sha256:old; do
+  echo "== stopped panel container on $img: left stopped, no up, no prune"
+  fresh_case
+  panel_running "$img"
+  export FAKE_DOCKER_INSPECT_OUT="false $img"
+  run_once
+  assert_eq 0 "$RC" "stopped panel ($img): the round exits 0"
+  assert_eq "$PULL
+$CHECK" "$LOG" "stopped panel ($img): only the pull and the lookups ran"
+  assert_contains "$OUT" "panel is stopped, leaving it" "stopped panel ($img): logged"
+done
 
 # A failed lookup must not count as a new image: the round fails with no up
 # and no prune, like a failed pull.
@@ -97,12 +112,26 @@ for key in COMPOSE_CONFIG IMAGE_INSPECT COMPOSE_PS INSPECT; do
   assert_contains "$OUT" "cannot read the panel image, will retry next round" "$key fails: logged"
 done
 
-echo "== a lookup prints nothing: no up, no prune"
+# A lookup that prints nothing, or an inspect line missing the image ID, is
+# as unknown as a failed one.
+for out in "" "true" "true " "false"; do
+  echo "== the inspect prints '$out': no up, no prune"
+  fresh_case
+  panel_running sha256:old
+  export FAKE_DOCKER_INSPECT_OUT="$out"
+  run_once
+  assert_eq 1 "$RC" "inspect '$out': the round exits 1"
+  assert_lacks "$LOG" "compose up" "inspect '$out': no up"
+  assert_lacks "$LOG" "image prune" "inspect '$out': no prune"
+done
+
+echo "== the pulled image ID is empty: no up, no prune"
 fresh_case
-panel_running ""
+panel_running sha256:old
+export FAKE_DOCKER_IMAGE_INSPECT_OUT=""
 run_once
-assert_eq 1 "$RC" "an empty image ID makes the round exit 1"
-assert_lacks "$LOG" "compose up" "empty image ID: no up"
+assert_eq 1 "$RC" "an empty pulled image ID makes the round exit 1"
+assert_lacks "$LOG" "compose up" "empty pulled image ID: no up"
 
 echo "== pull fails: nothing after it"
 fresh_case

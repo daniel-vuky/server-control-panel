@@ -425,7 +425,8 @@ start_panel() {
 # prints its logs and fails. Runs in SCP_DIR.
 wait_healthy() {
   local cid status="" timeout=${SCP_HEALTH_TIMEOUT:-60} deadline
-  cid=$(docker compose ps -q panel)
+  # -a: a panel that exited between restarts is "not healthy", not missing.
+  cid=$(docker compose ps -aq panel)
   cid=${cid%%$'\n'*}
   if [[ -z "$cid" ]]; then
     echo "install.sh: the panel container does not exist after docker compose up" >&2

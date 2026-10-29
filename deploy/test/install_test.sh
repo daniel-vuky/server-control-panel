@@ -239,6 +239,7 @@ assert_eq "compose stop updater
 compose pull
 compose up -d --remove-orphans" "$(grep -E '^compose (stop|start|pull|up)' <<<"$LOG")" "healthy: stop the updater, pull, then up"
 assert_contains "$LOG" "inspect -f {{.State.Health.Status}} c0ffee" "healthy: health read from the panel container"
+assert_contains "$LOG" "compose ps -aq panel" "healthy: the panel container is looked up stopped or not"
 assert_lacks "$LOG" "compose start updater" "healthy: up restarted the updater, the trap does not"
 assert_contains "$OUT" "$SCP_DIR" "summary: names the install directory"
 assert_contains "$OUT" "docs/deploy.md" "summary: links the deploy docs"
@@ -249,6 +250,7 @@ export FAKE_DOCKER_COMPOSE_PS_OUT=c0ffee FAKE_DOCKER_INSPECT_OUT=starting SCP_HE
 run_install
 assert_nonzero "$RC" "unhealthy: fails"
 assert_contains "$LOG" "compose logs --tail 30 panel" "unhealthy: shows the panel logs"
+assert_contains "$ERR" "the panel is not healthy" "unhealthy: says the panel is not healthy"
 
 # --- daemon unreachable
 fresh_case
