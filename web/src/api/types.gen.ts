@@ -12,6 +12,10 @@ export interface HealthResponse {
 }
 
 //////////
+// source: json.go
+
+
+//////////
 // source: me.go
 
 /**
@@ -19,4 +23,155 @@ export interface HealthResponse {
  */
 export interface MeResponse {
   email: string;
+}
+
+//////////
+// source: scans.go
+
+
+//////////
+// source: sse.go
+
+
+//////////
+// source: types.go
+
+/**
+ * FieldError is a 422 body: the message to show under the named form field
+ * and a stable code.
+ */
+export interface FieldError {
+  error: string;
+  field: string;
+  code: string;
+}
+/**
+ * ScanRequest is the body of POST /api/scans.
+ */
+export interface ScanRequest {
+  path: string;
+  depth: number /* int */; // 1 to 3
+}
+/**
+ * ScanStarted is the 202 body of POST /api/scans.
+ */
+export interface ScanStarted {
+  id: number /* int64 */;
+}
+/**
+ * ScanBusy is the 409 body of POST /api/scans while another scan runs: the
+ * running scan, so the client can attach to it.
+ */
+export interface ScanBusy {
+  error: string;
+  id: number /* int64 */;
+  path: string;
+  depth: number /* int */;
+}
+/**
+ * ScanProgress is how far a scan is: folders examined out of the folders
+ * listed, and the compose file or folder being examined. It is also the data
+ * of the SSE progress event.
+ */
+export interface ScanProgress {
+  examined: number /* int */;
+  total: number /* int */;
+  current: string;
+}
+/**
+ * ScanJob is the body of GET /api/scans/{id}. State is running, done, failed
+ * or interrupted; Result is set when the state is done.
+ */
+export interface ScanJob {
+  id: number /* int64 */;
+  state: string;
+  path: string;
+  depth: number /* int */;
+  progress: ScanProgress;
+  error: string;
+  result?: ScanResult;
+}
+/**
+ * ScanResult is what a finished scan found. AlreadyTracked and Ignored count
+ * the projects left out because they are already stored.
+ */
+export interface ScanResult {
+  rows: ScanRow[];
+  foldersScanned: number /* int */;
+  alreadyTracked: number /* int */;
+  ignored: number /* int */;
+  warnings: string[];
+}
+/**
+ * ScanRow is one compose project a scan found. Status is running, partial,
+ * stopped, error or unknown. Warning may hold several lines.
+ */
+export interface ScanRow {
+  path: string;
+  composeFiles: string[];
+  defaultName: string;
+  status: string;
+  self: boolean;
+  services: number /* int */;
+  databases: Database[];
+  warning: string;
+}
+/**
+ * Database is a database a project uses. It holds names only, never values:
+ * Sources lists the variables or services it was found in.
+ */
+export interface Database {
+  type: string; // postgresql | mysql | mongodb | sqlite
+  name: string; // database name, or the service name
+  locationKind: string; // container | host | external | file | unknown
+  location: string; // service or container name, host name or file path
+  sources: string[];
+}
+/**
+ * TrackRequest is the body of POST /api/scans/{id}/track: every row of the
+ * scan, once, with its display name and whether to track it.
+ */
+export interface TrackRequest {
+  projects: TrackItem[];
+}
+/**
+ * TrackItem is one row of a TrackRequest. DisplayName is trimmed and must be
+ * 1 to 80 characters.
+ */
+export interface TrackItem {
+  path: string;
+  displayName: string;
+  track: boolean;
+}
+/**
+ * TrackResponse is the body of a successful POST /api/scans/{id}/track.
+ */
+export interface TrackResponse {
+  workspaceId: number /* int64 */;
+  added: number /* int */;
+}
+/**
+ * Workspace is one element of GET /api/workspaces. LastScanAt is UTC RFC 3339.
+ */
+export interface Workspace {
+  id: number /* int64 */;
+  name: string;
+  path: string;
+  depth: number /* int */;
+  lastScanAt: string;
+  tracked: number /* int */;
+  ignored: number /* int */;
+}
+/**
+ * Project is one element of GET /api/projects: a tracked project with its
+ * live status (running, partial, stopped, error or unknown).
+ */
+export interface Project {
+  id: number /* int64 */;
+  displayName: string;
+  path: string;
+  workspaceId: number /* int64 */;
+  self: boolean;
+  status: string;
+  databases: Database[];
 }
