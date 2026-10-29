@@ -3,7 +3,7 @@ COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm tools
 
 .DEFAULT_GOAL := dev
-.PHONY: dev-image setup dev shell test lint fmt typegen build image deploy-test ci
+.PHONY: dev-image setup dev shell test lint fmt typegen build image deploy-test deploy-e2e ci
 
 ## dev-image: build the dev toolchain image (cached after the first run); SKIP_DEV_IMAGE=1 reuses a prebuilt scp-dev (CI)
 dev-image:
@@ -49,6 +49,10 @@ image:
 ## deploy-test: run the deploy script tests, then render the compose project and check it with docker compose config, in a Linux container (never on the host)
 deploy-test:
 	docker run --rm -v "$(CURDIR)":/src -w /src docker:29-cli sh -c 'apk add --no-cache bash coreutils >/dev/null && bash deploy/test/run.sh && bash deploy/test/compose-config.sh'
+
+## deploy-e2e: install, update and uninstall end to end in a throwaway docker:29-dind with a local registry (manual: needs privileged containers; not in CI)
+deploy-e2e:
+	bash deploy/test/e2e.sh
 
 ## ci: everything CI runs, ending with a check that the generated types are committed
 ci: setup lint test build
