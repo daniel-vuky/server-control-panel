@@ -4,10 +4,14 @@ on:
   pull_request:
   push:
     branches: [main]
+    # A push that only touches docs runs no CI, so release.yml (which follows CI) builds no image for it.
+    paths-ignore: ['docs/**', 'knowledge/**', '**/*.md']
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only superseded pull request runs are cancelled: a green main run must finish so that
+  # release.yml sees it and every code commit gets its sha- tag.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -36,3 +40,17 @@ jobs:
 
       - name: Lint, type-check, test and build
         run: make ci
+
+      # Renders deploy/compose.yaml with a generated override and runs the deploy script tests,
+      # in a Linux container on the runner's Docker.
+      - name: Test the deploy scripts and compose project
+        run: make deploy-test
+
+      - name: Build the production image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=panel-image
+          cache-to: type=gha,scope=panel-image,mode=max
