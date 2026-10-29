@@ -83,14 +83,26 @@ $LOOKUP
 compose up -d panel
 $PRUNE" "$LOG" "no docker inspect of an empty ID; up and prune run"
 
-echo "== the image lookup fails: treated as a new image"
+# A failed lookup must not count as a new image: the round fails with no up
+# and no prune, like a failed pull.
+for key in COMPOSE_CONFIG IMAGE_INSPECT COMPOSE_PS INSPECT; do
+  echo "== the $key lookup fails: no up, no prune"
+  fresh_case
+  panel_running sha256:old
+  export "FAKE_DOCKER_${key}_RC=1" "FAKE_DOCKER_${key}_OUT="
+  run_once
+  assert_eq 1 "$RC" "$key fails: the round exits 1"
+  assert_lacks "$LOG" "compose up" "$key fails: no up"
+  assert_lacks "$LOG" "image prune" "$key fails: no prune"
+  assert_contains "$OUT" "cannot read the panel image, will retry next round" "$key fails: logged"
+done
+
+echo "== a lookup prints nothing: no up, no prune"
 fresh_case
-panel_running sha256:new
-export FAKE_DOCKER_IMAGE_INSPECT_RC=1 FAKE_DOCKER_IMAGE_INSPECT_OUT=""
+panel_running ""
 run_once
-assert_eq 0 "$RC" "the round exits 0"
-assert_contains "$LOG" "compose up -d panel" "up runs"
-assert_contains "$LOG" "$PRUNE" "prune runs"
+assert_eq 1 "$RC" "an empty image ID makes the round exit 1"
+assert_lacks "$LOG" "compose up" "empty image ID: no up"
 
 echo "== pull fails: nothing after it"
 fresh_case

@@ -51,6 +51,13 @@ assert_contains() {
   fi
 }
 
+# assert_lacks <haystack> <needle> <name>
+assert_lacks() {
+  local present=no
+  if [[ "$1" == *"$2"* ]]; then present=yes; fi
+  assert_eq no "$present" "$3"
+}
+
 # assert_file_mode <mode> <path>: octal mode as stat -c %a prints it (e.g. 600).
 assert_file_mode() {
   local actual

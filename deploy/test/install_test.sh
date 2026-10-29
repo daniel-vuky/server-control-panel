@@ -52,13 +52,6 @@ assert_nonzero() {
   assert_eq yes "$failed" "$2"
 }
 
-# assert_lacks <haystack> <needle> <name>
-assert_lacks() {
-  local present=no
-  if [[ "$1" == *"$2"* ]]; then present=yes; fi
-  assert_eq no "$present" "$3"
-}
-
 # same_file <a> <b>: prints "same" when the files are byte-identical.
 same_file() {
   if cmp -s "$1" "$2"; then echo same; else echo different; fi
@@ -246,6 +239,7 @@ assert_eq "compose stop updater
 compose pull
 compose up -d --remove-orphans" "$(grep -E '^compose (stop|start|pull|up)' <<<"$LOG")" "healthy: stop the updater, pull, then up"
 assert_contains "$LOG" "inspect -f {{.State.Health.Status}} c0ffee" "healthy: health read from the panel container"
+assert_lacks "$LOG" "compose start updater" "healthy: up restarted the updater, the trap does not"
 assert_contains "$OUT" "$SCP_DIR" "summary: names the install directory"
 assert_contains "$OUT" "docs/deploy.md" "summary: links the deploy docs"
 
@@ -274,7 +268,7 @@ for word in denied unauthorized; do
   assert_lacks "$LOG" "compose up" "pull $word: nothing started"
   assert_eq "compose stop updater
 compose pull
-compose start updater" "$(grep -E '^compose (stop|start|pull|up)' <<<"$LOG")" "pull $word: the updater is stopped first and started again"
+compose start updater" "$(grep -E '^compose (stop|start|pull|up)' <<<"$LOG")" "pull $word: the exit after the stop starts the updater again"
 done
 
 # --- the updater stop fails (nothing installed or running yet)
@@ -283,6 +277,13 @@ export FAKE_DOCKER_COMPOSE_PS_OUT=c0ffee FAKE_DOCKER_INSPECT_OUT=healthy FAKE_DO
 run_install
 assert_eq 0 "$RC" "stop updater fails: install goes on"
 assert_contains "$LOG" "compose up -d --remove-orphans" "stop updater fails: the panel is started"
+
+# --- unhealthy after up: the updater is already running again
+fresh_case
+export FAKE_DOCKER_COMPOSE_PS_OUT=c0ffee FAKE_DOCKER_INSPECT_OUT=unhealthy
+run_install
+assert_nonzero "$RC" "unhealthy after up: fails"
+assert_lacks "$LOG" "compose start updater" "unhealthy after up: no extra start"
 
 # --- up fails
 fresh_case

@@ -173,6 +173,8 @@ inspect() { q docker inspect -f "$2" "$1"; }
 
 image_id() { q docker image inspect -f '{{.Id}}' "$1"; }
 
+has_image() { image_id "$1" >/dev/null; }
+
 labelled_images() { q docker image ls -q --filter "label=$LABEL"; }
 
 healthy() {
@@ -418,8 +420,8 @@ check_4() {
   need "it says the panel must run as a normal user" out_has "the panel must run as a normal user, not root" || return 1
   after=$(file_state)
   need "panel.env and .env untouched" eq "$before" "$after" || return 1
-  # The updater may just have recreated the panel after check 3 restored
-  # panel.env, so give it time to pass its health check.
+  # Check 3's last install recreated the panel; give it time to pass its
+  # health check.
   need "the panel is healthy" wait_for 60 healthy || return 1
 }
 
@@ -441,13 +443,13 @@ check_5() {
   need "the panel container is the same ($cid)" eq "$cid" "$(panel_cid)" || return 1
   old=$(inspect "$cid" '{{.Image}}')
   echo "      running image before: $old"
-  need "alpine is present before the update" image_id alpine || return 1
+  need "alpine is present before the update" has_image alpine || return 1
   need "build VERSION=e2e-2 and push it as panel:latest" build_push v2 e2e-2 || return 1
   start=$SECONDS
   while ((SECONDS - start <= 30)); do
     cur=$(inspect "$(panel_cid)" '{{.Image}}')
     want=$(image_id "$REF")
-    if [[ -n "$cur" && "$cur" == "$want" && "$cur" != "$old" ]] && ! image_id "$old" >/dev/null; then
+    if [[ -n "$cur" && "$cur" == "$want" && "$cur" != "$old" ]] && ! has_image "$old"; then
       elapsed=$((SECONDS - start))
       break
     fi
@@ -457,7 +459,7 @@ check_5() {
   need "within 30s the panel runs the new image and the old one is gone (took ${elapsed}s)" test "$elapsed" -ge 0 || return 1
   need "the panel answers with version e2e-2" wait_for 60 health_answers e2e-2 || return 1
   need "the panel is healthy" wait_for 60 healthy || return 1
-  need "alpine is still present" image_id alpine || return 1
+  need "alpine is still present" has_image alpine || return 1
   q docker logs --tail 8 server-control-panel-updater-1 | indent
 }
 

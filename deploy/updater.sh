@@ -15,17 +15,23 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
 
-# panel_is_current: succeeds when the running panel container uses the image
-# the pull left under the panel's image reference. Both IDs are sha256:<hex>
-# on the classic and the containerd image stores. No running panel container,
-# or any lookup failing, counts as not current.
-panel_is_current() {
-  ref=$(docker compose config --images panel) || return 1
-  want=$(docker image inspect -f '{{.Id}}' "$ref") || return 1
-  cid=$(docker compose ps -q panel) || return 1
+# panel_state: compares the image the pull left under the panel's image
+# reference with the image the running panel container uses. Both IDs are
+# sha256:<hex> on the classic and the containerd image stores. Returns 0 when
+# they are the same, 1 when they differ or no panel container is running, and
+# 2 when a lookup failed or printed nothing: then nothing is known, and the
+# round must not update or prune on a guess.
+panel_state() {
+  ref=$(docker compose config --images panel) || return 2
+  want=$(docker image inspect -f '{{.Id}}' "$ref") || return 2
+  cid=$(docker compose ps -q panel) || return 2
   [ -n "$cid" ] || return 1
-  have=$(docker inspect -f '{{.Image}}' "$cid") || return 1
-  [ -n "$want" ] && [ "$want" = "$have" ]
+  have=$(docker inspect -f '{{.Image}}' "$cid") || return 2
+  if [ -z "$want" ] || [ -z "$have" ]; then
+    return 2
+  fi
+  [ "$want" = "$have" ] && return 0
+  return 1
 }
 
 # round: returns 0 when every step succeeded.
@@ -35,7 +41,13 @@ round() {
     log 'pull failed, will retry next round'
     return 1
   fi
-  if panel_is_current; then
+  panel_state
+  state=$?
+  if [ "$state" = 2 ]; then
+    log 'cannot read the panel image, will retry next round'
+    return 1
+  fi
+  if [ "$state" = 0 ]; then
     log 'panel is up to date'
     return 0
   fi

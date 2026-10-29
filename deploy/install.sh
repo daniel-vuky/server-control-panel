@@ -373,18 +373,34 @@ show_logs() {
   docker compose logs --tail 30 panel >&2 || true
 }
 
-# restart_updater: after a failed pull or up, starts the updater stopped by
-# start_panel again, so a failed re-run does not leave updates off. Nothing to
-# start on a fresh install.
-restart_updater() {
-  docker compose start updater >/dev/null 2>&1 || true
+# start_updater: starts the updater again (nothing to start on a fresh
+# install). Called from the EXIT trap while UPDATER_STOPPED=1.
+start_updater() {
+  (cd "$SCP_DIR" && docker compose start updater) >/dev/null 2>&1 || true
+}
+
+# on_exit: the EXIT trap. Removes a half-written temp file and, when install.sh
+# ends between stopping the updater and the final `up` (a failure, Ctrl-C, a
+# dropped SSH session), starts the updater again: with restart: unless-stopped
+# a stopped updater would stay stopped, even across reboots.
+on_exit() {
+  local rc=$?
+  if [[ -n "${SCP_TMP:-}" ]]; then
+    rm -f -- "$SCP_TMP"
+  fi
+  if [[ "${UPDATER_STOPPED:-0}" == 1 ]]; then
+    start_updater
+  fi
+  exit "$rc"
 }
 
 # start_panel: pulls the images and (re)creates the containers. Runs in SCP_DIR.
 # The updater is stopped first so its rounds cannot pull or recreate the panel
-# at the same time; `up` starts it again.
+# at the same time; `up` starts it again, and until `up` has run the EXIT trap
+# does.
 start_panel() {
   local out re='denied|unauthorized|manifest unknown'
+  UPDATER_STOPPED=1
   docker compose stop updater >/dev/null 2>&1 || true
   echo "Pulling images..."
   if ! out=$(docker compose pull 2>&1); then
@@ -392,7 +408,6 @@ start_panel() {
     if [[ "$out" =~ $re ]]; then
       echo "hint: the panel image could not be pulled anonymously. If the GHCR package ghcr.io/daniel-vuky/server-control-panel is still private, make it public (see docs/deploy.md)." >&2
     fi
-    restart_updater
     die "docker compose pull failed; nothing was started"
   fi
   if [[ -n "$out" ]]; then
@@ -401,9 +416,9 @@ start_panel() {
   echo "Starting the panel..."
   if ! docker compose up -d --remove-orphans; then
     show_logs
-    restart_updater
     die "docker compose up failed"
   fi
+  UPDATER_STOPPED=0
 }
 
 # wait_healthy: waits for the panel container's health check to pass, or
@@ -452,7 +467,8 @@ main() {
   fi
   SCP_TMP=""
   TTY_OPEN=0
-  trap 'if [[ -n "${SCP_TMP:-}" ]]; then rm -f -- "$SCP_TMP"; fi' EXIT
+  UPDATER_STOPPED=0
+  trap on_exit EXIT
   trap 'exit 130' INT TERM HUP
 
   # 1-3: preflight, who the panel runs as, the docker group.
