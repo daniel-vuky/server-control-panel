@@ -3,7 +3,8 @@
 # docker:29-cli, so POSIX only). Every UPDATE_INTERVAL seconds (default 300,
 # sleep first) it pulls the panel image and compares it with the image the
 # panel container uses. A panel the owner stopped is left stopped. When the
-# images differ, or no panel container exists, it recreates the panel and then
+# images differ, or no panel container exists or it was created but never
+# started, it recreates the panel and then
 # removes panel images no container uses: on the containerd image store an
 # image prune breaks every pull that overlaps it, so it must not run every
 # round. A failed step is logged and ends the round without running the later
@@ -18,11 +19,16 @@ log() {
 
 # panel_state: compares the image the pull left under the panel's image
 # reference with the image the panel container uses. Both IDs are
-# sha256:<hex> on the classic and the containerd image stores. Returns 0 when
-# they are the same, 1 when they differ or no panel container exists, 3 when
-# the panel container exists but is not running (the owner stopped it; leave
-# it alone), and 2 when a lookup failed or printed nothing: then nothing is
-# known, and the round must not update or prune on a guess.
+# sha256:<hex> on the classic and the containerd image stores. The container's
+# State.Status decides what is done with it: running and restarting (a crash
+# loop under restart: unless-stopped) compare images; created (compose made the
+# container but it never started) needs an up, like a missing container; exited
+# and paused mean the owner stopped it, so leave it alone. Returns 0 when the
+# images are the same, 1 when they differ or the panel needs an up (no
+# container, or a created one), 3 when the owner stopped it (exited or paused),
+# and 2 when a lookup failed, printed nothing or printed a status that is not
+# listed above (removing, dead, unknown): then nothing is known, and the round
+# must not update or prune on a guess.
 panel_state() {
   ref=$(docker compose config --images panel) || return 2
   want=$(docker image inspect -f '{{.Id}}' "$ref") || return 2
@@ -30,13 +36,18 @@ panel_state() {
   # mistaken for a missing one and restarted.
   cid=$(docker compose ps -aq panel) || return 2
   [ -n "$cid" ] || return 1
-  info=$(docker inspect -f '{{.State.Running}} {{.Image}}' "$cid") || return 2
-  running=${info%% *}
+  info=$(docker inspect -f '{{.State.Status}} {{.Image}}' "$cid") || return 2
+  status=${info%% *}
   have=${info#* }
-  if [ -z "$want" ] || [ -z "$running" ] || [ -z "$have" ] || [ "$have" = "$info" ]; then
+  if [ -z "$want" ] || [ -z "$status" ] || [ -z "$have" ] || [ "$have" = "$info" ]; then
     return 2
   fi
-  [ "$running" = true ] || return 3
+  case $status in
+    exited | paused) return 3 ;;
+    created) return 1 ;;
+    running | restarting) ;;
+    *) return 2 ;;
+  esac
   [ "$want" = "$have" ] && return 0
   return 1
 }

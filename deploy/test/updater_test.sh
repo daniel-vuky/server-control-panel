@@ -38,15 +38,15 @@ LOOKUP='compose config --images panel
 image inspect -f {{.Id}} localhost:5000/panel:latest
 compose ps -aq panel'
 CHECK="$LOOKUP
-inspect -f {{.State.Running}} {{.Image}} c0ffee"
+inspect -f {{.State.Status}} {{.Image}} c0ffee"
 
-# panel_running <running image id>: stages a running panel container c0ffee on
+# panel_running <image id>: stages a running panel container c0ffee on
 # that image, with the pulled image sha256:new under localhost:5000/panel:latest.
 panel_running() {
   export FAKE_DOCKER_COMPOSE_CONFIG_OUT=localhost:5000/panel:latest
   export FAKE_DOCKER_IMAGE_INSPECT_OUT=sha256:new
   export FAKE_DOCKER_COMPOSE_PS_OUT=c0ffee
-  export FAKE_DOCKER_INSPECT_OUT="true $1"
+  export FAKE_DOCKER_INSPECT_OUT="running $1"
 }
 
 stamped_lines() { grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z ' "$T/out"; }
@@ -86,16 +86,72 @@ $PRUNE" "$LOG" "no docker inspect of an empty ID; up and prune run"
 # The owner ran `docker compose stop panel`: the container exists but is not
 # running. It stays stopped, even when a new image was pulled, and the round
 # neither recreates it nor prunes.
+# A paused panel is the owner's doing as well.
+for st in exited paused; do
 for img in sha256:new sha256:old; do
-  echo "== stopped panel container on $img: left stopped, no up, no prune"
+  echo "== $st panel container on $img: left alone, no up, no prune"
   fresh_case
   panel_running "$img"
-  export FAKE_DOCKER_INSPECT_OUT="false $img"
+  export FAKE_DOCKER_INSPECT_OUT="$st $img"
   run_once
-  assert_eq 0 "$RC" "stopped panel ($img): the round exits 0"
+  assert_eq 0 "$RC" "$st panel ($img): the round exits 0"
   assert_eq "$PULL
-$CHECK" "$LOG" "stopped panel ($img): only the pull and the lookups ran"
-  assert_contains "$OUT" "panel is stopped, leaving it" "stopped panel ($img): logged"
+$CHECK" "$LOG" "$st panel ($img): only the pull and the lookups ran"
+  assert_contains "$OUT" "panel is stopped, leaving it" "$st panel ($img): logged"
+done
+done
+
+# created: compose made the container but it never started, so the panel is
+# down and nobody stopped it. It needs an up whatever image it holds.
+for img in sha256:new sha256:old; do
+  echo "== created panel container on $img: up, prune"
+  fresh_case
+  panel_running "$img"
+  export FAKE_DOCKER_INSPECT_OUT="created $img"
+  run_once
+  assert_eq 0 "$RC" "created panel ($img): the round exits 0"
+  assert_eq "$PULL
+$CHECK
+compose up -d panel
+$PRUNE" "$LOG" "created panel ($img): pull, lookups, up, prune"
+  assert_lacks "$OUT" "panel is stopped" "created panel ($img): not treated as stopped"
+done
+
+# restarting: a crash loop under restart: unless-stopped. It is not stopped by
+# the owner, so a new image is applied and the same image is left alone.
+echo "== restarting panel container on a new image: up, prune"
+fresh_case
+panel_running sha256:old
+export FAKE_DOCKER_INSPECT_OUT="restarting sha256:old"
+run_once
+assert_eq 0 "$RC" "restarting on an old image: the round exits 0"
+assert_eq "$PULL
+$CHECK
+compose up -d panel
+$PRUNE" "$LOG" "restarting on an old image: pull, lookups, up, prune"
+
+echo "== restarting panel container on the same image: up to date, no up, no prune"
+fresh_case
+panel_running sha256:new
+export FAKE_DOCKER_INSPECT_OUT="restarting sha256:new"
+run_once
+assert_eq 0 "$RC" "restarting on the same image: the round exits 0"
+assert_eq "$PULL
+$CHECK" "$LOG" "restarting on the same image: only the pull and the lookups ran"
+assert_contains "$OUT" "panel is up to date" "restarting on the same image: logged"
+
+# Any other status (removing, dead, something new) is unknown, like a failed
+# lookup: the round fails with no up and no prune.
+for st in dead removing bogus; do
+  echo "== $st panel container: round fails, no up, no prune"
+  fresh_case
+  panel_running sha256:old
+  export FAKE_DOCKER_INSPECT_OUT="$st sha256:old"
+  run_once
+  assert_eq 1 "$RC" "$st panel: the round exits 1"
+  assert_lacks "$LOG" "compose up" "$st panel: no up"
+  assert_lacks "$LOG" "image prune" "$st panel: no prune"
+  assert_contains "$OUT" "cannot read the panel image, will retry next round" "$st panel: logged"
 done
 
 # A failed lookup must not count as a new image: the round fails with no up
@@ -114,7 +170,7 @@ done
 
 # A lookup that prints nothing, or an inspect line missing the image ID, is
 # as unknown as a failed one.
-for out in "" "true" "true " "false"; do
+for out in "" "running" "running " "exited" "created"; do
   echo "== the inspect prints '$out': no up, no prune"
   fresh_case
   panel_running sha256:old
