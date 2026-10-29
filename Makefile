@@ -46,9 +46,9 @@ build: setup
 image:
 	docker build --build-arg VERSION=$(VERSION) --build-arg REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown) -t scp-panel:local .
 
-## deploy-test: run the deploy script tests in a Linux container (never on the host)
+## deploy-test: run the deploy script tests, then render the compose project and check it with docker compose config, in a Linux container (never on the host)
 deploy-test:
-	docker run --rm -v "$(CURDIR)":/src -w /src docker:29-cli sh -c 'apk add --no-cache bash coreutils >/dev/null && bash deploy/test/run.sh'
+	docker run --rm -v "$(CURDIR)":/src -w /src docker:29-cli sh -c 'apk add --no-cache bash coreutils >/dev/null && bash deploy/test/run.sh && bash deploy/test/compose-config.sh'
 
 ## ci: everything CI runs, ending with a check that the generated types are committed
 ci: setup lint test build

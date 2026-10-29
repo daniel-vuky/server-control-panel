@@ -1,0 +1,44 @@
+# The server control panel as a docker compose project, installed by
+# install.sh into /opt/server-control-panel. install.sh refreshes this file on
+# every run, so do not edit it here. Settings live in panel.env (Cloudflare
+# values, workspace roots), .env (PANEL_TAG, UPDATE_INTERVAL) and the generated
+# compose.override.yaml (user, docker group, workspace mounts).
+name: server-control-panel
+
+services:
+  panel:
+    image: ${PANEL_IMAGE:-ghcr.io/daniel-vuky/server-control-panel}:${PANEL_TAG:-latest}
+    network_mode: host
+    env_file: panel.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
+      - ./data:/data
+    mem_limit: 200m
+    cpus: 0.5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # Pulls a newer panel image every UPDATE_INTERVAL seconds and recreates the
+  # panel when it changed. It mounts the project directory at the same absolute
+  # path, because the daemon resolves bind-mount paths on the host. It never
+  # reads panel.env into its own environment.
+  updater:
+    image: docker:29-cli
+    entrypoint: ["/bin/sh", "/opt/server-control-panel/updater.sh"]
+    environment:
+      UPDATE_INTERVAL: "${UPDATE_INTERVAL:-300}"
+    working_dir: /opt/server-control-panel
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/server-control-panel:/opt/server-control-panel
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "3"
