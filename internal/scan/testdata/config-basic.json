@@ -1,0 +1,33 @@
+{
+  "name": "shop",
+  "services": {
+    "web": {
+      "container_name": "shop-web",
+      "environment": {
+        "DATABASE_URL": "postgres://shop:devpassword@db/shop",
+        "LOG_LEVEL": "info",
+        "UNSET_VAR": null
+      },
+      "image": "nginx:1.27",
+      "networks": {"default": null},
+      "ports": [
+        {"mode": "ingress", "target": 80, "published": "8080", "protocol": "tcp"},
+        {"mode": "ingress", "target": 53, "protocol": "udp"}
+      ],
+      "volumes": [
+        {"type": "bind", "source": "/srv/shop/html", "target": "/usr/share/nginx/html", "bind": {"create_host_path": true}}
+      ]
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_DB": "shop",
+        "POSTGRES_PASSWORD": "devpassword"
+      },
+      "image": "postgres:16",
+      "volumes": [
+        {"type": "volume", "source": "dbdata", "target": "/var/lib/postgresql/data", "volume": {}}
+      ]
+    }
+  },
+  "volumes": {"dbdata": {"name": "shop_dbdata"}}
+}
