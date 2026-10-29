@@ -29,14 +29,14 @@ The host needs only Docker and `make`; Go, Node, pnpm and every tool run in the 
 - `make setup`: install web dependencies (frozen lockfile) into the `node_modules` volume.
 - `make dev-image`: build the dev toolchain image (cached). `SKIP_DEV_IMAGE=1` reuses a prebuilt `scp-dev` image (CI does this).
 - `make test`: Go tests (release and `dev` tags), then web tests.
-- `make lint`: golangci-lint, Biome (warnings fail) and the TypeScript typecheck.
+- `make lint`: golangci-lint, Biome (warnings fail), the TypeScript typecheck and shellcheck on the deploy scripts.
 - `make fmt`: format Go and web sources.
 - `make typegen`: regenerate `web/src/api/types.gen.ts` from the Go types in `internal/api` (`tygo.yaml`).
 - `make build`: build the web app, then the single release binary at `bin/panel` (`VERSION` defaults to the short git SHA, or `dev` when git is unavailable).
 - `make image`: build the production image `scp-panel:local` with the host's Docker (needs BuildKit).
 - `make deploy-test`: run the deploy script tests and render the compose project with `docker compose config`, in a Linux container.
 - `make deploy-e2e`: install, update and uninstall end to end in a throwaway `docker:29-dind` with a local registry (manual, needs privileged containers; not in CI).
-- `make ci`: lint, test, build, then check that `types.gen.ts` is committed. This is what `.github/workflows/ci.yml` runs on pull requests.
+- `make ci`: lint, test, build, then check that `types.gen.ts` is committed. `.github/workflows/ci.yml` runs it on pull requests, then also runs `make deploy-test` and builds the production image.
 
 Production deployment is built (ADR 0008). `deploy/` holds the compose project, `install.sh`, `uninstall.sh` and the `updater.sh` loop; `.github/workflows/release.yml` pushes `latest` and `sha-<short>` images to GHCR after CI passes on `main` (docs-only pushes do not release). The owner's guide is `docs/deploy.md`.
 

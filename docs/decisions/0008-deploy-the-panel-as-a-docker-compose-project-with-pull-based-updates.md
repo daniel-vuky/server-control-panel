@@ -71,7 +71,8 @@ The server runs Ubuntu with 8 GB RAM. `cloudflared` is already installed directl
 The implementation of #75 refined the decision:
 
 - **Release trigger.** Images are built after CI passes on `main`, not on every push (decision 2). A push that only changes `docs/`, `knowledge/` or `*.md` files runs no CI and so releases no image.
-- **Updates.** The updater (decision 4) recreates the panel only when the pulled image differs from the running one. After an actual update it removes the panel's old images (filtered by the panel's image label) so disk use stays flat. A failed pull or lookup changes nothing and is retried next round.
+- **Updates.** The updater (decision 4) recreates the panel only when the pulled image differs from the running one. After an actual update it removes the panel's old images (filtered by the panel's image label) so disk use stays flat. A failed pull or lookup changes nothing and is retried next round. A panel the owner stopped is left stopped.
+- **Hardening.** The panel drops every capability and runs with `no-new-privileges`; the updater mounts the install directory read-only.
 - **Install.** `install.sh` stops the updater while it works and always starts it again, so the two never recreate the panel at the same time.
 - **Uninstall.** `uninstall.sh` stops the project, removes the panel images and the compose files, and keeps `panel.env` and `data/`. `--purge` removes the whole install directory.
 - **Rollback is manual.** A release that fails its health check is not rolled back automatically. The owner pins the previous `sha-` tag in `.env` (`docs/deploy.md`).

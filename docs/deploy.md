@@ -16,7 +16,7 @@ The files live in `/opt/server-control-panel`:
 | File | What it is | On a re-run of the install command |
 | --- | --- | --- |
 | `panel.env` | Your Cloudflare values and workspace roots (mode 0600) | Never overwritten |
-| `.env` | `PANEL_TAG` and `UPDATE_INTERVAL` | Never overwritten |
+| `.env` | `PANEL_TAG` and `UPDATE_INTERVAL` | Never overwritten (but the uninstall removes it, see section 8) |
 | `data/` | The panel's own data | Kept |
 | `compose.yaml` | The compose project | Refreshed |
 | `compose.override.yaml` | Your user, the docker group and the workspace mounts, generated from `panel.env` | Regenerated |
@@ -58,11 +58,13 @@ The script checks Docker, creates `/opt/server-control-panel` (it uses `sudo` fo
 2. **Cloudflare Access application AUD tag**, the long hex string.
 3. **Workspace roots**: the folders that hold your projects, comma-separated. Press Enter for the default, which is those of `/home`, `/srv`, `/opt` and `/var/www` that exist. A root that does not exist is skipped.
 
-A wrong answer is explained and asked again. The answers go into `panel.env`. The script then pulls the images, starts the project and waits up to 60 seconds for the panel to report healthy. A good finish ends with:
+A wrong answer is explained and asked again. The answers go into `panel.env`. The script then pulls the images, starts the project and waits up to 60 seconds for the panel to report healthy. A good finish prints a block that starts with:
 
 ```text
 The server control panel is running.
 ```
+
+followed by the install directory, the address and a link to this guide.
 
 If it prints anything else, go to section 9.
 
@@ -76,15 +78,19 @@ ssh host 'curl -fsSL https://raw.githubusercontent.com/daniel-vuky/server-contro
 
 If one is missing, the script stops and names it.
 
+Without a terminal, `sudo` cannot ask for a password either. So a first install, which creates `/opt/server-control-panel`, also needs one of these: `sudo` that asks no password for your user, or a `/opt/server-control-panel` that already exists and is owned by you (`sudo install -d -o $USER -g $(id -gn) -m 0750 /opt/server-control-panel`, run once in a terminal).
+
 When the install is healthy, check the whole setup with the [manual acceptance checklist](cloudflare-access.md#manual-acceptance-checklist) in the Cloudflare guide. That checklist needs the panel running, so this is its first chance.
 
 Running the install command again is always safe. It keeps `panel.env` and `.env`, refreshes the other files and restarts what changed.
 
 ## 5. Automatic updates
 
-The `updater` container wakes up every 5 minutes, pulls the `latest` panel image and compares it with the image the panel is running. Only when they differ does it recreate the panel. Otherwise it logs `panel is up to date`. After a real update it also removes old panel images that nothing uses, so disk space does not grow. It only ever touches images that carry the panel's label.
+The `updater` container wakes up every 5 minutes, pulls the panel image with the tag set in `.env` (`PANEL_TAG`, `latest` by default) and compares it with the image the panel is running. Only when they differ does it recreate the panel. Otherwise it logs `panel is up to date`. After a real update it also removes old panel images that nothing uses, so disk space does not grow. It only ever touches images that carry the panel's label.
 
 A failed pull or lookup changes nothing: the running panel stays up, and the updater tries again next round.
+
+A panel you stopped yourself (`docker compose stop panel`) stays stopped: the updater logs `panel is stopped, leaving it` and does nothing else. Start it again with `cd /opt/server-control-panel && docker compose start panel`; the next round then updates it if a newer image arrived meanwhile.
 
 Images are built only after CI passes on `main`. A merge that changes only `docs/`, `knowledge/` or `*.md` files runs no CI and releases nothing. A merge reaches the server within about 5 minutes of its image being published.
 
@@ -98,7 +104,7 @@ docker compose logs updater
 To change the interval, edit `UPDATE_INTERVAL` (seconds) in `/opt/server-control-panel/.env`, then apply it:
 
 ```sh
-docker compose up -d updater
+cd /opt/server-control-panel && docker compose up -d updater
 ```
 
 A value that is not a number makes the updater log `invalid UPDATE_INTERVAL` and wait 300 seconds.
@@ -123,13 +129,15 @@ The updater then keeps that version: it only follows the tag in `.env`. To follo
 
 The script checks the list, mounts the new root and restarts the panel. A running container cannot gain a mount, which is why a re-run is needed. A root that would hide the container's own files (`/`, `/var`, `/usr`, `/etc`, `/tmp` and similar) is refused. The same re-run applies after any edit of `panel.env`, such as correcting the AUD tag.
 
+If you delete a root folder on the host, also remove it from `WORKSPACE_ROOTS` and re-run the install command. Otherwise, the next time the updater recreates the panel, Docker creates the missing folder again, empty and owned by root.
+
 ## 8. Uninstall
 
 ```sh
 /opt/server-control-panel/uninstall.sh
 ```
 
-It asks for confirmation, then stops the containers, removes the panel images and deletes the compose files. It keeps `panel.env` and `data/`, so a later install picks up where you left off. The shared `docker:29-cli` image stays, because other things on the host may use it.
+It asks for confirmation, then stops the containers, removes the panel images and deletes the compose files and `.env`. It keeps `panel.env` and `data/`, so a later install picks up where you left off. Because `.env` is deleted, a `PANEL_TAG` rollback pin (section 6) or a changed `UPDATE_INTERVAL` is lost: after reinstalling, check `.env` and set them again. The shared `docker:29-cli` image stays, because other things on the host may use it.
 
 To remove everything, including `panel.env` and `data/`:
 
