@@ -25,12 +25,12 @@ describe('app shell', () => {
     ['/', 'Dashboard'],
     ['/projects', 'Projects'],
     ['/projects/shop-api', 'Project detail'],
-    ['/onboarding', 'Onboarding'],
+    ['/onboarding', 'Add a workspace'],
     ['/backups', 'Backups'],
     ['/server', 'Server'],
     ['/activity', 'Activity'],
     ['/settings', 'Settings'],
-  ])('%s renders its placeholder', (path, title) => {
+  ])('%s renders its page heading', (path, title) => {
     renderAt(path)
     expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument()
   })

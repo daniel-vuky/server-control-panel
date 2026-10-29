@@ -1,0 +1,305 @@
+import { CircleAlert } from 'lucide-react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
+import { ApiError } from '../../api/client'
+import { getScan, startScan, trackScan, watchScan } from '../../api/scans'
+import type {
+  FieldError,
+  ScanBusy,
+  ScanJob,
+  ScanProgress,
+  ScanResult,
+  TrackItem,
+} from '../../api/types.gen'
+import { useToast } from '../../components/Toast'
+import ScanProgressView from './ScanProgressView'
+import ScanResults, { NothingFound } from './ScanResults'
+import WorkspaceStep, { DEPTHS, type FieldErrors } from './WorkspaceStep'
+
+type DoneJob = ScanJob & { result: ScanResult }
+
+/**
+ * The page's state machine: form → scanning(id) → results | empty | failed.
+ * A scan's path and depth ride along so Rescan and Scan again can repeat it.
+ */
+type Phase =
+  | { kind: 'form' }
+  | { kind: 'scanning'; id: number; path: string; depth: number }
+  | { kind: 'results'; job: DoneJob }
+  | { kind: 'empty'; job: DoneJob }
+  | { kind: 'failed'; path: string; depth: number; error: string }
+
+const STEPS = ['Workspace', 'Scan results'] as const
+
+const NOT_FINISHED = 'The scan did not finish.'
+
+function isFieldError(body: unknown): body is FieldError {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    typeof (body as FieldError).error === 'string' &&
+    typeof (body as FieldError).field === 'string'
+  )
+}
+
+function isScanBusy(body: unknown): body is ScanBusy {
+  const b = body as ScanBusy | null
+  return (
+    typeof b === 'object' &&
+    b !== null &&
+    typeof b.id === 'number' &&
+    typeof b.path === 'string' &&
+    typeof b.depth === 'number'
+  )
+}
+
+const message = (err: unknown) =>
+  err instanceof Error && err.message ? err.message : 'Something went wrong. Try again.'
+
+const emptyProgress: ScanProgress = { examined: 0, total: 0, current: '' }
+
+/** OnboardingPage is /onboarding: design 03 steps 1–2. */
+export default function OnboardingPage() {
+  const navigate = useNavigate()
+  const toast = useToast()
+
+  const [path, setPath] = useState('')
+  const [depth, setDepth] = useState(1)
+  const [errors, setErrors] = useState<FieldErrors>({})
+  const [formError, setFormError] = useState('')
+  const [phase, setPhase] = useState<Phase>({ kind: 'form' })
+  const [progress, setProgress] = useState<ScanProgress>(emptyProgress)
+  const [starting, setStarting] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [trackError, setTrackError] = useState('')
+  const [focusPath, setFocusPath] = useState(0)
+  const pathRef = useRef<HTMLInputElement>(null)
+
+  const scan = useCallback(async (p: string, d: number) => {
+    setPath(p)
+    setDepth(d)
+    setErrors({})
+    setFormError('')
+    setTrackError('')
+    setStarting(true)
+    try {
+      const { id } = await startScan({ path: p, depth: d })
+      setProgress(emptyProgress)
+      setPhase({ kind: 'scanning', id, path: p, depth: d })
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && isScanBusy(err.body)) {
+        // Another scan runs: attach to it, as if this tab had started it.
+        setPath(err.body.path)
+        setDepth(err.body.depth)
+        setProgress(emptyProgress)
+        setPhase({ kind: 'scanning', id: err.body.id, path: err.body.path, depth: err.body.depth })
+      } else if (err instanceof ApiError && err.status === 422 && isFieldError(err.body)) {
+        const field = err.body.field === 'depth' ? 'depth' : 'path'
+        setErrors({ [field]: err.body.error })
+        setPhase({ kind: 'form' })
+      } else {
+        setFormError(message(err))
+        setPhase({ kind: 'form' })
+      }
+    } finally {
+      setStarting(false)
+    }
+  }, [])
+
+  const scanId = phase.kind === 'scanning' ? phase.id : null
+
+  useEffect(() => {
+    if (scanId === null) return
+    const ctrl = new AbortController()
+    const fail = (error: string) =>
+      setPhase((ph) =>
+        ph.kind === 'scanning' && ph.id === scanId
+          ? { kind: 'failed', path: ph.path, depth: ph.depth, error }
+          : ph,
+      )
+    const stop = watchScan(scanId, {
+      progress: setProgress,
+      end: () => {
+        getScan(scanId, ctrl.signal)
+          .then((job) => {
+            if (ctrl.signal.aborted) return
+            if (job.state === 'done' && job.result) {
+              const done = job as DoneJob
+              setPhase({ kind: done.result.rows.length > 0 ? 'results' : 'empty', job: done })
+            } else {
+              setPhase({
+                kind: 'failed',
+                path: job.path,
+                depth: job.depth,
+                error: job.error || NOT_FINISHED,
+              })
+            }
+          })
+          .catch((err) => {
+            if (!ctrl.signal.aborted) fail(message(err))
+          })
+      },
+    })
+    return () => {
+      stop()
+      ctrl.abort()
+    }
+  }, [scanId])
+
+  useEffect(() => {
+    if (focusPath > 0) pathRef.current?.focus()
+  }, [focusPath])
+
+  const checkPath = () => {
+    setPhase({ kind: 'form' })
+    setFocusPath((n) => n + 1)
+  }
+
+  const add = async (job: DoneJob, projects: TrackItem[]) => {
+    setAdding(true)
+    setTrackError('')
+    try {
+      const res = await trackScan(job.id, { projects })
+      toast.show(res.added === 1 ? '1 project added' : `${res.added} projects added`)
+      navigate('/')
+    } catch (err) {
+      setTrackError(message(err))
+      setAdding(false)
+    }
+  }
+
+  const step = phase.kind === 'results' || phase.kind === 'empty' ? 1 : 0
+
+  let body: ReactNode
+  if (phase.kind === 'results') {
+    const job = phase.job
+    body = (
+      <ScanResults
+        key={job.id}
+        job={job}
+        busy={starting || adding}
+        error={trackError}
+        onRescan={() => scan(job.path, job.depth)}
+        onAdd={(projects) => add(job, projects)}
+      />
+    )
+  } else if (phase.kind === 'empty') {
+    const job = phase.job
+    body = (
+      <NothingFound
+        job={job}
+        busy={starting}
+        onDeeper={() => scan(job.path, Math.min(job.depth + 1, DEPTHS.length))}
+        onCheckPath={checkPath}
+      />
+    )
+  } else {
+    const scanning = phase.kind === 'scanning'
+    body = (
+      <WorkspaceStep
+        path={path}
+        depth={depth}
+        errors={errors}
+        locked={scanning || starting}
+        onPath={(p) => {
+          setPath(p)
+          if (errors.path) setErrors((e) => ({ ...e, path: undefined }))
+        }}
+        onDepth={(d) => {
+          setDepth(d)
+          if (errors.depth) setErrors((e) => ({ ...e, depth: undefined }))
+        }}
+        onScan={() => scan(path.trim(), depth)}
+        pathRef={pathRef}
+      >
+        {scanning && <ScanProgressView progress={progress} />}
+        {phase.kind === 'failed' && (
+          <ScanFailed
+            error={phase.error}
+            busy={starting}
+            onRetry={() => scan(phase.path, phase.depth)}
+          />
+        )}
+        {formError && (
+          <p role="alert" className="text-[13px] text-danger">
+            {formError}
+          </p>
+        )}
+      </WorkspaceStep>
+    )
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-8">
+      <header className="flex w-full max-w-[980px] flex-wrap items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold tracking-tight">Add a workspace</h1>
+        <Stepper current={step} />
+      </header>
+      {body}
+    </div>
+  )
+}
+
+function Stepper({ current }: { current: number }) {
+  return (
+    <ol aria-label="Setup steps" className="flex flex-wrap items-center gap-2">
+      {STEPS.map((label, i) => {
+        const done = i < current
+        const cur = i === current
+        return (
+          <li
+            key={label}
+            aria-current={cur ? 'step' : undefined}
+            className="flex items-center gap-2"
+          >
+            <span
+              aria-hidden="true"
+              className={`flex size-6 items-center justify-center rounded-full border font-mono text-xs font-semibold ${
+                cur
+                  ? 'border-text bg-text text-bg'
+                  : done
+                    ? 'border-success/30 bg-success/15 text-success'
+                    : 'border-border-strong text-muted'
+              }`}
+            >
+              {done ? '✓' : i + 1}
+            </span>
+            <span className={`text-[13px] ${cur ? 'font-semibold text-white' : 'text-muted'}`}>
+              {label}
+            </span>
+            {i < STEPS.length - 1 && (
+              <span aria-hidden="true" className="h-px w-7 bg-border-strong" />
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+function ScanFailed({ error, busy, onRetry }: { error: string; busy: boolean; onRetry(): void }) {
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-3 rounded-[10px] border border-danger/40 bg-danger/10 p-3.5"
+    >
+      <p className="flex items-start gap-2 text-[13px] text-text">
+        <CircleAlert
+          aria-hidden="true"
+          size={16}
+          strokeWidth={2}
+          className="mt-0.5 flex-none text-danger"
+        />
+        <span>{error}</span>
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={busy}
+        className="h-9 w-fit cursor-pointer rounded-lg border border-border-strong px-4 text-text disabled:cursor-default disabled:opacity-50"
+      >
+        Scan again
+      </button>
+    </div>
+  )
+}
