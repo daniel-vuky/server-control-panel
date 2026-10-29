@@ -265,6 +265,43 @@ describe('onboarding, step 1', () => {
       expect(posts('/api/scans')[1].body).toEqual({ path: '/srv', depth: 2 })
     },
   )
+
+  it('editing the path after a failed scan dismisses the failure; Scan posts the new path', async () => {
+    const error = 'docker is not reachable'
+    await scanToEnd(job({ state: 'failed', error, result: undefined, path: '/srv', depth: 1 }))
+    expect(await screen.findByText(error)).toBeInTheDocument()
+
+    fireEvent.change(pathInput(), { target: { value: '/srv/new' } })
+    expect(screen.queryByText(error)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scan again' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }))
+    await waitFor(() => expect(posts('/api/scans')).toHaveLength(2))
+    expect(posts('/api/scans')[1].body).toEqual({ path: '/srv/new', depth: 1 })
+  })
+
+  it('changing the depth after a failed scan dismisses the failure', async () => {
+    const error = 'docker is not reachable'
+    await scanToEnd(job({ state: 'failed', error, result: undefined, path: '/srv', depth: 1 }))
+    expect(await screen.findByText(error)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: '2 levels' }))
+    expect(screen.queryByText(error)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scan again' })).toBeNull()
+  })
+
+  it('announces the scan once in a static live region, not on every progress event', async () => {
+    api(scanRoute(job()))
+    renderPage()
+    startScan('/srv')
+    const es = await eventSource()
+    es.emit('progress', { examined: 3, total: 12, current: '/srv/shop' })
+    const live = screen.getAllByRole('status').filter((el) => el.textContent !== '')
+    expect(live).toHaveLength(1)
+    expect(live[0]).toHaveTextContent(/^Scanning folders…$/)
+    expect(text('Scanning… 3/12 folders').closest('[role="status"]')).toBeNull()
+    expect(text('Scanning… 3/12 folders').closest('[aria-live]')).toBeNull()
+  })
 })
 
 describe('onboarding, step 2', () => {

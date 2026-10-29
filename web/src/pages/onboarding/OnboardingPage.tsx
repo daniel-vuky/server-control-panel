@@ -195,6 +195,11 @@ export default function OnboardingPage() {
     )
   } else {
     const scanning = phase.kind === 'scanning'
+    // Editing the path or depth after a failed scan dismisses the failure, so
+    // its Scan again cannot repeat the old values; Scan uses the new ones.
+    const dismissFailed = () => {
+      if (phase.kind === 'failed') setPhase({ kind: 'form' })
+    }
     body = (
       <WorkspaceStep
         path={path}
@@ -203,10 +208,12 @@ export default function OnboardingPage() {
         locked={scanning || starting}
         onPath={(p) => {
           setPath(p)
+          dismissFailed()
           if (errors.path) setErrors((e) => ({ ...e, path: undefined }))
         }}
         onDepth={(d) => {
           setDepth(d)
+          dismissFailed()
           if (errors.depth) setErrors((e) => ({ ...e, depth: undefined }))
         }}
         onScan={() => scan(path.trim(), depth)}

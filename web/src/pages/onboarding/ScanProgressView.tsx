@@ -1,14 +1,18 @@
 import type { ScanProgress } from '../../api/types.gen'
 
-/** ScanProgressView is the live "Scanning… 12/30 folders" box of step 1. */
+/**
+ * ScanProgressView is the live "Scanning… 12/30 folders" box of step 1. The
+ * counts change up to 5 times a second, so the box is not a live region; a
+ * static, visually hidden status announces the scan once when it appears.
+ */
 export default function ScanProgressView({ progress }: { progress: ScanProgress }) {
   const { examined, total, current } = progress
   const pct = total > 0 ? Math.min(100, Math.round((examined / total) * 100)) : 0
   return (
-    <div
-      role="status"
-      className="flex flex-col gap-2.5 rounded-[10px] border border-border bg-bg p-3.5"
-    >
+    <div className="flex flex-col gap-2.5 rounded-[10px] border border-border bg-bg p-3.5">
+      <span role="status" className="sr-only">
+        Scanning folders…
+      </span>
       <div className="flex items-center gap-2.5">
         <span
           aria-hidden="true"

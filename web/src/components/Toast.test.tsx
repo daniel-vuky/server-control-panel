@@ -40,7 +40,7 @@ describe('Toast', () => {
         <Trigger message="3 projects added" />
       </ToastProvider>,
     )
-    expect(screen.getByRole('status')).toBeEmpty()
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
     clickGo()
     expect(screen.getByRole('status')).toHaveTextContent('3 projects added')
 
@@ -51,7 +51,7 @@ describe('Toast', () => {
     act(() => {
       vi.advanceTimersByTime(1)
     })
-    expect(screen.getByRole('status')).toBeEmpty()
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 
   it('shows one at a time: a new message replaces the old and restarts the timer', () => {
@@ -74,7 +74,7 @@ describe('Toast', () => {
     act(() => {
       vi.advanceTimersByTime(1000)
     })
-    expect(screen.getByRole('status')).toBeEmpty()
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 
   it('useToast throws outside a provider', () => {
