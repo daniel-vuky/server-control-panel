@@ -122,7 +122,7 @@ func (s *Store) AddWorkspace(ctx context.Context, w NewWorkspace, ps []NewProjec
 		if err != nil {
 			return 0, 0, err
 		}
-		details, err := json.Marshal(p.Details)
+		details, err := json.Marshal(normalizeDetails(p.Details))
 		if err != nil {
 			return 0, 0, err
 		}
@@ -168,4 +168,17 @@ func nonNil[T any](s []T) []T {
 		return []T{}
 	}
 	return s
+}
+
+// normalizeDetails returns d with empty slices in place of nil ones, so the
+// stored JSON never holds a null where readers expect an array.
+func normalizeDetails(d project.Details) project.Details {
+	services := make([]project.Service, len(d.Services))
+	for i, sv := range d.Services {
+		sv.Ports = nonNil(sv.Ports)
+		sv.Volumes = nonNil(sv.Volumes)
+		services[i] = sv
+	}
+	d.Services = services
+	return d
 }

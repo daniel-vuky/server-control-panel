@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -47,7 +48,15 @@ type Tracked struct {
 
 // TrackedProjects lists the tracked projects, oldest first.
 func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
-	rows, err := s.db.QueryContext(ctx,
+	// One transaction, so both reads see the same snapshot: a concurrent
+	// AddWorkspace cannot show up in the second query but not the first.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("store: list tracked projects: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx,
 		`SELECT id, workspace_id, display_name, path, compose_project, self, details FROM projects WHERE state = 'tracked' ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list tracked projects: %w", err)
@@ -80,7 +89,7 @@ func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
 	}
 	_ = rows.Close()
 
-	drows, err := s.db.QueryContext(ctx,
+	drows, err := tx.QueryContext(ctx,
 		`SELECT d.project_id, d.type, d.name, d.location_kind, d.location, d.sources
 		 FROM databases d JOIN projects p ON p.id = d.project_id WHERE p.state = 'tracked' ORDER BY d.id`)
 	if err != nil {
@@ -102,7 +111,10 @@ func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
 		if d.Sources == nil {
 			d.Sources = []string{}
 		}
-		i := byID[pid]
+		i, ok := byID[pid]
+		if !ok {
+			continue
+		}
 		ts[i].Databases = append(ts[i].Databases, d)
 	}
 	return ts, drows.Err()

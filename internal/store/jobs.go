@@ -51,7 +51,11 @@ func (s *Store) FinishJob(ctx context.Context, id int64, state string, progress,
 	if err != nil {
 		return fmt.Errorf("store: finish job: %w", err)
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: finish job: %w", err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -288,6 +290,73 @@ func TestAddWorkspaceStoresTrackedAndIgnored(t *testing.T) {
 	var d project.Details
 	if err := json.Unmarshal([]byte(details), &d); err != nil || len(d.Services) != 2 || d.Services[0].Ports[0] != "8080:80/tcp" {
 		t.Fatalf("details = %s (%v)", details, err)
+	}
+	// The db service has no ports or volumes: they are stored as [], not null.
+	if strings.Contains(details, "null") || !strings.Contains(details, `"name":"db","image":"postgres:16","ports":[],"volumes":[]`) {
+		t.Fatalf("details has null arrays: %s", details)
+	}
+}
+
+func TestEmptyDetailsStoredWithoutNulls(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	ps := []NewProject{{Path: "/srv/apps/broken", ComposeProject: "broken", DisplayName: "broken", Tracked: true}}
+	if _, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "apps", Path: "/srv/apps", Depth: 1, LastScanAt: scanTime}, ps); err != nil {
+		t.Fatal(err)
+	}
+	var details, files string
+	if err := s.db.QueryRow(`SELECT details, compose_files FROM projects`).Scan(&details, &files); err != nil {
+		t.Fatal(err)
+	}
+	if details != `{"services":[]}` || files != `[]` {
+		t.Fatalf("details = %s, compose_files = %s", details, files)
+	}
+	tr, err := s.TrackedProjects(ctx)
+	if err != nil || len(tr) != 1 || tr[0].Services == nil || len(tr[0].Services) != 0 || tr[0].Databases == nil {
+		t.Fatalf("tracked = %+v, %v", tr, err)
+	}
+}
+
+func TestTrackedProjectsDuringConcurrentAdds(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const adds = 25
+	done := make(chan error, 1)
+	go func() {
+		for i := range adds {
+			path := fmt.Sprintf("/srv/w%d", i)
+			ps := []NewProject{{
+				Path: path + "/app", ComposeProject: fmt.Sprintf("app%d", i), DisplayName: "app", Tracked: true,
+				Databases: []project.Database{{Type: "mysql", Name: "app", LocationKind: "container", Location: "db"}},
+			}}
+			if _, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "w", Path: path, Depth: 1, LastScanAt: scanTime}, ps); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	for finished := false; !finished; {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			finished = true
+		default:
+		}
+		tr, err := s.TrackedProjects(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range tr {
+			if len(p.Databases) != 1 {
+				t.Fatalf("project %s has %d databases, want 1 (torn read)", p.Path, len(p.Databases))
+			}
+		}
+	}
+	if tr, err := s.TrackedProjects(ctx); err != nil || len(tr) != adds {
+		t.Fatalf("after all adds: %d projects, %v", len(tr), err)
 	}
 }
 
