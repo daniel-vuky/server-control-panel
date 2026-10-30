@@ -34,8 +34,10 @@ type mockGoogle struct {
 	// putHook, when set, may answer a chunk PUT itself (return true). It gets the
 	// upload, the PUT count so far (1-based) and the chunk body.
 	putHook func(u *mockUpload, n int, body []byte, w http.ResponseWriter) bool
-	puts    int
-	queries int
+	// earlyPut, when set, may answer a chunk PUT before its body is read.
+	earlyPut func(w http.ResponseWriter) bool
+	puts     int
+	queries  int
 	// lastAuthQuery is the query of the last /drive/v3/about call.
 	lastAboutQuery string
 }
@@ -367,6 +369,12 @@ func (m *mockGoogle) put(w http.ResponseWriter, r *http.Request) {
 		m.queries++
 		m.mu.Unlock()
 		m.answerUpload(w, u)
+		return
+	}
+	m.mu.Lock()
+	early := m.earlyPut
+	m.mu.Unlock()
+	if early != nil && early(w) {
 		return
 	}
 	body, err := io.ReadAll(r.Body)

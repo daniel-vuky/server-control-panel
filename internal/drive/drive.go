@@ -103,8 +103,10 @@ type Session interface {
 	// ("" = root), creating it when there is none. A missing or trashed parent is
 	// folder_missing.
 	FindOrCreateFolder(ctx context.Context, name, parentID string) (Folder, error)
-	// Upload stores size bytes from r as name in folderID, calling progress with
-	// the bytes sent so far. A missing or trashed folder is folder_missing.
+	// Upload stores size bytes from r as name in folderID, calling progress
+	// (when not nil) with the bytes sent so far. progress is called serially,
+	// from the goroutine that called Upload, never after Upload returns. A
+	// missing or trashed folder is folder_missing.
 	Upload(ctx context.Context, folderID, name string, size int64, r io.Reader, progress func(int64)) (fileID, link string, err error)
 	// Download streams a file's content.
 	Download(ctx context.Context, fileID string) (io.ReadCloser, error)

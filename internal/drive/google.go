@@ -41,6 +41,9 @@ var (
 	errStall       = errors.New("upload stalled")
 	errCallTimeout = errors.New("request timed out")
 	errSessionGone = errors.New("upload session expired")
+	// errFinal marks an unreachable answer that a retry cannot fix (a 4xx that
+	// maps to no other code).
+	errFinal = errors.New("not retryable")
 )
 
 type googleEndpoints struct {
@@ -198,6 +201,8 @@ func statusErr(resp *http.Response) *Error {
 		return errCode(CodeNoAccess, msg)
 	case code == http.StatusNotFound:
 		return errCode(CodeFolderMissing, msg)
+	case code >= 400 && code < 500:
+		return &Error{Code: CodeUnreachable, Err: fmt.Errorf("%s (%w)", msg, errFinal)}
 	default:
 		return errCode(CodeUnreachable, msg)
 	}
@@ -497,21 +502,18 @@ func startWatchdog(cancel context.CancelCauseFunc) *watchdog {
 func (w *watchdog) touch() { w.last.Store(time.Now().UnixNano()) }
 func (w *watchdog) stop()  { close(w.done) }
 
-// activityReader is a chunk body: each read is progress for the watchdog and
-// reports the bytes handed to the connection so far.
+// activityReader is a chunk body: each read is progress for the watchdog. The
+// transport reads it on its own goroutine, possibly after the answer is back,
+// so it touches only the watchdog's atomic clock and never reports progress.
 type activityReader struct {
-	r      io.Reader
-	w      *watchdog
-	sent   int64
-	onSent func(int64)
+	r io.Reader
+	w *watchdog
 }
 
 func (a *activityReader) Read(p []byte) (int, error) {
 	n, err := a.r.Read(p)
 	if n > 0 {
 		a.w.touch()
-		a.sent += int64(n)
-		a.onSent(a.sent)
 	}
 	return n, err
 }
@@ -525,7 +527,8 @@ type uploadState struct {
 
 // Upload uses Drive's resumable protocol: one session, then uploadChunk-sized
 // PUTs. A chunk that fails with a 5xx or a network error is resumed from what
-// Drive reports it received, up to maxResumes times.
+// Drive reports it received, up to maxResumes times. progress is called only
+// from this goroutine, with the bytes Drive has confirmed.
 func (s *googleSession) Upload(ctx context.Context, folderID, name string, size int64, r io.Reader, progress func(int64)) (string, string, error) {
 	if size < 0 {
 		return "", "", errors.New("drive: negative upload size")
@@ -561,7 +564,7 @@ func (s *googleSession) Upload(ctx context.Context, folderID, name string, size 
 		attempts := 0
 		for pos < chunkStart+n || n == 0 {
 			from := pos
-			st, err := s.putChunk(ctx, uctx, w, loc, buf[from-chunkStart:n], from, size, func(sent int64) { report(from + sent) })
+			st, err := s.putChunk(ctx, uctx, w, loc, buf[from-chunkStart:n], from, size)
 			if err == nil && !st.done && n > 0 && st.received <= from {
 				// Drive took nothing: a failure, so the loop cannot spin.
 				err = errCode(CodeUnreachable, "upload made no progress")
@@ -579,6 +582,7 @@ func (s *googleSession) Upload(ctx context.Context, folderID, name string, size 
 				return "", "", errCode(CodeUnreachable, "upload out of step")
 			}
 			pos = st.received
+			report(pos)
 			if n == 0 {
 				return "", "", errCode(CodeUnreachable, "upload did not finish")
 			}
@@ -594,7 +598,8 @@ func (s *googleSession) Upload(ctx context.Context, folderID, name string, size 
 // retryable says whether a resume may follow err: a transient Drive failure,
 // while neither the caller nor the watchdog has given up.
 func retryable(ctx, uctx context.Context, err error) bool {
-	return ctx.Err() == nil && uctx.Err() == nil && CodeOf(err) == CodeUnreachable && !errors.Is(err, errSessionGone)
+	return ctx.Err() == nil && uctx.Err() == nil && CodeOf(err) == CodeUnreachable &&
+		!errors.Is(err, errSessionGone) && !errors.Is(err, errFinal)
 }
 
 // resume waits, then asks Drive what it received, counting each failure
@@ -673,7 +678,7 @@ func (s *googleSession) sameOrigin(loc string) bool {
 	return err == nil && err2 == nil && u.Scheme == api.Scheme && u.Host == api.Host
 }
 
-func (s *googleSession) putChunk(ctx, uctx context.Context, w *watchdog, loc string, data []byte, pos, size int64, onSent func(int64)) (uploadState, error) {
+func (s *googleSession) putChunk(ctx, uctx context.Context, w *watchdog, loc string, data []byte, pos, size int64) (uploadState, error) {
 	contentRange := "bytes */0"
 	if size > 0 {
 		contentRange = fmt.Sprintf("bytes %d-%d/%d", pos, pos+int64(len(data))-1, size)
@@ -681,7 +686,7 @@ func (s *googleSession) putChunk(ctx, uctx context.Context, w *watchdog, loc str
 	resp, err := s.send(ctx, uctx, func() (*http.Request, error) {
 		var body io.Reader = http.NoBody
 		if len(data) > 0 {
-			body = &activityReader{r: bytes.NewReader(data), w: w, onSent: onSent}
+			body = &activityReader{r: bytes.NewReader(data), w: w}
 		}
 		req, err := http.NewRequestWithContext(uctx, http.MethodPut, loc, body)
 		if err == nil {

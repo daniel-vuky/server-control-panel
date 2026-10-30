@@ -337,3 +337,42 @@ func TestWords(t *testing.T) {
 		t.Error("Error does not unwrap")
 	}
 }
+
+// A chunk answered before its body is sent must not run progress on the
+// transport's goroutine: progress stays serial with the caller (run with -race).
+func TestUploadEarlyAnswerProgressSerial(t *testing.T) {
+	ctx := context.Background()
+	setUploadChunk(t, 4<<20)
+	m := newMockGoogle(t)
+	s := connectMock(t, m)
+	folder := m.addFolder("server-backups", "root", false)
+	m.earlyPut = func(w http.ResponseWriter) bool {
+		apiError(w, 403, "insufficientFilePermissions")
+		return true
+	}
+	data := bytes.Repeat([]byte("y"), 4<<20)
+	for range 5 {
+		var calls []int64 // unsynchronised on purpose
+		_, _, err := s.Upload(ctx, folder, "a.sql.gz", int64(len(data)), bytes.NewReader(data), func(n int64) { calls = append(calls, n) })
+		wantCode(t, err, CodeNoAccess)
+		calls = append(calls, -1)
+	}
+}
+
+// A 4xx on a chunk other than the mapped ones is not resumed.
+func TestUploadClientErrorNotResumed(t *testing.T) {
+	ctx := context.Background()
+	noBackoff(t)
+	m := newMockGoogle(t)
+	s := connectMock(t, m)
+	folder := m.addFolder("server-backups", "root", false)
+	m.putHook = func(_ *mockUpload, _ int, _ []byte, w http.ResponseWriter) bool {
+		apiError(w, 400, "badRequest")
+		return true
+	}
+	_, _, err := s.Upload(ctx, folder, "a.sql.gz", 3, bytes.NewReader([]byte("abc")), nil)
+	wantCode(t, err, CodeUnreachable)
+	if m.puts != 1 || m.queries != 0 {
+		t.Fatalf("puts = %d, queries = %d; want 1 and 0 (no resume)", m.puts, m.queries)
+	}
+}
