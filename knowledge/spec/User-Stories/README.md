@@ -66,6 +66,17 @@ Added on 2026-10-30 with the project detail flow (#31, #32, #34, #35, #37, #38),
 23. An expired Cloudflare Access session is detected, and the connection badge offers Reload, because retrying cannot sign in again (E3-F09-US02).
 24. A failed-components panel on Overview links, with View logs, to that container's most recent error in the logs (E3-F11-US02, E3-F11-US04).
 
+Added on 2026-10-31 with the manual backup flow (#45, #46, #15, #48, #49, #50, #51, #56), numbering on from the list above:
+
+25. The Drive status (not set up, not connected, connected, expired) is part of the live state, so every page shows a change at once and Back up now is offered or refused from it (E5-F14-US01, E5-F14-US03, E5-F15-US01).
+26. A backup the panel refuses (Drive expired, no space, database not running) is kept in the history as Refused, with its reason, and can be retried (E5-F15-US03, E5-F15-US04, E5-F17-US01).
+27. SQLite databases are not backed up yet: the app sees a path inside its own container, so copying it from the host is not reliable. Back up now says so (E5-F15-US01).
+28. A dump has no total time limit. It fails after 5 minutes without a byte of output, with a safety ceiling of 6 hours (E5-F15-US01, E5-F15-US03).
+29. The disk rule is best effort: the backup needs free space of at least 50 % of the database's data size plus 100 MB. A dump that still outgrows the disk fails at the Dump step and its temporary file is removed (E5-F15-US04).
+30. Remove old copies is shown as skipped ("No retention set yet") until retention exists, so every copy is kept (E5-F15-US02, E5-F16-US02).
+31. A backup is downloaded through the panel, so any Operator on the Access list can fetch it without access to the Drive account; Open in Drive is offered next to it (E5-F17-US01).
+32. The Google Cloud app must be published to Production. The `drive.file` scope needs no review, but a token issued while the app is in Testing expires after 7 days, and the panel then asks to reconnect (E5-F14-US01, E5-F14-US03).
+
 <a id="open-questions"></a>
 ## Decisions (2026-10-28)
 
