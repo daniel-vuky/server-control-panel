@@ -47,7 +47,10 @@ type Tracked struct {
 	Self            bool
 	ComposeFiles    []string // base names: the main file, then the override
 	Services        []string
-	Databases       []project.Database
+	// ServiceDetails is the services with their image, ports and volumes, from
+	// the same config as Services; [] when the config could not be read.
+	ServiceDetails []project.Service
+	Databases      []project.Database
 	// MissingSince is set when a rescan could not find the folder; nil when
 	// the project is present.
 	MissingSince *time.Time
@@ -164,6 +167,10 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 		var d project.Details
 		if err := json.Unmarshal([]byte(details), &d); err != nil {
 			return nil, fmt.Errorf("store: project %d details: %w", t.ID, err)
+		}
+		t.ServiceDetails = d.Services
+		if t.ServiceDetails == nil {
+			t.ServiceDetails = []project.Service{}
 		}
 		t.Services = make([]string, 0, len(d.Services))
 		for _, sv := range d.Services {

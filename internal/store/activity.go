@@ -28,6 +28,10 @@ const (
 	ActProjectUntrack  = "project.untrack"
 	ActProjectRemove   = "project.remove"
 	ActProjectSettings = "project.settings"
+	ActBackupRun       = "backup.run"
+	ActDriveConnect    = "drive.connect"
+	ActDriveFolder     = "drive.folder"
+	ActDriveDisconnect = "drive.disconnect"
 )
 
 // How it ended.

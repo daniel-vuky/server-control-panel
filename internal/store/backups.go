@@ -1,0 +1,223 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+)
+
+const interruptedBackupError = "The panel restarted during this backup"
+
+// BackupStep is one step of a backup: step is dump, compress, upload or
+// prune; state is waiting, running, done, failed or skipped.
+type BackupStep struct {
+	Step   string `json:"step"`
+	State  string `json:"state"`
+	Detail string `json:"detail"`
+}
+
+// Backup is one backup run: a snapshot of the target database, its progress
+// and its result. State is queued, running, ok, failed, refused or interrupted;
+// FailedStep is empty unless a step failed.
+type Backup struct {
+	// QueuePosition is not stored: backup.Manager.Active() sets it.
+	QueuePosition int `json:"-" db:"-"`
+
+	ID, ProjectID                                                      int64
+	ProjectName, DBType, DBName, DBLocationKind, DBLocation, DBService string
+	DBKey, State, FailedStep                                           string
+	Steps                                                              []BackupStep
+	Error, Hint                                                        string
+	RawBytes, SizeBytes                                                int64
+	FileName, DriveFileID, DriveLink, StartedBy                        string
+	CreatedAt                                                          time.Time
+	StartedAt, FinishedAt                                              *time.Time
+	DurationMS                                                         int64
+}
+
+const backupColumns = `id, project_id, project_name, db_type, db_name, db_location_kind, db_location, db_service, db_key,
+	state, failed_step, steps, error, hint, raw_bytes, size_bytes, file_name, drive_file_id, drive_link,
+	started_by, created_at, started_at, finished_at, duration_ms`
+
+// InsertBackup stores a new backup and returns its id.
+func (s *Store) InsertBackup(ctx context.Context, b Backup) (int64, error) {
+	steps, err := marshalSteps(b.Steps)
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO backups (project_id, project_name, db_type, db_name, db_location_kind, db_location, db_service, db_key,
+		   state, failed_step, steps, error, hint, raw_bytes, size_bytes, file_name, drive_file_id, drive_link,
+		   started_by, created_at, started_at, finished_at, duration_ms)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.ProjectID, b.ProjectName, b.DBType, b.DBName, b.DBLocationKind, b.DBLocation, b.DBService, b.DBKey,
+		b.State, nullString(b.FailedStep), steps, b.Error, b.Hint, b.RawBytes, b.SizeBytes, b.FileName, b.DriveFileID, b.DriveLink,
+		b.StartedBy, formatTime(b.CreatedAt), nullTime(b.StartedAt), nullTime(b.FinishedAt), b.DurationMS)
+	if err != nil {
+		return 0, fmt.Errorf("store: insert backup: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// UpdateBackup writes every field of b except its identity (project and
+// snapshot), by id. ErrNotFound for an unknown id.
+func (s *Store) UpdateBackup(ctx context.Context, b Backup) error {
+	steps, err := marshalSteps(b.Steps)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE backups SET state = ?, failed_step = ?, steps = ?, error = ?, hint = ?, raw_bytes = ?, size_bytes = ?,
+		   file_name = ?, drive_file_id = ?, drive_link = ?, started_at = ?, finished_at = ?, duration_ms = ? WHERE id = ?`,
+		b.State, nullString(b.FailedStep), steps, b.Error, b.Hint, b.RawBytes, b.SizeBytes,
+		b.FileName, b.DriveFileID, b.DriveLink, nullTime(b.StartedAt), nullTime(b.FinishedAt), b.DurationMS, b.ID)
+	if err != nil {
+		return fmt.Errorf("store: update backup: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("store: update backup: %w", err)
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetBackup returns one backup, or ErrNotFound.
+func (s *Store) GetBackup(ctx context.Context, id int64) (Backup, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+backupColumns+` FROM backups WHERE id = ?`, id)
+	if err != nil {
+		return Backup{}, fmt.Errorf("store: get backup: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return Backup{}, fmt.Errorf("store: get backup: %w", err)
+		}
+		return Backup{}, ErrNotFound
+	}
+	return scanBackup(rows)
+}
+
+// ProjectBackups lists a project's backups, newest first. A positive before
+// lists only the ids below it (the id of the last row of the previous page);
+// more says whether older rows remain. limit must be positive.
+func (s *Store) ProjectBackups(ctx context.Context, projectID, before int64, limit int) ([]Backup, bool, error) {
+	if limit <= 0 {
+		return []Backup{}, false, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+backupColumns+` FROM backups WHERE project_id = ? AND (? <= 0 OR id < ?) ORDER BY id DESC LIMIT ?`,
+		projectID, before, before, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: list backups: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []Backup{}
+	for rows.Next() {
+		b, err := scanBackup(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("store: list backups: %w", err)
+	}
+	more := len(out) > limit
+	if more {
+		out = out[:limit]
+	}
+	return out, more, nil
+}
+
+// ActiveBackup returns the id of the queued or running backup of a project's
+// database, if there is one.
+func (s *Store) ActiveBackup(ctx context.Context, projectID int64, dbKey string) (int64, bool, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM backups WHERE project_id = ? AND db_key = ? AND state IN ('queued', 'running') ORDER BY id LIMIT 1`,
+		projectID, dbKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("store: active backup: %w", err)
+	}
+	return id, true, nil
+}
+
+// interruptActiveBackups ends backups a previous process left queued or
+// running, next to interruptRunningJobs. They are not resumed.
+func (s *Store) interruptActiveBackups(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backups SET state = 'interrupted', error = ?, finished_at = ? WHERE state IN ('queued', 'running')`,
+		interruptedBackupError, formatTime(time.Now()))
+	if err != nil {
+		return fmt.Errorf("store: interrupt active backups: %w", err)
+	}
+	return nil
+}
+
+func marshalSteps(steps []BackupStep) (string, error) {
+	if steps == nil {
+		steps = []BackupStep{}
+	}
+	b, err := json.Marshal(steps)
+	if err != nil {
+		return "", fmt.Errorf("store: backup steps: %w", err)
+	}
+	return string(b), nil
+}
+
+func nullTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return formatTime(*t)
+}
+
+func scanBackup(rows *sql.Rows) (Backup, error) {
+	var (
+		b                 Backup
+		failed            sql.NullString
+		steps, created    string
+		started, finished sql.NullString
+	)
+	if err := rows.Scan(&b.ID, &b.ProjectID, &b.ProjectName, &b.DBType, &b.DBName, &b.DBLocationKind, &b.DBLocation, &b.DBService, &b.DBKey,
+		&b.State, &failed, &steps, &b.Error, &b.Hint, &b.RawBytes, &b.SizeBytes, &b.FileName, &b.DriveFileID, &b.DriveLink,
+		&b.StartedBy, &created, &started, &finished, &b.DurationMS); err != nil {
+		return Backup{}, fmt.Errorf("store: read backup: %w", err)
+	}
+	b.FailedStep = failed.String
+	if err := json.Unmarshal([]byte(steps), &b.Steps); err != nil {
+		return Backup{}, fmt.Errorf("store: backup %d steps: %w", b.ID, err)
+	}
+	if b.Steps == nil {
+		b.Steps = []BackupStep{}
+	}
+	var err error
+	if b.CreatedAt, err = parseTime(created); err != nil {
+		return Backup{}, fmt.Errorf("store: backup %d created_at: %w", b.ID, err)
+	}
+	if b.StartedAt, err = parseNullTime(started); err != nil {
+		return Backup{}, fmt.Errorf("store: backup %d started_at: %w", b.ID, err)
+	}
+	if b.FinishedAt, err = parseNullTime(finished); err != nil {
+		return Backup{}, fmt.Errorf("store: backup %d finished_at: %w", b.ID, err)
+	}
+	return b, nil
+}
+
+func parseNullTime(s sql.NullString) (*time.Time, error) {
+	if !s.Valid {
+		return nil, nil
+	}
+	t, err := parseTime(s.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
