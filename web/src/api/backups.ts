@@ -1,5 +1,11 @@
 import { ApiError, getJSON, postJSON } from './client'
-import type { Backup, BackupRefused, BackupRequest, BackupStarted } from './types.gen'
+import type {
+  Backup,
+  BackupHistory,
+  BackupRefused,
+  BackupRequest,
+  BackupStarted,
+} from './types.gen'
 
 /** startBackup queues a backup of one database of a tracked project: 202 {id}, or a refusal. */
 export function startBackup(projectId: number, database: string): Promise<BackupStarted> {
@@ -15,6 +21,30 @@ export function retryBackup(id: number): Promise<BackupStarted> {
 /** getBackup is one backup: an active one with its queue position, else the stored row. */
 export function getBackup(id: number, signal?: AbortSignal): Promise<Backup> {
   return getJSON<Backup>(`/api/backups/${id}`, signal)
+}
+
+/** HISTORY_PAGE is how many backups the history reads at a time. */
+export const HISTORY_PAGE = 50
+
+/**
+ * listBackups is one page of a project's backups, newest first, in every
+ * state: the newest page, or the one before backup id `before` (the last id
+ * shown).
+ */
+export async function listBackups(
+  projectId: number,
+  before?: number,
+  signal?: AbortSignal,
+): Promise<BackupHistory> {
+  const older = before === undefined ? '' : `&before=${before}`
+  const page = await getJSON<BackupHistory>(
+    `/api/projects/${projectId}/backups?limit=${HISTORY_PAGE}${older}`,
+    signal,
+  )
+  if (typeof page !== 'object' || page === null || !Array.isArray(page.backups)) {
+    throw new ApiError(200, null, 'Unexpected response from the server.')
+  }
+  return { backups: page.backups, more: page.more === true }
 }
 
 /** downloadUrl is where a succeeded backup's file is streamed from Drive. */

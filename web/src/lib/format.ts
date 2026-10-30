@@ -49,3 +49,16 @@ export function formatBytes(n: number): string {
   const v = n / size
   return `${v < 10 ? v.toFixed(1) : v.toFixed(0)} ${unit}`
 }
+
+/**
+ * formatDuration is how long a backup took: "41s", "1m 02s", "1h 05m"
+ * (design 02). Zero or less is "—" (a backup that never ran).
+ */
+export function formatDuration(ms: number): string {
+  if (!(ms > 0)) return '—'
+  const s = Math.max(1, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+}

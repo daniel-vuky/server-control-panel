@@ -60,8 +60,15 @@ describe('app shell', () => {
     expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 
-  it('keeps the other routes as placeholders', () => {
+  it('maps /backups to the Backups page, not its placeholder', () => {
     renderAt('/backups')
+    // No live state arrives here (no EventSource), so the page waits for it.
+    expect(screen.getByText('Loading backups…')).toBeInTheDocument()
+    expect(screen.queryByText(/Coming in/)).toBeNull()
+  })
+
+  it('keeps the other routes as placeholders', () => {
+    renderAt('/server')
     expect(screen.getByText(/Coming in/)).toBeInTheDocument()
   })
 

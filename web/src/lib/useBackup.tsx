@@ -31,7 +31,10 @@ const DRIVE_CODES = new Set(['drive_not_connected', 'drive_expired'])
  * - start(project, dbKey?) backs up that database, the only one, or opens the chooser.
  * - choose(project, dbKey?) opens the chooser with that database chosen (and starts nothing).
  * - open(backupId) opens a backup's progress dialog.
- * - pendingKey is the database whose start is out (pendingProjectId its project).
+ * - retry(backup) backs up a failed, refused or interrupted backup's database
+ *   again, answered like a start (the progress dialog, or a toast).
+ * - pendingKey is the database whose start is out (pendingProjectId its project);
+ *   retryingId is the backup whose retry is out.
  */
 export function useBackup() {
   const live = useLive()
@@ -42,7 +45,7 @@ export function useBackup() {
   const [connecting, setConnecting] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
   const [pending, setPending] = useState<Target | null>(null)
-  const [retrying, setRetrying] = useState(false)
+  const [retrying, setRetrying] = useState<number | null>(null)
   // One start or retry at a time: a second press while one is out does nothing.
   const busy = useRef(false)
   const mounted = useRef(true)
@@ -141,21 +144,24 @@ export function useBackup() {
 
   const open = useCallback((backupId: number) => setOpenId(backupId), [])
 
-  const retry = async (b: Backup) => {
-    if (busy.current) return
-    busy.current = true
-    setRetrying(true)
-    try {
-      await settle(() => retryBackup(b.id), {
-        projectId: b.projectId,
-        key: b.database.key,
-        name: b.database.name,
-      })
-    } finally {
-      busy.current = false
-      if (mounted.current) setRetrying(false)
-    }
-  }
+  const retry = useCallback(
+    async (b: Backup): Promise<void> => {
+      if (busy.current) return
+      busy.current = true
+      setRetrying(b.id)
+      try {
+        await settle(() => retryBackup(b.id), {
+          projectId: b.projectId,
+          key: b.database.key,
+          name: b.database.name,
+        })
+      } finally {
+        busy.current = false
+        if (mounted.current) setRetrying(null)
+      }
+    },
+    [settle],
+  )
 
   const connect = async (t: Target) => {
     setConnecting(true)
@@ -201,7 +207,7 @@ export function useBackup() {
       {openId !== null && (
         <BackupProgress
           id={openId}
-          retrying={retrying}
+          retrying={retrying !== null}
           onClose={() => setOpenId(null)}
           onRetry={(b) => void retry(b)}
         />
@@ -213,9 +219,11 @@ export function useBackup() {
     start,
     choose,
     open,
+    retry,
     dialogs,
     pendingKey: pending?.key ?? null,
     pendingProjectId: pending?.projectId ?? null,
+    retryingId: retrying,
   }
 }
 

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { createBrowserRouter, type RouteObject, RouterProvider } from 'react-router'
 import { ToastProvider } from '../components/Toast'
+import BackupsPage from '../pages/BackupsPage'
 import DashboardPage from '../pages/DashboardPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import OnboardingPage from '../pages/onboarding/OnboardingPage'
@@ -18,6 +19,7 @@ import { appRoutes } from './routes'
 /** The pages built so far; every other route shows its placeholder. */
 const pages: Record<string, ReactNode> = {
   '/': <DashboardPage />,
+  '/backups': <BackupsPage />,
   '/onboarding': <OnboardingPage />,
   '/rescan/:id': <RescanPage />,
   '/settings': <SettingsPage />,
