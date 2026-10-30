@@ -1,8 +1,12 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { projectRoute } from '../../app/App'
 import { formatLastScan } from '../../lib/time'
 import { FakeEventSource } from '../../test/fakeEventSource'
 import { makeContainer, makeProject, pushState, renderProject } from '../../test/projects'
+import { renderApp } from '../../test/renderApp'
+import { useProjectOutlet } from './projectContext'
 
 const HOUR = 3600_000
 
@@ -31,6 +35,21 @@ const posts = (stub: ReturnType<typeof vi.fn>) =>
   stub.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'POST')
 
 const header = () => screen.getByTestId('project-header')
+
+/** Leave stands in for the Settings tab: it leaves through the page's action flow. */
+function Leave() {
+  const { raw, actions } = useProjectOutlet()
+  return (
+    <button type="button" onClick={() => actions.leave(raw)}>
+      Leave
+    </button>
+  )
+}
+
+/** Where shows the path the page went to. */
+function Where() {
+  return <div data-testid="where">{useLocation().pathname}</div>
+}
 
 beforeEach(() => {
   FakeEventSource.instances = []
@@ -251,8 +270,7 @@ describe('project page', () => {
     expect(screen.getByRole('tab', { name: 'Logs' })).toBe(tab)
   })
 
-  it('not found project shows Remove from list and disabled lifecycle buttons', async () => {
-    const stub = serve(() => json(200, { removed: 1 }))
+  it('not found project shows the pill, the missing line and disabled lifecycle buttons', () => {
     const missing = makeProject({
       status: 'notfound',
       actions: ['remove'],
@@ -268,14 +286,28 @@ describe('project page', () => {
     for (const name of ['Start', 'Stop', 'Restart']) {
       expect(within(h).getByRole('button', { name })).toBeDisabled()
     }
+    // Remove from list lives in the Settings tab (spec §8), not the header.
+    expect(within(h).queryByRole('button', { name: 'Remove from list' })).toBeNull()
+  })
 
-    fireEvent.click(within(h).getByRole('button', { name: 'Remove from list' }))
+  it("a tab's leave asks in the page's dialog, then returns to the dashboard", async () => {
+    const stub = serve(() => json(200, { removed: 1 }))
+    renderApp('/projects/1/settings', {
+      routes: [
+        { ...projectRoute, children: [{ path: 'settings', element: <Leave /> }] },
+        { path: '*', element: <Where /> },
+      ],
+    })
+    pushState([makeProject({ status: 'notfound', actions: ['remove'] })])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }))
     const dialog = screen.getByRole('dialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove from list' }))
     await waitFor(() => expect(posts(stub)).toHaveLength(1))
     expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/1/untrack')
     expect(await screen.findByTestId('toast-success')).toHaveTextContent('Removed shop')
-    expect(screen.getByTestId('where').textContent).toBe('/')
+    // The router navigates after the removal settles.
+    expect((await screen.findByTestId('where')).textContent).toBe('/')
   })
 
   it('offers no Remove from list for a present project', () => {

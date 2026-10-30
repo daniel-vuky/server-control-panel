@@ -220,11 +220,6 @@ function Header({ project: p, raw, dockerDown, actions }: HeaderProps) {
           <CloudUpload aria-hidden="true" size={15} strokeWidth={2} />
           Back up now
         </button>
-        {allowed('remove') && (
-          <button type="button" className={DANGER} onClick={() => actions.leave(raw)}>
-            Remove from list
-          </button>
-        )}
       </div>
     </header>
   )
