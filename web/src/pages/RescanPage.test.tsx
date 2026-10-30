@@ -183,13 +183,41 @@ describe('rescan page, progress', () => {
     expect(text('Scanning… 1/2 folders')).toBeInTheDocument()
   })
 
-  it('redirects a first-scan job to onboarding with its id in the state', async () => {
-    api(jobRoute(job({ rescan: false, workspaceIds: [], path: '/srv', depth: 1 })))
+  it('redirects a first-scan job to onboarding, which takes over the scan from the state', async () => {
+    api(jobRoute(job({ rescan: false, workspaceIds: [], path: '/srv', depth: 2 })))
     renderAt()
     expect(await screen.findByRole('heading', { level: 1, name: 'Add a workspace' })).toBeVisible()
+    // Onboarding shows the running scan: its own watch, the job's path and
+    // depth, locked inputs, and no new scan posted.
     await waitFor(() =>
-      expect(StubEventSource.instances.map((s) => s.url)).toContain('/api/scans/7/events'),
+      expect(
+        StubEventSource.instances.filter((s) => s.url === '/api/scans/7/events' && !s.closed),
+      ).toHaveLength(1),
     )
+    const input = screen.getByLabelText('Root folder path')
+    await waitFor(() => expect(input).toHaveValue('/srv'))
+    expect(input).toBeDisabled()
+    expect(screen.getByRole('radio', { name: '2 levels' })).toBeChecked()
+    expect(posts('/api/scans')).toHaveLength(0)
+  })
+
+  it('stops its own watch after the first-scan redirect', async () => {
+    api(jobRoute(job({ rescan: false, workspaceIds: [], path: '/srv', depth: 1 })))
+    renderAt()
+    const es = await eventSource()
+    await screen.findByRole('heading', { level: 1, name: 'Add a workspace' })
+    expect(es.closed).toBe(true)
+  })
+
+  it('shows a not-found message without Retry for an id that is not a job number', async () => {
+    api(jobRoute(job()))
+    renderAt(['/', '/rescan/abc'])
+    expect(await screen.findByText('This rescan was not found.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(StubEventSource.instances).toHaveLength(0)
+    expect(calls.filter((c) => c.url.startsWith('/api/scans'))).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Dashboard' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible()
   })
 })
 

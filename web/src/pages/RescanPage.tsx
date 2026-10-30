@@ -18,6 +18,8 @@ type Phase =
   | { kind: 'failed'; error: string; workspaceId: number }
   // The job is handled elsewhere: a toast and back, or onboarding.
   | { kind: 'leaving' }
+  // The id in the address is not a job number: nothing to retry.
+  | { kind: 'invalid' }
 
 const NOT_FINISHED = 'The rescan did not finish.'
 
@@ -49,7 +51,8 @@ function Rescan({ id }: { id: number }) {
   const location = useLocation()
   const toast = useToast()
 
-  const [phase, setPhase] = useState<Phase>({ kind: 'scanning' })
+  const validId = Number.isInteger(id) && id > 0
+  const [phase, setPhase] = useState<Phase>({ kind: validId ? 'scanning' : 'invalid' })
   const [progress, setProgress] = useState<ScanProgress>(emptyProgress)
   const [starting, setStarting] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -66,10 +69,7 @@ function Rescan({ id }: { id: number }) {
   )
 
   useEffect(() => {
-    if (!Number.isInteger(id) || id <= 0) {
-      setPhase({ kind: 'failed', error: NOT_FINISHED, workspaceId: 0 })
-      return
-    }
+    if (!validId) return
     const ctrl = new AbortController()
 
     // A first scan has no page here: onboarding shows it. The check does not
@@ -125,7 +125,7 @@ function Rescan({ id }: { id: number }) {
       stop()
       ctrl.abort()
     }
-  }, [id, navigate, toast, toOnboarding, firstEntry])
+  }, [id, validId, navigate, toast, toOnboarding, firstEntry])
 
   const retry = async (workspaceId: number) => {
     setStarting(true)
@@ -165,6 +165,21 @@ function Rescan({ id }: { id: number }) {
     body = (
       <div className="flex w-full max-w-[640px] flex-col gap-4 rounded-[14px] border border-border bg-surface p-6">
         <ScanProgressView progress={progress} />
+      </div>
+    )
+  } else if (phase.kind === 'invalid') {
+    body = (
+      <div className="flex w-full max-w-[640px] flex-col gap-4 rounded-[14px] border border-border bg-surface p-6">
+        <p role="alert" className="text-[13px] text-text">
+          This rescan was not found.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="h-9 w-fit cursor-pointer rounded-lg border border-border-strong px-4 text-text"
+        >
+          Back to Dashboard
+        </button>
       </div>
     )
   } else if (phase.kind === 'failed') {
