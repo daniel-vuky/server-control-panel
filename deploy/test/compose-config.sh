@@ -55,6 +55,11 @@ list_has() {
     {in_list = 0}
     END {exit !found}' <<<"$1"
 }
+# The panel runs under an init that reaps killed command trees.
+if ! grep -qx '    init: true' <<<"$panel"; then
+  printf 'panel service lacks init: true:\n%s\n' "$panel" >&2
+  exit 1
+fi
 # The panel drops every capability and cannot gain privileges.
 if ! list_has "$panel" cap_drop ALL; then
   printf 'panel service lacks cap_drop: [ALL]:\n%s\n' "$panel" >&2
