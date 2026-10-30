@@ -26,7 +26,7 @@ describe('StatusBadge', () => {
     expect(screen.getByText(word)).toBeInTheDocument()
     const spinner = screen.getByTestId('status-spinner')
     expect(spinner).toHaveAttribute('aria-hidden', 'true')
-    expect(spinner).toHaveClass('motion-safe:animate-spin')
+    expect(spinner).toHaveClass('motion-safe:animate-[spin_0.8s_linear_infinite]')
   })
 
   it('strikes through Not found and no other word', () => {

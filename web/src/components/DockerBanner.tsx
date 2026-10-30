@@ -8,7 +8,7 @@ export default function DockerBanner() {
   return (
     <div
       role="alert"
-      className="mb-[18px] flex flex-wrap items-center gap-3 rounded-lg border border-[#5c2228] bg-[#2a1215] px-4 py-3 text-[#ffd7d8]"
+      className="mb-[22px] flex flex-wrap items-center gap-3 rounded-lg border border-[#5c2228] bg-[#2a1215] px-4 py-3 text-[#ffd7d8]"
     >
       <TriangleAlert
         aria-hidden="true"
@@ -25,7 +25,7 @@ export default function DockerBanner() {
         type="button"
         disabled={checking}
         onClick={() => void recheckDocker()}
-        className="ml-auto h-8 cursor-pointer rounded-md border border-[#7a2f36] bg-transparent px-3 text-[#ffd7d8] hover:bg-[#3a1a1e] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+        className="ml-auto h-8 cursor-pointer rounded-md border border-[#7a2f36] bg-transparent px-3 text-[#ffd7d8] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
       >
         Retry
       </button>

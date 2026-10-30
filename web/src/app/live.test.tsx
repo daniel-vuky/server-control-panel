@@ -115,6 +115,21 @@ describe('LiveProvider', () => {
     expect(screen.getByTestId('docker')).toHaveTextContent('true')
   })
 
+  it('recheckDocker before any state keeps projects null', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"dockerUp":true}', { status: 200 })),
+    )
+    render(
+      <LiveProvider>
+        <Probe />
+      </LiveProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'recheck' }))
+    await waitFor(() => expect(screen.getByTestId('docker')).toHaveTextContent('true'))
+    expect(screen.getByTestId('projects')).toHaveTextContent('null')
+  })
+
   it('recheckDocker keeps dockerUp as it was when the check fails', async () => {
     // The setup stub answers 401, so postJSON throws an ApiError.
     render(

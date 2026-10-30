@@ -35,7 +35,8 @@ function parseState(data: unknown): LiveState | null {
 
 /** LiveProvider holds the one EventSource of the tab and the latest state it sent. */
 export function LiveProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<LiveState | null>(null)
+  const [dockerUp, setDockerUp] = useState<boolean | null>(null)
+  const [projects, setProjects] = useState<Project[] | null>(null)
   const [checking, setChecking] = useState(false)
 
   useEffect(() => {
@@ -43,7 +44,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     const es = new EventSource('/api/events')
     const onState = (e: Event) => {
       const next = parseState((e as MessageEvent).data)
-      if (next) setState(next)
+      if (next) {
+        setDockerUp(next.dockerUp)
+        setProjects(next.projects)
+      }
     }
     es.addEventListener('state', onState)
     return () => {
@@ -56,7 +60,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     try {
       const r = await checkDocker()
       // The server also broadcasts; this makes the banner answer at once.
-      setState((s) => (s ? { ...s, dockerUp: r.dockerUp } : { dockerUp: r.dockerUp, projects: [] }))
+      setDockerUp(r.dockerUp)
     } catch {
       // A failed check leaves dockerUp as it was; the next state event corrects it.
     } finally {
@@ -66,12 +70,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<Live>(
     () => ({
-      dockerUp: state ? state.dockerUp : null,
-      projects: state ? state.projects : null,
+      dockerUp,
+      projects,
       checking,
       recheckDocker,
     }),
-    [state, checking, recheckDocker],
+    [dockerUp, projects, checking, recheckDocker],
   )
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>
 }

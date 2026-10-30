@@ -16,8 +16,8 @@ const looks: Record<Status, Look> = {
     dot: 'bg-warning shadow-[0_0_0_3px_rgba(229,185,59,0.13)]',
   },
   stopped: {
-    pill: 'bg-[rgba(154,163,175,0.12)] text-[#9aa3af]',
-    dot: 'bg-[#9aa3af] shadow-[0_0_0_3px_rgba(154,163,175,0.12)]',
+    pill: 'bg-[rgba(154,163,175,0.12)] text-stopped',
+    dot: 'bg-stopped shadow-[0_0_0_3px_rgba(154,163,175,0.12)]',
   },
   error: {
     pill: 'bg-[rgba(242,85,90,0.14)] text-danger',
@@ -27,8 +27,8 @@ const looks: Record<Status, Look> = {
   stopping: { pill: 'bg-[rgba(76,155,245,0.14)] text-accent', dot: '' },
   restarting: { pill: 'bg-[rgba(76,155,245,0.14)] text-accent', dot: '' },
   notfound: {
-    pill: 'bg-[rgba(154,163,175,0.10)] text-[#9aa3af]',
-    dot: 'box-border border-[1.5px] border-[#9aa3af]',
+    pill: 'bg-[rgba(154,163,175,0.10)] text-stopped',
+    dot: 'box-border border-[1.5px] border-stopped',
   },
   unknown: {
     pill: 'bg-[rgba(217,199,138,0.12)] text-unknown',
@@ -48,7 +48,7 @@ export default function StatusBadge({ status }: { status: Status | string }) {
         <span
           aria-hidden="true"
           data-testid="status-spinner"
-          className="box-border size-[9px] flex-none rounded-full border-2 border-accent border-r-transparent motion-safe:animate-spin"
+          className="box-border size-[9px] flex-none rounded-full border-2 border-accent border-r-transparent motion-safe:animate-[spin_0.8s_linear_infinite]"
         />
       ) : (
         <span aria-hidden="true" className={`size-[7px] flex-none rounded-full ${look.dot}`} />
