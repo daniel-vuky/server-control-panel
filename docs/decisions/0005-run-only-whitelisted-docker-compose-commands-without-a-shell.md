@@ -65,3 +65,7 @@ The project lifecycle flow (#39 to #41, #43) added the lifecycle entries and tig
 - **Timeouts.** Lifecycle commands get the 60 seconds of decision 4. `docker.ping` gets 5 seconds. Read commands keep 15 seconds.
 - **Process group.** Each command starts in its own process group. On timeout or cancel the whole group is sent SIGKILL, because `docker compose` runs as a plugin child that would otherwise outlive the kill. The panel containers run with `init: true` to reap the killed trees.
 - **Masking at action time.** The controller reads the project's `.env` when the action runs and passes those values to the runner as that call's secrets (the per-call masking of the 2026-10-29 note). The outcome message and the activity reason carry the masked text only.
+
+## Note (2026-10-30, manual backup)
+
+The manual backup flow (#48, #50, #51) adds database dump and size actions that run a fixed `sh -c` script inside the database's own container. That is a bounded exception to "without a shell", recorded in [ADR 11](0011-run-fixed-dump-scripts-inside-database-containers.md): the panel still starts only `docker` with a registry argv, the script is a constant, and its only value is a database name checked by the new `{dbname}` slot and used as `"$1"`. The dumps run through `Runner.RunTo`, which streams stdout uncapped and replaces the timeout of decision 4 with a 5-minute stall limit and a 6-hour ceiling; the size reads keep the 15-second read timeout.

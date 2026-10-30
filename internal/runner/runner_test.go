@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -686,5 +687,237 @@ func TestLineWriterLineEnds(t *testing.T) {
 		if !equal(got, tc.want) {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
+	}
+}
+
+// dumpValues fills every slot of DBPgDump.
+var dumpValues = Values{"dir": "/w/a", "file": "/w/a/compose.yaml", "service": "db", "dbname": "shop"}
+
+// setDumpLimits lowers the stall and ceiling of RunTo for one test.
+func setDumpLimits(t *testing.T, stall, ceiling time.Duration) {
+	t.Helper()
+	oldStall, oldCeiling := dumpStall, dumpCeiling
+	dumpStall, dumpCeiling = stall, ceiling
+	t.Cleanup(func() { dumpStall, dumpCeiling = oldStall, oldCeiling })
+}
+
+// countWriter counts the bytes written to it and checks that they are all x.
+type countWriter struct {
+	n     int
+	other bool
+}
+
+func (w *countWriter) Write(p []byte) (int, error) {
+	for _, b := range p {
+		if b != 'x' {
+			w.other = true
+		}
+	}
+	w.n += len(p)
+	return len(p), nil
+}
+
+func TestRunToArgv(t *testing.T) {
+	r := newRunner(t, "")
+	var out strings.Builder
+	if _, err := r.RunTo(context.Background(), StackCompose, DBPgDump, dumpValues, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"compose", "--project-directory", "/w/a", "-f", "/w/a/compose.yaml",
+		"exec", "-T", "db", "sh", "-c", pgDumpScript, "sh", "shop"}
+	// The script spans lines; join the ARG: lines back at the script.
+	got := strings.Split(strings.SplitN(out.String(), "\nENV:", 2)[0], "\nARG:")
+	got[0] = strings.TrimPrefix(got[0], "ARG:")
+	if !equal(got, want) {
+		t.Fatalf("argv\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestRunToStreamsMoreThan4MiB(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_BYTES=5000000\n")
+	var w countWriter
+	stderr, err := r.RunTo(context.Background(), StackCompose, DBPgDump, dumpValues, nil, &w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.n != 5000000 || w.other || len(stderr) != 0 {
+		t.Fatalf("wrote %d bytes (other bytes %v), stderr %q", w.n, w.other, stderr)
+	}
+}
+
+func TestRunToMasksStderr(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_STDERR='mysqldump: Got error: hunter22 denied'\nFAKE_EXIT=2\n")
+	var out strings.Builder
+	stderr, err := r.RunTo(context.Background(), StackCompose, DBMySQLDump, dumpValues, []string{"hunter22"}, &out)
+	var ee *ExitError
+	if !errors.As(err, &ee) || ee.Code != 2 || ee.Stderr != "mysqldump: Got error: •••• denied" {
+		t.Fatalf("err = %#v", err)
+	}
+	if string(stderr) != "mysqldump: Got error: •••• denied\n" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestRunToStderrCapped(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_STDERR=\"$(head -c 5000000 /dev/zero | tr '\\0' e)\"\n")
+	stderr, err := r.RunTo(context.Background(), StackCompose, DBPgDump, dumpValues, nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stderr) != 4<<20 {
+		t.Fatalf("len(stderr) = %d, want %d", len(stderr), 4<<20)
+	}
+}
+
+func TestRunToStall(t *testing.T) {
+	setDumpLimits(t, 300*time.Millisecond, time.Hour)
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_STDOUT=first\nFAKE_GRANDCHILD=1\n")
+	start := time.Now()
+	var out strings.Builder
+	_, err := r.RunTo(context.Background(), StackCompose, DBPgDump, dumpValues, nil, &out)
+	var se *StallError
+	if !errors.As(err, &se) || se.After != 300*time.Millisecond {
+		t.Fatalf("err = %v, want *StallError after 300ms", err)
+	}
+	if se.Error() != "docker command wrote nothing for 300ms" {
+		t.Fatalf("Error() = %q", se.Error())
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	if out.String() != "first\n" {
+		t.Fatalf("stdout = %q", out.String())
+	}
+	waitGone(t, r)
+}
+
+func TestRunToWritingKeepsItAlive(t *testing.T) {
+	setDumpLimits(t, 400*time.Millisecond, time.Hour)
+	// One line every 100 ms for a second: far longer than the stall, never silent for it.
+	r := newRunner(t, "FAKE_QUIET=1\nfor i in 1 2 3 4 5 6 7 8 9 10; do echo x; sleep 0.1; done\n")
+	var out strings.Builder
+	if _, err := r.RunTo(context.Background(), StackCompose, DBPgDump, dumpValues, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "x\n") != 10 {
+		t.Fatalf("stdout = %q", out.String())
+	}
+}
+
+func TestRunToCeiling(t *testing.T) {
+	setDumpLimits(t, time.Hour, 300*time.Millisecond)
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_GRANDCHILD=1\n")
+	start := time.Now()
+	_, err := r.RunTo(context.Background(), StackCompose, DBMongoDump, dumpValues, nil, io.Discard)
+	var te *TimeoutError
+	if !errors.As(err, &te) || te.After != 300*time.Millisecond {
+		t.Fatalf("err = %v, want *TimeoutError after 300ms", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	waitGone(t, r)
+}
+
+func TestRunToCallerCancel(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_SLEEP=5\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := r.RunTo(ctx, StackCompose, DBPgDump, dumpValues, nil, io.Discard)
+	var te *TimeoutError
+	var se *StallError
+	if !errors.Is(err, context.DeadlineExceeded) || errors.As(err, &te) || errors.As(err, &se) {
+		t.Fatalf("err = %v, want the caller's context error", err)
+	}
+}
+
+// errWriter fails every write, like a full disk.
+type errWriter struct{}
+
+var errDiskFull = errors.New("no space left on device")
+
+func (errWriter) Write([]byte) (int, error) { return 0, errDiskFull }
+
+func TestRunToWriterErrorStopsTheDump(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_STDOUT=data\nFAKE_SLEEP=5\n")
+	start := time.Now()
+	_, err := r.RunTo(context.Background(), StackCompose, DBPgDump, dumpValues, nil, errWriter{})
+	if !errors.Is(err, errDiskFull) {
+		t.Fatalf("err = %v, want the write error", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("took %v; the dump was not stopped", d)
+	}
+}
+
+func TestRunToRefusesNonDump(t *testing.T) {
+	r := newRunner(t, "")
+	plain := Values{"dir": "/w/a", "file": "/w/a/compose.yaml"}
+	for _, tc := range []struct {
+		a Action
+		v Values
+	}{
+		{DBPgSize, dumpValues},
+		{DBMySQLSize, dumpValues},
+		{DBMongoSize, dumpValues},
+		{ComposeUp, plain},
+		{ComposeLogs, with(plain, "since", "2026-10-30T10:00:00Z")},
+		{DockerContainers, nil},
+	} {
+		_, err := r.RunTo(context.Background(), StackCompose, tc.a, tc.v, nil, io.Discard)
+		if !errors.Is(err, ErrUnknownCommand) {
+			t.Errorf("%s: err = %v, want ErrUnknownCommand", tc.a, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(r.DataDir, "docker", "started")); !os.IsNotExist(err) {
+		t.Fatal("a refused command ran")
+	}
+}
+
+func TestRunRefusesDump(t *testing.T) {
+	r := newRunner(t, "")
+	for _, a := range []Action{DBPgDump, DBPgDumpOverride, DBPgDumpDefault, DBPgDumpDefaultOverride,
+		DBMySQLDump, DBMySQLDumpOverride, DBMongoDump, DBMongoDumpOverride} {
+		if _, err := r.Run(context.Background(), StackCompose, a, dumpValues, nil); !errors.Is(err, ErrUnknownCommand) {
+			t.Errorf("Run %s: err = %v, want ErrUnknownCommand", a, err)
+		}
+		if err := r.Stream(context.Background(), StackCompose, a, dumpValues, nil, func(string) {}); !errors.Is(err, ErrUnknownCommand) {
+			t.Errorf("Stream %s: err = %v, want ErrUnknownCommand", a, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(r.DataDir, "docker", "started")); !os.IsNotExist(err) {
+		t.Fatal("a refused command ran")
+	}
+}
+
+func TestRunSizeAction(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_STDOUT=7706291\n")
+	v := Values{"dir": "/w/a", "file": "/w/a/compose.yaml", "service": "db"}
+	res, err := r.Run(context.Background(), StackCompose, DBPgSizeDefault, v, nil)
+	if err != nil || string(res.Stdout) != "7706291\n" {
+		t.Fatalf("Run = %q, %v", res.Stdout, err)
+	}
+}
+
+// waitGone fails unless the fake's grandchild, when it started one, is dead.
+func waitGone(t *testing.T, r *Runner) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(r.DataDir, "docker", "grandchild"))
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for alive(pid) {
+		if time.Now().After(deadline) {
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Kill()
+			}
+			t.Fatalf("grandchild %d is still alive", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

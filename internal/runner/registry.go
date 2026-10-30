@@ -50,12 +50,34 @@ const (
 	ComposeLogsTailOverride        Action = "compose.logs.tail.override"
 	ComposeLogsTailService         Action = "compose.logs.tail.service"
 	ComposeLogsTailServiceOverride Action = "compose.logs.tail.service.override"
+
+	// The database actions run a fixed script inside the database's container
+	// (dbscripts.go, ADR 0011). The dumps run only through RunTo; the sizes are
+	// read commands and run through Run. The Default variants take no {dbname}
+	// and use the image's default database.
+	DBPgDump                Action = "db.pg.dump"
+	DBPgDumpOverride        Action = "db.pg.dump.override"
+	DBPgDumpDefault         Action = "db.pg.dump.default"
+	DBPgDumpDefaultOverride Action = "db.pg.dump.default.override"
+	DBPgSize                Action = "db.pg.size"
+	DBPgSizeOverride        Action = "db.pg.size.override"
+	DBPgSizeDefault         Action = "db.pg.size.default"
+	DBPgSizeDefaultOverride Action = "db.pg.size.default.override"
+	DBMySQLDump             Action = "db.mysql.dump"
+	DBMySQLDumpOverride     Action = "db.mysql.dump.override"
+	DBMySQLSize             Action = "db.mysql.size"
+	DBMySQLSizeOverride     Action = "db.mysql.size.override"
+	DBMongoDump             Action = "db.mongo.dump"
+	DBMongoDumpOverride     Action = "db.mongo.dump.override"
+	DBMongoSize             Action = "db.mongo.size"
+	DBMongoSizeOverride     Action = "db.mongo.size.override"
 )
 
 // Values are the arguments of one call, keyed by placeholder name without
 // braces: "dir" for {dir}, "file" for {file}, "override" for {override},
-// "service" for {service}, "since" for {since}. "ids" holds container ids
-// joined by single spaces; argv expands it into one element per id.
+// "service" for {service}, "since" for {since}, "dbname" for {dbname}. "ids"
+// holds container ids joined by single spaces; argv expands it into one element
+// per id.
 type Values map[string]string
 
 // Labels that docker compose and the panel put on containers.
@@ -96,10 +118,11 @@ func label(name string) string {
 type slotKind int
 
 const (
-	kindPath  slotKind = iota // an absolute, clean path
-	kindIDs                   // 1 to maxIDs full container ids, space-joined, one element each
-	kindName                  // a service name
-	kindSince                 // an RFC 3339 UTC timestamp
+	kindPath   slotKind = iota // an absolute, clean path
+	kindIDs                    // 1 to maxIDs full container ids, space-joined, one element each
+	kindName                   // a service name
+	kindSince                  // an RFC 3339 UTC timestamp
+	kindDBName                 // a database name (ValidDBName)
 )
 
 // ValidDBName reports whether name may reach a database dump script as its
@@ -145,6 +168,9 @@ func nameArg(slot string) arg { return arg{slot: slot, kind: kindName} }
 
 // sinceArg is a placeholder whose value must be a UTC RFC 3339 timestamp.
 func sinceArg(slot string) arg { return arg{slot: slot, kind: kindSince} }
+
+// dbNameArg is the {dbname} placeholder, a database name that ValidDBName accepts.
+func dbNameArg() arg { return arg{slot: "dbname", kind: kindDBName} }
 
 func join(parts ...[]arg) []arg {
 	var all []arg
@@ -204,6 +230,44 @@ var registry = map[key][]arg{
 	{StackCompose, ComposeLogsTailOverride}:        join(composeBaseOverride, tailLogs),
 	{StackCompose, ComposeLogsTailService}:         join(composeBase, tailLogs, []arg{nameArg("service")}),
 	{StackCompose, ComposeLogsTailServiceOverride}: join(composeBaseOverride, tailLogs, []arg{nameArg("service")}),
+
+	{StackCompose, DBPgDump}:                dbScript(composeBase, pgDumpScript, true),
+	{StackCompose, DBPgDumpOverride}:        dbScript(composeBaseOverride, pgDumpScript, true),
+	{StackCompose, DBPgDumpDefault}:         dbScript(composeBase, pgDumpScript, false),
+	{StackCompose, DBPgDumpDefaultOverride}: dbScript(composeBaseOverride, pgDumpScript, false),
+	{StackCompose, DBPgSize}:                dbScript(composeBase, pgSizeScript, true),
+	{StackCompose, DBPgSizeOverride}:        dbScript(composeBaseOverride, pgSizeScript, true),
+	{StackCompose, DBPgSizeDefault}:         dbScript(composeBase, pgSizeScript, false),
+	{StackCompose, DBPgSizeDefaultOverride}: dbScript(composeBaseOverride, pgSizeScript, false),
+	{StackCompose, DBMySQLDump}:             dbScript(composeBase, mysqlDumpScript, true),
+	{StackCompose, DBMySQLDumpOverride}:     dbScript(composeBaseOverride, mysqlDumpScript, true),
+	{StackCompose, DBMySQLSize}:             dbScript(composeBase, mysqlSizeScript, true),
+	{StackCompose, DBMySQLSizeOverride}:     dbScript(composeBaseOverride, mysqlSizeScript, true),
+	{StackCompose, DBMongoDump}:             dbScript(composeBase, mongoDumpScript, true),
+	{StackCompose, DBMongoDumpOverride}:     dbScript(composeBaseOverride, mongoDumpScript, true),
+	{StackCompose, DBMongoSize}:             dbScript(composeBase, mongoSizeScript, true),
+	{StackCompose, DBMongoSizeOverride}:     dbScript(composeBaseOverride, mongoSizeScript, true),
+}
+
+// dbScript is a database action: exec -T {service} sh -c <script> sh, then
+// {dbname} when named. The script is one fixed argv element; "sh" fills $0, so
+// the name is "$1" inside it. -T keeps the dump's bytes free of a TTY.
+func dbScript(base []arg, script string, named bool) []arg {
+	a := join(base, lit("exec", "-T"), []arg{nameArg("service")}, lit("sh", "-c", script, "sh"))
+	if named {
+		a = append(a, dbNameArg())
+	}
+	return a
+}
+
+// isDump says whether a is a database dump, which only RunTo runs.
+func isDump(a Action) bool {
+	switch a {
+	case DBPgDump, DBPgDumpOverride, DBPgDumpDefault, DBPgDumpDefaultOverride,
+		DBMySQLDump, DBMySQLDumpOverride, DBMongoDump, DBMongoDumpOverride:
+		return true
+	}
+	return false
 }
 
 // inspectFormat is the --format template of DockerInspect. docker inspect runs
@@ -275,6 +339,10 @@ func argv(s Stack, a Action, v Values) ([]string, error) {
 		case kindSince:
 			if err := checkSince(el.slot, val); err != nil {
 				return nil, err
+			}
+		case kindDBName:
+			if !ValidDBName(val) {
+				return nil, fmt.Errorf("%w: {%s} is not a valid database name", ErrBadValue, el.slot)
 			}
 		default:
 			if err := checkPath(el.slot, val); err != nil {

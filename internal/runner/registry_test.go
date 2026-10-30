@@ -330,3 +330,181 @@ func TestValidDBName(t *testing.T) {
 		}
 	}
 }
+
+// dbExecArgs is the argv of a database script action: the compose head, then
+// exec -T {service} sh -c <script> sh, then the name when there is one.
+func dbExecArgs(head []string, script string, name ...string) []string {
+	return cat(cat(head, "exec", "-T", "db", "sh", "-c", script, "sh"), name...)
+}
+
+// checkDBArgv checks the plain and override variants of a database action.
+// named says whether the action takes the {dbname} slot.
+func checkDBArgv(t *testing.T, plain, over Action, script string, named bool) {
+	t.Helper()
+	pv, ov := with(plainVals, "service", "db"), with(overVals, "service", "db")
+	var name []string
+	if named {
+		pv, ov = with(pv, "dbname", "shop"), with(ov, "dbname", "shop")
+		name = []string{"shop"}
+	}
+	for _, tc := range []struct {
+		a    Action
+		v    Values
+		want []string
+	}{
+		{plain, pv, dbExecArgs(baseArgs, script, name...)},
+		{over, ov, dbExecArgs(overArgs, script, name...)},
+	} {
+		got, err := argv(StackCompose, tc.a, tc.v)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.a, err)
+		}
+		if !equal(got, tc.want) {
+			t.Errorf("%s argv\n got %q\nwant %q", tc.a, got, tc.want)
+		}
+	}
+	if string(over) != string(plain)+".override" {
+		t.Errorf("override of %s is named %s", plain, over)
+	}
+}
+
+func TestArgvDBPgDump(t *testing.T) {
+	checkDBArgv(t, DBPgDump, DBPgDumpOverride, pgDumpScript, true)
+	if DBPgDump != "db.pg.dump" {
+		t.Fatalf("name %s", DBPgDump)
+	}
+}
+
+func TestArgvDBPgDumpDefault(t *testing.T) {
+	checkDBArgv(t, DBPgDumpDefault, DBPgDumpDefaultOverride, pgDumpScript, false)
+	if DBPgDumpDefault != "db.pg.dump.default" {
+		t.Fatalf("name %s", DBPgDumpDefault)
+	}
+}
+
+func TestArgvDBPgSize(t *testing.T) {
+	checkDBArgv(t, DBPgSize, DBPgSizeOverride, pgSizeScript, true)
+	if DBPgSize != "db.pg.size" {
+		t.Fatalf("name %s", DBPgSize)
+	}
+}
+
+func TestArgvDBPgSizeDefault(t *testing.T) {
+	checkDBArgv(t, DBPgSizeDefault, DBPgSizeDefaultOverride, pgSizeScript, false)
+	if DBPgSizeDefault != "db.pg.size.default" {
+		t.Fatalf("name %s", DBPgSizeDefault)
+	}
+}
+
+func TestArgvDBMySQLDump(t *testing.T) {
+	checkDBArgv(t, DBMySQLDump, DBMySQLDumpOverride, mysqlDumpScript, true)
+	if DBMySQLDump != "db.mysql.dump" {
+		t.Fatalf("name %s", DBMySQLDump)
+	}
+}
+
+func TestArgvDBMySQLSize(t *testing.T) {
+	checkDBArgv(t, DBMySQLSize, DBMySQLSizeOverride, mysqlSizeScript, true)
+	if DBMySQLSize != "db.mysql.size" {
+		t.Fatalf("name %s", DBMySQLSize)
+	}
+}
+
+func TestArgvDBMongoDump(t *testing.T) {
+	checkDBArgv(t, DBMongoDump, DBMongoDumpOverride, mongoDumpScript, true)
+	if DBMongoDump != "db.mongo.dump" {
+		t.Fatalf("name %s", DBMongoDump)
+	}
+}
+
+func TestArgvDBMongoSize(t *testing.T) {
+	checkDBArgv(t, DBMongoSize, DBMongoSizeOverride, mongoSizeScript, true)
+	if DBMongoSize != "db.mongo.size" {
+		t.Fatalf("name %s", DBMongoSize)
+	}
+}
+
+// namedDBActions are the database actions that take {dbname}.
+var namedDBActions = []Action{
+	DBPgDump, DBPgDumpOverride, DBPgSize, DBPgSizeOverride,
+	DBMySQLDump, DBMySQLDumpOverride, DBMySQLSize, DBMySQLSizeOverride,
+	DBMongoDump, DBMongoDumpOverride, DBMongoSize, DBMongoSizeOverride,
+}
+
+// dbVals fills every slot of database action a.
+func dbVals(a Action, name string) Values {
+	v := with(plainVals, "service", "db", "dbname", name)
+	if strings.HasSuffix(string(a), ".override") {
+		v = with(v, "override", "/w/shop/compose.override.yaml")
+	}
+	return v
+}
+
+func TestDBNameSlotRejects(t *testing.T) {
+	bad := map[string]string{
+		"flag":      "-x",
+		"long":      "--all-databases",
+		"space":     "a b",
+		"semi":      "a;b",
+		"single":    "'",
+		"double":    `"`,
+		"backtick":  "a`id`",
+		"subst":     "a$(id)",
+		"newline":   "a\nb",
+		"NUL":       "a\x00b",
+		"65 chars":  strings.Repeat("a", 65),
+		"empty":     "",
+		"leading .": ".a",
+		"leading $": "$a",
+	}
+	for _, a := range namedDBActions {
+		for name, val := range bad {
+			if _, err := argv(StackCompose, a, dbVals(a, val)); !errors.Is(err, ErrBadValue) {
+				t.Errorf("%s %s: err = %v, want ErrBadValue", a, name, err)
+			}
+		}
+		for _, ok := range []string{"shop", "_x", "a.b-c$d", strings.Repeat("a", 64)} {
+			if _, err := argv(StackCompose, a, dbVals(a, ok)); err != nil {
+				t.Errorf("%s %q: %v", a, ok, err)
+			}
+		}
+		v := dbVals(a, "shop")
+		delete(v, "dbname")
+		if _, err := argv(StackCompose, a, v); !errors.Is(err, ErrBadValue) {
+			t.Errorf("%s without dbname: err = %v, want ErrBadValue", a, err)
+		}
+		if _, err := argv(StackCompose, a, with(dbVals(a, "shop"), "service", "-it")); !errors.Is(err, ErrBadValue) {
+			t.Errorf("%s with a flag service: err = %v, want ErrBadValue", a, err)
+		}
+	}
+}
+
+func TestDefaultActionsHaveNoDBName(t *testing.T) {
+	for _, a := range []Action{DBPgDumpDefault, DBPgDumpDefaultOverride, DBPgSizeDefault, DBPgSizeDefaultOverride} {
+		for _, el := range registry[key{StackCompose, a}] {
+			if el.slot == "dbname" {
+				t.Errorf("%s has a {dbname} slot", a)
+			}
+		}
+		v := dbVals(a, "shop")
+		if _, err := argv(StackCompose, a, v); !errors.Is(err, ErrBadValue) {
+			t.Errorf("%s with dbname: err = %v, want ErrBadValue", a, err)
+		}
+		delete(v, "dbname")
+		got, err := argv(StackCompose, a, v)
+		if err != nil {
+			t.Fatalf("%s: %v", a, err)
+		}
+		if got[len(got)-1] != "sh" {
+			t.Errorf("%s argv ends %q, want the $0 placeholder sh", a, got[len(got)-1])
+		}
+	}
+}
+
+func TestTimeoutForDBSize(t *testing.T) {
+	for _, a := range []Action{DBPgSize, DBPgSizeDefaultOverride, DBMySQLSize, DBMongoSizeOverride} {
+		if got := timeoutFor(a, 15*time.Second); got != 15*time.Second {
+			t.Errorf("timeoutFor(%s) = %v, want the read timeout", a, got)
+		}
+	}
+}
