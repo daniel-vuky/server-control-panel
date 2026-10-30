@@ -90,7 +90,7 @@ describe('SettingsPage', () => {
     )
     renderPage()
     expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Loading workspaces')
+    expect(screen.getByText('Loading workspaces…')).toBeInTheDocument()
   })
 
   it('lists each workspace with its path and summary line', async () => {
@@ -154,7 +154,6 @@ describe('SettingsPage', () => {
     const issueUrl = (n: number) =>
       `https://github.com/daniel-vuky/server-control-panel/issues/${n}`
     for (const [name, issue] of [
-      ['Google Drive', 3],
       ['Alerts', 8],
       ['Backup defaults', 6],
     ] as const) {
@@ -165,6 +164,7 @@ describe('SettingsPage', () => {
         issueUrl(issue),
       )
     }
+    expect(screen.getByRole('region', { name: 'Google Drive' })).not.toHaveTextContent('Coming in')
     await screen.findByText('No workspace yet')
   })
 

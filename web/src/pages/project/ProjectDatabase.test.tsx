@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeEventSource } from '../../test/fakeEventSource'
-import { makeProject, pushState, renderProject } from '../../test/projects'
+import { makeDatabase, makeProject, pushState, renderProject } from '../../test/projects'
 
 beforeEach(() => {
   FakeEventSource.instances = []
@@ -18,27 +18,23 @@ describe('database and backup tab', () => {
     pushState([
       makeProject({
         databases: [
-          {
-            type: 'postgresql',
+          makeDatabase({
             name: 'shop_production',
-            locationKind: 'container',
-            location: 'db',
             sources: ['DATABASE_URL', 'POSTGRES_DB'],
-          },
-          {
+          }),
+          makeDatabase({
             type: 'sqlite',
             name: 'cache',
             locationKind: 'file',
             location: './data/cache.db',
-            sources: [],
-          },
-          {
+          }),
+          makeDatabase({
             type: 'mysql',
             name: 'legacy',
             locationKind: 'external',
             location: 'db.example.com',
             sources: ['MYSQL_HOST'],
-          },
+          }),
         ],
       }),
     ])

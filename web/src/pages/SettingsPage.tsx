@@ -10,6 +10,7 @@ import { plural } from '../lib/plural'
 import { formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
 import { useRescan } from '../lib/useRescan'
+import DriveCard from './settings/DriveCard'
 
 const card = 'rounded-[10px] border border-border bg-surface'
 const rowButton =
@@ -32,9 +33,7 @@ export default function SettingsPage() {
 
       <WorkspacesCard />
 
-      <Soon id="drive-title" title="Google Drive" issues={[3]}>
-        Access is limited to files created by the app.
-      </Soon>
+      <DriveCard />
       <Soon id="alert-title" title="Alerts" issues={[8]}>
         Where the panel sends alerts.
       </Soon>

@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Database } from '../api/types.gen'
+import { makeDatabase } from '../test/projects'
 import { databasePlace, formatDatabase } from './databases'
 
-const db = (type: string, locationKind: string, location = ''): Database => ({
-  type,
-  name: 'app',
-  locationKind,
-  location,
-  sources: [],
-})
+const db = (type: string, locationKind: string, location = ''): Database =>
+  makeDatabase({ type, name: 'app', locationKind, location })
 
 describe('formatDatabase', () => {
   it.each<[Database, string]>([

@@ -4,7 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { projectRoute } from '../../app/App'
 import { formatLastScan } from '../../lib/time'
 import { FakeEventSource } from '../../test/fakeEventSource'
-import { makeContainer, makeProject, pushState, renderProject } from '../../test/projects'
+import {
+  makeContainer,
+  makeDatabase,
+  makeProject,
+  pushState,
+  renderProject,
+} from '../../test/projects'
 import { renderApp } from '../../test/renderApp'
 import { useProjectOutlet } from './projectContext'
 
@@ -224,15 +230,10 @@ describe('project page', () => {
   })
 
   it('database tab shows a count badge', () => {
-    const db = {
-      type: 'postgresql',
-      name: 'shop',
-      locationKind: 'container',
-      location: 'db',
-      sources: [],
-    }
     renderProject('/projects/1')
-    pushState([{ ...shop, databases: [db, { ...db, name: 'audit' }] }])
+    pushState([
+      { ...shop, databases: [makeDatabase({ name: 'shop' }), makeDatabase({ name: 'audit' })] },
+    ])
     const tab = screen.getByRole('tab', { name: /Database & Backup/ })
     expect(within(tab).getByText('2')).toBeInTheDocument()
     expect(tab).toHaveAccessibleName('Database & Backup, 2 databases')

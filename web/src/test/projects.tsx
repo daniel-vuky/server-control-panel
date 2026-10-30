@@ -1,6 +1,6 @@
 import { act } from '@testing-library/react'
 import { useLocation } from 'react-router'
-import type { Container, Project } from '../api/types.gen'
+import type { Backup, Container, Database, DriveStatus, Project } from '../api/types.gen'
 import { projectRoute } from '../app/App'
 import { FakeEventSource } from './fakeEventSource'
 import { renderApp } from './renderApp'
@@ -28,6 +28,19 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     containers: [],
     ...overrides,
   }
+}
+
+/** makeDatabase is a container Postgres database; key defaults from type, location and name, backup to null. */
+export function makeDatabase(overrides: Partial<Database> = {}): Database {
+  const d = {
+    type: 'postgresql',
+    name: 'shop',
+    locationKind: 'container',
+    location: 'db',
+    sources: [],
+    ...overrides,
+  }
+  return { key: `${d.type}:${d.location}:${d.name}`, backup: null, ...d }
 }
 
 /** makeContainer is a running container of service `service`; overrides win. */
@@ -64,11 +77,20 @@ export function renderProject(path: string) {
 }
 
 /** pushState sends one live state on the app's /api/events source. */
-export function pushState(projects: Project[], dockerUp = true) {
+export function pushState(
+  projects: Project[],
+  dockerUp = true,
+  extra: { backups?: Backup[]; drive?: DriveStatus } = {},
+) {
   act(() => {
     const es = FakeEventSource.latest('/api/events')
     if (!es) throw new Error('no /api/events source')
     if (es.readyState === FakeEventSource.CONNECTING) es.open()
-    es.emit('state', { dockerUp, projects })
+    es.emit('state', {
+      dockerUp,
+      projects,
+      backups: extra.backups ?? [],
+      drive: extra.drive ?? { state: 'not_connected', email: '', folder: null, reason: '' },
+    })
   })
 }

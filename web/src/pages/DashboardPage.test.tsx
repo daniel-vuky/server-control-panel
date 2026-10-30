@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project, Workspace } from '../api/types.gen'
 import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
+import { makeDatabase } from '../test/projects'
 import { renderApp } from '../test/renderApp'
 import DashboardPage from './DashboardPage'
 
@@ -17,8 +18,8 @@ const projects: Project[] = [
     status: 'running',
     actions: ['stop', 'restart'],
     databases: [
-      { type: 'postgresql', name: 'shop', locationKind: 'container', location: 'db', sources: [] },
-      { type: 'sqlite', name: 'cache', locationKind: 'file', location: './cache.db', sources: [] },
+      makeDatabase({ name: 'shop' }),
+      makeDatabase({ type: 'sqlite', name: 'cache', locationKind: 'file', location: './cache.db' }),
     ],
     missingSince: '',
     publicDomain: '',
