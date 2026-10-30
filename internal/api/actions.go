@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -31,12 +30,7 @@ func (s *server) projectAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, msgNotTracked)
 		return
 	}
-	actor := ""
-	if ident, ok := auth.FromContext(r.Context()); ok {
-		actor = ident.Email
-	}
-
-	res, err := s.Control.Do(r.Context(), id, a, actor)
+	res, err := s.Control.Do(r.Context(), id, a, actor(r))
 	var refusal *control.Refusal
 	switch {
 	case err == nil:

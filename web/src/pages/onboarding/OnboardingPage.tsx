@@ -56,7 +56,13 @@ function isScanBusy(body: unknown): body is ScanBusy {
 const message = (err: unknown) =>
   err instanceof Error && err.message ? err.message : 'Something went wrong. Try again.'
 
-const emptyProgress: ScanProgress = { examined: 0, total: 0, current: '' }
+const emptyProgress: ScanProgress = {
+  examined: 0,
+  total: 0,
+  current: '',
+  workspace: 0,
+  workspaces: 0,
+}
 
 /** OnboardingPage is /onboarding: design 03 steps 1–2. */
 export default function OnboardingPage() {

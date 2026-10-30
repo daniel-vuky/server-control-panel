@@ -153,9 +153,13 @@ func TestProjectsIncludeActionsAndInFlight(t *testing.T) {
 	f.holdLifecycle(t)
 	done := postAsync(h, actionURL(alpha, "stop"))
 	waitLocked(t, d, alpha)
-	got = decode[[]Project](t, do(h, http.MethodGet, "/api/projects"))
+	rec = do(h, http.MethodGet, "/api/projects")
+	got = decode[[]Project](t, rec)
 	if got[0].Status != "stopping" || len(got[0].Actions) != 0 {
 		t.Errorf("alpha while stopping = %+v, want stopping with no actions", got[0])
+	}
+	if !strings.Contains(rec.Body.String(), `"actions":[]`) {
+		t.Errorf("body = %s, want alpha's actions as [] while stopping", rec.Body.String())
 	}
 	f.releaseLifecycle()
 	<-done

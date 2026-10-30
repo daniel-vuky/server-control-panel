@@ -20,6 +20,7 @@ const projects: Project[] = [
       { type: 'postgresql', name: 'shop', locationKind: 'container', location: 'db', sources: [] },
       { type: 'sqlite', name: 'cache', locationKind: 'file', location: './cache.db', sources: [] },
     ],
+    missingSince: '',
   },
   {
     id: 2,
@@ -30,6 +31,7 @@ const projects: Project[] = [
     status: 'partial',
     actions: [],
     databases: [],
+    missingSince: '',
   },
 ]
 

@@ -631,7 +631,7 @@ func TestSSELateSubscriber(t *testing.T) {
 	if len(events) != 2 || events[0].kind != "progress" || events[1].kind != "end" {
 		t.Fatalf("events = %+v, want progress then end", events)
 	}
-	if events[0].data != `{"examined":1,"total":1,"current":""}` {
+	if events[0].data != `{"examined":1,"total":1,"current":"","workspace":0,"workspaces":0}` {
 		t.Errorf("snapshot = %q", events[0].data)
 	}
 	if events[1].data != `{"state":"done"}` {

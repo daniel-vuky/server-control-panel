@@ -11,7 +11,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -86,16 +85,12 @@ func (s *server) startScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	by := ""
-	if id, ok := auth.FromContext(r.Context()); ok {
-		by = id.Email
-	}
-	id, err := s.Scans.Start(r.Context(), resolved, req.Depth, by)
+	id, err := s.Scans.Start(r.Context(), resolved, req.Depth, actor(r))
 	if err != nil {
 		var busy *scan.BusyError
 		if errors.As(err, &busy) {
 			refuse(resolved, reasonBusy)
-			writeJSON(w, http.StatusConflict, ScanBusy{Error: msgScanBusy, ID: busy.ID, Path: busy.Path, Depth: busy.Depth})
+			writeJSON(w, http.StatusConflict, toBusy(busy))
 			return
 		}
 		s.internalError(w, r, err)
@@ -128,12 +123,14 @@ func (s *server) getScan(w http.ResponseWriter, r *http.Request) {
 		progress = storedProgress(job)
 	}
 	view := ScanJob{
-		ID:       job.ID,
-		State:    job.State,
-		Path:     job.Target,
-		Depth:    job.Depth,
-		Progress: progress,
-		Error:    job.Error,
+		ID:           job.ID,
+		State:        job.State,
+		Path:         job.Target,
+		Depth:        job.Depth,
+		Rescan:       len(job.Rescan) > 0,
+		WorkspaceIDs: nonNil(job.Rescan),
+		Progress:     progress,
+		Error:        job.Error,
 	}
 	if job.State == stateDone {
 		res, err := jobResult(job)
@@ -146,10 +143,11 @@ func (s *server) getScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
-// trackScan is POST /api/scans/{id}/track. It stores the scanned folder as a
-// workspace and every row of the result as a tracked or ignored project, in
-// one transaction. Every answer after the job is found is recorded as a
-// scan.track: ok, refused (409 or 422, with the message) or failed (500).
+// trackScan is POST /api/scans/{id}/track. For a first-time scan it stores
+// the scanned folder as a workspace and every row of the result as a tracked
+// or ignored project, in one transaction; a rescan job goes to trackRescan.
+// Every answer after the job is found is recorded as a scan.track: ok,
+// refused (409 or 422, with the message) or failed (500).
 func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.loadJob(w, r)
 	if !ok {
@@ -176,6 +174,10 @@ func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 	res, err := jobResult(job)
 	if err != nil {
 		fail(err)
+		return
+	}
+	if len(job.Rescan) > 0 {
+		s.trackRescan(w, r, job, res, req.Projects)
 		return
 	}
 	projects, fe := newProjects(res.Rows, req.Projects)
@@ -228,6 +230,7 @@ func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.record(r, rec, store.ResultOK, "")
+	s.Hub.Refresh()
 	s.log.Info("workspace added", "workspace", wsID, "path", job.Target, "tracked", added, "projects", len(projects))
 	writeJSON(w, http.StatusOK, TrackResponse{WorkspaceID: wsID, Added: added})
 }
@@ -253,13 +256,9 @@ func newProjects(rows []scan.Row, items []TrackItem) ([]store.NewProject, *Field
 		if !ok {
 			return nil, mismatch
 		}
-		name := strings.TrimSpace(it.DisplayName)
-		if n := utf8.RuneCountInString(name); n < 1 || n > maxDisplayName {
-			return nil, &FieldError{
-				Error: fmt.Sprintf("The name of %s must be 1 to %d characters.", row.Path, maxDisplayName),
-				Field: "projects",
-				Code:  "invalid_name",
-			}
+		name, fe := displayName(row.Path, it.DisplayName)
+		if fe != nil {
+			return nil, fe
 		}
 		ps = append(ps, store.NewProject{
 			Path:           row.Path,
@@ -273,6 +272,24 @@ func newProjects(rows []scan.Row, items []TrackItem) ([]store.NewProject, *Field
 		})
 	}
 	return ps, nil
+}
+
+// displayName trims a display name and checks it is 1 to 80 characters.
+func displayName(path, raw string) (string, *FieldError) {
+	name := strings.TrimSpace(raw)
+	if n := utf8.RuneCountInString(name); n < 1 || n > maxDisplayName {
+		return "", &FieldError{
+			Error: fmt.Sprintf("The name of %s must be 1 to %d characters.", path, maxDisplayName),
+			Field: "projects",
+			Code:  "invalid_name",
+		}
+	}
+	return name, nil
+}
+
+// toBusy is the 409 body for a running scan or rescan.
+func toBusy(b *scan.BusyError) ScanBusy {
+	return ScanBusy{Error: msgScanBusy, ID: b.ID, Path: b.Path, Depth: b.Depth, Rescan: b.Rescan}
 }
 
 // loadJob reads the scan job named by the {id} path value. It writes a 404
@@ -328,7 +345,13 @@ func jobResult(job store.Job) (scan.Result, error) {
 }
 
 func toProgress(p scan.Progress) ScanProgress {
-	return ScanProgress{Examined: p.Examined, Total: p.Total, Current: p.Current}
+	return ScanProgress{
+		Examined:   p.Examined,
+		Total:      p.Total,
+		Current:    p.Current,
+		Workspace:  p.Workspace,
+		Workspaces: p.Workspaces,
+	}
 }
 
 func toResult(r scan.Result) *ScanResult {
@@ -343,6 +366,9 @@ func toResult(r scan.Result) *ScanResult {
 			Services:     row.Services,
 			Databases:    toDatabases(row.Databases),
 			Warning:      row.Warning,
+			WorkspaceID:  row.WorkspaceID,
+			New:          row.New,
+			Ignored:      row.Ignored,
 		})
 	}
 	return &ScanResult{
@@ -351,6 +377,12 @@ func toResult(r scan.Result) *ScanResult {
 		AlreadyTracked: r.AlreadyTracked,
 		Ignored:        r.Ignored,
 		Warnings:       nonNil(r.Warnings),
+		New:            r.New,
+		IgnoredFound:   r.IgnoredFound,
+		Refreshed:      r.Refreshed,
+		NotFound:       r.NotFound,
+		NotFoundPaths:  nonNil(r.NotFoundPaths),
+		Workspaces:     nonNil(r.Workspaces),
 	}
 }
 

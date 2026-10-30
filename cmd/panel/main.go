@@ -69,8 +69,13 @@ func run(log *slog.Logger) int {
 	}()
 
 	docker := &runner.Runner{Bin: "docker", DataDir: cfg.DataDir, Timeout: readTimeout}
+	guard := roots.New(cfg.WorkspaceRoots, log)
 	scans := scan.NewManager(st, docker, log)
 	ctl, hub := control.New(st, docker, log)
+	// A rescan checks every workspace with the guard, and its Not found marks
+	// and refreshes reach /api/events at once.
+	scans.SetGuard(guard)
+	scans.SetOnChange(hub.Refresh)
 
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
@@ -83,7 +88,7 @@ func run(log *slog.Logger) int {
 			Version:  version,
 			Verifier: verifier,
 			Web:      web.Handler(),
-			Guard:    roots.New(cfg.WorkspaceRoots, log),
+			Guard:    guard,
 			Store:    st,
 			Scans:    scans,
 			Docker:   docker,

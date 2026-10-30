@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ScanJob, ScanRow } from '../../api/types.gen'
+import type { ScanJob, ScanResult, ScanRow } from '../../api/types.gen'
 import { AppRoutes } from '../../app/App'
 
 type Listener = (e: MessageEvent) => void
@@ -75,6 +75,9 @@ const rows: ScanRow[] = [
       },
     ],
     warning: '',
+    workspaceId: 0,
+    new: false,
+    ignored: false,
   },
   {
     path: '/srv/panel',
@@ -85,6 +88,9 @@ const rows: ScanRow[] = [
     services: 1,
     databases: [],
     warning: '',
+    workspaceId: 0,
+    new: false,
+    ignored: false,
   },
   {
     path: '/srv/broken',
@@ -96,17 +102,38 @@ const rows: ScanRow[] = [
     databases: [],
     warning:
       'docker compose config failed: required variable DB_NAME is missing.\nAnother folder uses the compose project name broken; Docker treats them as one project.',
+    workspaceId: 0,
+    new: false,
+    ignored: false,
   },
 ]
+
+/** result is a first-time scan's result: the rescan counts are zero. */
+const result = (over: Partial<ScanResult> = {}): ScanResult => ({
+  rows,
+  foldersScanned: 5,
+  alreadyTracked: 0,
+  ignored: 0,
+  warnings: [],
+  new: 0,
+  ignoredFound: 0,
+  refreshed: 0,
+  notFound: 0,
+  notFoundPaths: [],
+  workspaces: [],
+  ...over,
+})
 
 const job = (over: Partial<ScanJob> = {}): ScanJob => ({
   id: 7,
   state: 'done',
   path: '/srv',
   depth: 1,
-  progress: { examined: 5, total: 5, current: '' },
+  rescan: false,
+  workspaceIds: [],
+  progress: { examined: 5, total: 5, current: '', workspace: 0, workspaces: 0 },
   error: '',
-  result: { rows, foldersScanned: 5, alreadyTracked: 0, ignored: 0, warnings: [] },
+  result: result(),
   ...over,
 })
 
@@ -336,9 +363,7 @@ describe('onboarding, step 2', () => {
   ])(
     'with %i tracked and %i ignored, says what is not shown',
     async (alreadyTracked, ignored, s) => {
-      await scanToResults(
-        job({ result: { rows, foldersScanned: 5, alreadyTracked, ignored, warnings: [] } }),
-      )
+      await scanToResults(job({ result: result({ alreadyTracked, ignored }) }))
       expect(text(s)).toBeInTheDocument()
     },
   )
@@ -346,7 +371,7 @@ describe('onboarding, step 2', () => {
   it('says 1 project for a single row', async () => {
     await scanToResults(
       job({
-        result: { rows: [rows[0]], foldersScanned: 1, alreadyTracked: 0, ignored: 0, warnings: [] },
+        result: result({ rows: [rows[0]], foldersScanned: 1 }),
       }),
     )
     expect(screen.getByRole('heading', { name: 'Found 1 project' })).toBeInTheDocument()
@@ -469,7 +494,7 @@ describe('onboarding, nothing found', () => {
   const empty = (depth: number) =>
     job({
       depth,
-      result: { rows: [], foldersScanned: 4, alreadyTracked: 0, ignored: 0, warnings: [] },
+      result: result({ rows: [], foldersScanned: 4 }),
     })
 
   it('at depth 1 offers Scan again at depth 2, which posts depth 2', async () => {
