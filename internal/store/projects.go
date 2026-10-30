@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 )
@@ -45,6 +46,9 @@ type Tracked struct {
 	ComposeFiles    []string // base names: the main file, then the override
 	Services        []string
 	Databases       []project.Database
+	// MissingSince is set when a rescan could not find the folder; nil when
+	// the project is present.
+	MissingSince *time.Time
 }
 
 // TrackedProjects lists the tracked projects, oldest first.
@@ -75,9 +79,18 @@ func (s *Store) tracked(ctx context.Context, only int64) ([]Tracked, error) {
 		return nil, fmt.Errorf("store: list tracked projects: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	return trackedIn(ctx, tx, only)
+}
 
+// queryer is what a transaction offers for reads.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// trackedIn is tracked on a transaction the caller owns.
+func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, workspace_id, display_name, path, compose_project, self, compose_files, details FROM projects
+		`SELECT id, workspace_id, display_name, path, compose_project, self, compose_files, details, missing_since FROM projects
 		 WHERE state = 'tracked' AND (? = 0 OR id = ?) ORDER BY id`, only, only)
 	if err != nil {
 		return nil, fmt.Errorf("store: list tracked projects: %w", err)
@@ -90,9 +103,17 @@ func (s *Store) tracked(ctx context.Context, only int64) ([]Tracked, error) {
 			t       Tracked
 			files   string
 			details string
+			missing sql.NullString
 		)
-		if err := rows.Scan(&t.ID, &t.WorkspaceID, &t.DisplayName, &t.Path, &t.ComposeProject, &t.Self, &files, &details); err != nil {
+		if err := rows.Scan(&t.ID, &t.WorkspaceID, &t.DisplayName, &t.Path, &t.ComposeProject, &t.Self, &files, &details, &missing); err != nil {
 			return nil, fmt.Errorf("store: list tracked projects: %w", err)
+		}
+		if missing.Valid {
+			m, err := parseTime(missing.String)
+			if err != nil {
+				return nil, fmt.Errorf("store: project %d missing_since: %w", t.ID, err)
+			}
+			t.MissingSince = &m
 		}
 		if err := json.Unmarshal([]byte(files), &t.ComposeFiles); err != nil {
 			return nil, fmt.Errorf("store: project %d compose files: %w", t.ID, err)
