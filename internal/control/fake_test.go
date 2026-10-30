@@ -14,11 +14,14 @@ import (
 )
 
 // reply is one canned answer of the fake. A non-nil gate blocks the call until
-// it is closed; panic makes the call panic.
+// it is closed; delay then holds it a while longer; a non-nil hook runs next;
+// panic makes the call panic.
 type reply struct {
 	stdout string
 	err    error
 	gate   chan struct{}
+	delay  time.Duration
+	hook   func()
 	panic  bool
 }
 
@@ -51,6 +54,14 @@ func (f *fakeCmd) on(a runner.Action, rs ...reply) *fakeCmd {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.queues[a] = append(f.queues[a], rs...)
+	return f
+}
+
+// set replaces the queue of action a with rs.
+func (f *fakeCmd) set(a runner.Action, rs ...reply) *fakeCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queues[a] = rs
 	return f
 }
 
@@ -90,6 +101,10 @@ func (f *fakeCmd) Run(_ context.Context, s runner.Stack, a runner.Action, v runn
 	if r.gate != nil {
 		<-r.gate
 	}
+	time.Sleep(r.delay)
+	if r.hook != nil {
+		r.hook()
+	}
 	if r.panic {
 		panic("fake: " + string(a))
 	}
@@ -110,6 +125,18 @@ func (f *fakeCmd) callsOf(a runner.Action) []fakeCall {
 		}
 	}
 	return out
+}
+
+// count returns how many calls of action a the fake received.
+func (f *fakeCmd) count(a runner.Action) int {
+	return len(f.callsOf(a))
+}
+
+// maxInFlight returns the most calls, of any action, that were in flight at once.
+func (f *fakeCmd) maxInFlight() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.peak
 }
 
 // running returns how many calls of action a are in flight.
