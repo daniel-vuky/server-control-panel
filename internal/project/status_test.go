@@ -69,6 +69,8 @@ func TestStatusValues(t *testing.T) {
 	for s, want := range map[Status]string{
 		StatusRunning: "running", StatusPartial: "partial", StatusStopped: "stopped",
 		StatusError: "error", StatusUnknown: "unknown",
+		StatusStarting: "starting", StatusStopping: "stopping",
+		StatusRestarting: "restarting", StatusNotFound: "notfound",
 	} {
 		if string(s) != want {
 			t.Fatalf("%q != %q", s, want)
@@ -126,5 +128,32 @@ func TestSelfProject(t *testing.T) {
 	}
 	if got := SelfProject(nil); got != "" {
 		t.Fatalf("SelfProject = %q, want empty", got)
+	}
+}
+
+func TestAnyActive(t *testing.T) {
+	oneOffRunning := running("migrate")
+	oneOffRunning.OneOff = true
+	otherRunning := running("web")
+	otherRunning.Project = "other"
+
+	tests := []struct {
+		name string
+		cs   []Container
+		want bool
+	}{
+		{"running", []Container{running("web")}, true},
+		{"restarting", []Container{c("restarting")}, true},
+		{"exited 1 only", []Container{exited("web", 1)}, false},
+		{"exited 0 plus a one-off running", []Container{exited("web", 0), oneOffRunning}, false},
+		{"another project running", []Container{otherRunning}, false},
+		{"no containers", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AnyActive(tt.cs, "shop"); got != tt.want {
+				t.Fatalf("AnyActive = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
