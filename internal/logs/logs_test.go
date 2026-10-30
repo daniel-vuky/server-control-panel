@@ -705,6 +705,69 @@ func TestFollowErrorEndsError(t *testing.T) {
 	waitReserved(t, m, 0)
 }
 
+// copyGoroutineRunner calls onLine on a goroutine of its own, as exec's copy
+// goroutine does, so run's recover cannot see a panic in it. A panic that
+// escapes onLine is sent on escaped instead of crashing the test binary.
+type copyGoroutineRunner struct {
+	*fakeRunner
+	escaped chan any
+}
+
+func (r copyGoroutineRunner) Stream(ctx context.Context, s runner.Stack, a runner.Action, v runner.Values, secrets []string, onLine func(string)) error {
+	return r.fakeRunner.Stream(ctx, s, a, v, secrets, func(line string) {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer func() {
+				if p := recover(); p != nil {
+					r.escaped <- p
+				}
+			}()
+			onLine(line)
+		}()
+		<-done
+	})
+}
+
+func TestFollowLinePanicEndsError(t *testing.T) {
+	f := newFake("")
+	r := copyGoroutineRunner{fakeRunner: f, escaped: make(chan any, 1)}
+	m := New(r, running("shop").read, func() time.Time { return clock })
+	m.batchEvery = 5 * time.Millisecond
+	tr := tracked(t, 1, "shop")
+	sub, err := m.Subscribe(context.Background(), tr, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next(t, sub)
+	f.waitStarted(t)
+
+	old := parseLine
+	parseLine = func(string, string, []project.Container) (Line, bool) { panic("parse boom") }
+	t.Cleanup(func() { parseLine = old })
+	f.emit(t, raw("web-1", t0, "hello"))
+	parseLine = old
+
+	select {
+	case p := <-r.escaped:
+		t.Fatalf("a panic escaped onLine: %v", p)
+	default:
+	}
+	_, end := drainEnd(t, sub)
+	if end.Reason != ReasonError || end.Message != "Reading the logs failed." {
+		t.Fatalf("end = %+v, want the fixed error", end)
+	}
+	f.waitCtxDone(t)
+	waitReserved(t, m, 0)
+	// The key is free.
+	c, err := m.Subscribe(context.Background(), tr, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next(t, c)
+	c.Cancel()
+}
+
 func TestBacklogErrorEndsError(t *testing.T) {
 	f := newFake("")
 	f.backlogErr = &runner.ExitError{Code: 1, Stderr: "no such file devpassword"}

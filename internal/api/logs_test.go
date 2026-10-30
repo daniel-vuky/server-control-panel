@@ -41,7 +41,7 @@ func nextLogEvent(t *testing.T, r *sseReader) sseEvent {
 		if !ok {
 			t.Fatal("stream ended early")
 		}
-		if ev.kind != ":" {
+		if ev.kind != "ping" {
 			return ev
 		}
 	}

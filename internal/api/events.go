@@ -10,7 +10,7 @@ const eventState = "state"
 
 // events is GET /api/events: the live state as server-sent events (ADR 0003).
 // It sends a state event on connect and then each time the state changes,
-// plus a ": ping" comment every sseHeartbeat, until the request ends.
+// plus a "ping" event every sseHeartbeat, until the request ends.
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	// Start the stream first: Subscribe may run a fresh tick, which can take
 	// a while when Docker hangs.

@@ -354,6 +354,81 @@ describe('LiveProvider connection', () => {
     expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(5)
   })
 
+  it('a source that goes silent for 60 s shows Connection lost and opens a new source', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => new Response('{"error":"unauthorized"}', { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderProbe()
+    const first = latest()
+    act(() => first.emit('state', state))
+    await advance(59_999)
+    expect(connection()).toHaveTextContent('open')
+    expect(first.closed).toBe(false)
+
+    await advance(1)
+    expect(connection()).toHaveTextContent('lost')
+    expect(first.closed).toBe(true)
+    expect(screen.getByTestId('projects')).toHaveTextContent('1')
+    await advance(999)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(1)
+    await advance(1)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(2)
+    act(() => latest().emit('state', state))
+    expect(connection()).toHaveTextContent('open')
+
+    // A stall is not a closed attempt: three stalls never ask about the session.
+    for (const n of [3, 4, 5]) {
+      await advance(60_000 + 1000)
+      expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(n)
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(connection()).toHaveTextContent('lost')
+  })
+
+  it('a silent source before any state stays connecting and reopens', async () => {
+    vi.useFakeTimers()
+    renderProbe()
+    await advance(60_000)
+    expect(connection()).toHaveTextContent('connecting')
+    expect(FakeEventSource.forUrl(EVENTS)[0].closed).toBe(true)
+    await advance(1000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(2)
+  })
+
+  it('a ping within the window keeps Realtime', async () => {
+    vi.useFakeTimers()
+    renderProbe()
+    act(() => latest().emit('state', state))
+    await advance(50_000)
+    act(() => latest().emit('ping', {}))
+    await advance(50_000)
+    expect(connection()).toHaveTextContent('open')
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(1)
+    expect(latest().closed).toBe(false)
+    await advance(10_000)
+    expect(connection()).toHaveTextContent('lost')
+  })
+
+  it('clears the watchdog when the source closes and on unmount', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"email":"dev@localhost"}', { status: 200 })),
+    )
+    const { unmount } = renderProbe()
+    act(() => latest().emit('state', state))
+    await advance(30_000)
+    await closeLatest()
+    // The closed source's watchdog is gone: only the backoff reopens it.
+    await advance(1000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(2)
+    await advance(30_000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(2)
+    unmount()
+    await advance(120_000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(2)
+  })
+
   it('stops reconnecting on unmount', async () => {
     vi.useFakeTimers()
     const { unmount } = renderProbe()

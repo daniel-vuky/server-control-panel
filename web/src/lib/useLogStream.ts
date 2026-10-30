@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Container, LogEnd, LogLine, Project } from '../api/types.gen'
-import { backoffDelay, useLive } from '../app/live'
+import { armWatchdog, backoffDelay, useLive } from '../app/live'
 import { isNotCreated } from './containers'
 import { detectLevel, type LogLevel } from './logLevel'
 
@@ -96,7 +96,8 @@ function newPart(held: HeldLine[], backlog: LogLine[]): LogLine[] {
  * service, or "" for All). It holds the newest MAX_LINES lines and reopens on
  * its own: after `exited` when a container of the selection runs or restarts
  * again, after `docker_down` when Docker is up again, and after `slow` or a
- * network error with the live state's backoff, keeping the lines held. A new
+ * network error with the live state's backoff, keeping the lines held; a
+ * source silent for STALE_MS (no lines, no ping) reopens the same way. A new
  * selection clears the lines. `too_many_log_streams` and `error` wait for
  * retry(). newCount counts the lines added after the selection's first
  * backlog (it keeps counting past the cap).
@@ -154,8 +155,14 @@ export function useLogStream(project: Project, service: string, opts: Options = 
     let liveSeen = false
     let timer: ReturnType<typeof setTimeout> | undefined
 
+    // A silent stream (no lines, no ping for STALE_MS) is stalled: reopen it
+    // the way a network error does.
+    const watchdog = armWatchdog(() => {
+      if (!done) reconnect()
+    })
     const finish = () => {
       done = true
+      watchdog.clear()
       es.close()
     }
     const reconnect = () => {
@@ -170,6 +177,7 @@ export function useLogStream(project: Project, service: string, opts: Options = 
 
     es.addEventListener('lines', (e: Event) => {
       if (done) return
+      watchdog.rearm()
       const batch = parseLines((e as MessageEvent).data)
       if (!batch) return
       const isBacklog = backlog
@@ -226,6 +234,10 @@ export function useLogStream(project: Project, service: string, opts: Options = 
       }
       setState('error')
       setMessage(end.message)
+    })
+
+    es.addEventListener('ping', () => {
+      if (!done) watchdog.rearm()
     })
 
     // A network error or the server closing without an end: reopen with the backoff.

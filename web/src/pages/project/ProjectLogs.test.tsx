@@ -223,7 +223,9 @@ describe('project logs', () => {
 
     expect(saved).toEqual([{ name: 'my-shop-api-logs-20261030-140509.txt', href: 'blob:logs' }])
     expect(await blobs[0].text()).toBe(`${at(1)} shop-app-1 first\n${at(2)} shop-db-1 second\n`)
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:logs')
+    // Revoked after the click has been handled, not during it.
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:logs'))
   })
 
   it('level words and colours', () => {
@@ -411,6 +413,30 @@ describe('project logs', () => {
     expect(FakeEventSource.forUrl(LOGS)).toHaveLength(3)
     send([line(2), line(3), line(4)])
     expect(rows()).toHaveLength(4)
+    expect(status()).toHaveTextContent('Live · last 500 lines')
+  })
+
+  it('a log source silent for 60 s reopens and keeps its lines', async () => {
+    vi.useFakeTimers()
+    open()
+    send([line(1), line(2)])
+    const first = source()
+    await advance(50_000)
+    act(() => first.emit('ping', {}))
+    await advance(50_000)
+    // The ping re-armed the watchdog.
+    expect(first.closed).toBe(false)
+    await advance(10_000)
+    expect(first.closed).toBe(true)
+    expect(rows()).toHaveLength(2)
+    await advance(1000)
+    expect(FakeEventSource.forUrl(LOGS)).toHaveLength(2)
+    send([line(2), line(3)])
+    expect(rowTexts()).toEqual([
+      expect.stringContaining('line 1'),
+      expect.stringContaining('line 2'),
+      expect.stringContaining('line 3'),
+    ])
     expect(status()).toHaveTextContent('Live · last 500 lines')
   })
 

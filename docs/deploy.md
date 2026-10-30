@@ -11,7 +11,7 @@ Two containers, in one compose project called `server-control-panel`:
 
 Nothing runs on the host outside docker compose: no service, no cron job, no extra program.
 
-The memory limit leaves room for the live log views: each one runs a `docker compose logs --follow` that takes about 50 MB, and the panel allows up to 3 at a time, plus a rescan and the panel's own memory.
+The memory limit leaves room for the live log views: each one runs a `docker compose logs --follow` that takes about 50 MB, and the panel allows up to 3 at a time, plus the short Docker reads that can overlap them, a rescan and the panel's own memory.
 
 The files live in `/opt/server-control-panel`:
 

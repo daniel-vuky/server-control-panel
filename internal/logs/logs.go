@@ -41,6 +41,10 @@ const (
 	ReasonError  = "error"  // the backlog or the follow failed; Message says why
 )
 
+// parseLine parses one follow line; a variable only so that tests can make it
+// panic.
+var parseLine = ParseLine
+
 var (
 	// ErrTooMany refuses a new stream while MaxFollows streams run.
 	ErrTooMany = errors.New("logs: too many log streams")
@@ -268,13 +272,20 @@ func (s *stream) finish(r EndReason) {
 	})
 }
 
+// msgReadFailed ends a stream that panicked; it is fixed, so it holds no secret.
+const msgReadFailed = "Reading the logs failed."
+
+// recoverPanic ends the stream with msgReadFailed after a panic. Deferred
+// directly, as recover needs.
+func (s *stream) recoverPanic(where string) {
+	if r := recover(); r != nil {
+		s.m.log.Error("logs: "+where+" panicked", "project", s.t.ID, "panic", r, "stack", string(debug.Stack()))
+		s.finish(EndReason{Reason: ReasonError, Message: msgReadFailed})
+	}
+}
+
 func (s *stream) run() {
-	defer func() {
-		if r := recover(); r != nil {
-			s.m.log.Error("logs: stream panicked", "project", s.t.ID, "panic", r, "stack", string(debug.Stack()))
-			s.finish(EndReason{Reason: ReasonError, Message: "Reading the logs failed."})
-		}
-	}()
+	defer s.recoverPanic("stream")
 	values, override, ok := s.t.ComposeValues()
 	if !ok {
 		s.finish(EndReason{Reason: ReasonError, Message: "The project has no compose file."})
@@ -339,9 +350,13 @@ func (s *stream) follow(a runner.Action, v runner.Values, secrets []string) erro
 		s.flush()
 	}()
 	return s.m.r.Stream(s.ctx, runner.StackCompose, a, v, secrets, func(raw string) {
+		// onLine runs on exec's copy goroutine, outside run's recover: a
+		// panic here would crash the panel. End the stream instead; finish
+		// cancels the follow and frees the key.
+		defer s.recoverPanic("follow line")
 		// The runner masked the line already; masking again keeps the rule
 		// in this package whatever the Runner is.
-		l, ok := ParseLine(runner.Mask(raw, secrets), s.t.ComposeProject, s.cs)
+		l, ok := parseLine(runner.Mask(raw, secrets), s.t.ComposeProject, s.cs)
 		if !ok {
 			return
 		}

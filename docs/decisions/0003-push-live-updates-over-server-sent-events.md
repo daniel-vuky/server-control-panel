@@ -38,7 +38,7 @@ Live data goes over **Server-Sent Events**. Actions (start, stop, backup and so 
 1. **One stream per browser tab** (`GET /api/events`) carries status and metrics for whatever that tab subscribes to.
 2. **A central hub collects data once and broadcasts it** to every subscriber. The number of open tabs never multiplies the commands the panel runs.
 3. The 5-second status and 10-second metrics cadence runs **only while at least one subscriber is connected**. With nobody watching, only the 60-second history sampling runs (see [ADR 7](0007-run-background-jobs-inside-the-panel-process.md)).
-4. A heartbeat comment goes out about every 25 seconds so the tunnel does not drop idle streams. The client reconnects on its own and shows when it is disconnected.
+4. A heartbeat goes out about every 25 seconds so the tunnel does not drop idle streams (a `ping` event since #32; see the last note). The client reconnects on its own and shows when it is disconnected.
 5. Live logs use a separate SSE endpoint per open log view. It starts the log-follow command when the view opens and stops it when the client disconnects.
 
 ## Consequences
@@ -58,7 +58,7 @@ Live data goes over **Server-Sent Events**. Actions (start, stop, backup and so 
 The workspace scan (#18) added a second kind of stream next to the hub:
 
 - **Per-job progress streams.** `GET /api/scans/{id}/events` streams the progress of one scan job. It is not the shared `/api/events` hub of decision 1, which arrives with live status (E3-F09). Later long-running jobs, such as backup progress, are expected to get a stream of the same kind.
-- **Behaviour.** A client that connects gets the current snapshot as a `progress` event, then further `progress` events at most about 5 per second (later updates are coalesced), then one `end` event with the final state, and the stream closes. A client that connects after the end gets the snapshot and `end` straight away. A `: ping` heartbeat goes out every 25 seconds (decision 4).
+- **Behaviour.** A client that connects gets the current snapshot as a `progress` event, then further `progress` events at most about 5 per second (later updates are coalesced), then one `end` event with the final state, and the stream closes. A client that connects after the end gets the snapshot and `end` straight away. A heartbeat goes out every 25 seconds (decision 4).
 - **Fan-out.** A small in-memory broadcaster keyed by job id lets several tabs watch one scan. It starts no work of its own.
 - **Client.** The browser uses `EventSource`. On `end` it fetches the job for the result. If the connection drops before `end`, it fetches the job once and reconnects if the job is still running.
 
@@ -83,3 +83,7 @@ Rescan, workspace removal and Stop tracking (#19, #24, #25) change which project
 In every case `Refresh` first bumps the generation (`tsGen`), so a tick that read the tracked projects before the change never publishes.
 
 The API calls it after an untrack, a workspace removal and an add, and the scan manager calls it through `OnChange` when a rescan applies. A write that holds project locks (`Controller.WithLocks`) does not publish on a successful release, since the hub's cached list still holds the rows it changed; the caller refreshes instead.
+
+## Note (2026-10-30, #32)
+
+The heartbeat of decision 4 is a named event, `event: ping` with `data: {}`, on every stream (`/api/events`, the scan progress streams and the log streams). A comment such as `: ping` keeps the tunnel open, but `EventSource` never hands it to the page, so the browser could not tell a quiet stream from a stalled one (the panel frozen, the TCP connection still open, no error). The client now arms a 60-second watchdog per stream, re-armed on every `state` (or `lines`) and `ping` event; when it fires, the badge shows "Connection lost, retrying…" and the stream is reopened after 1 second. A stall does not count towards the closed attempts that lead to the session check. See [ADR 10](0010-stream-logs-through-one-shared-follow-process.md).

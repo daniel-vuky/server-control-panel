@@ -380,5 +380,6 @@ function downloadLines(name: string, lines: HeldLine[]) {
   document.body.append(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(url)
+  // Revoke once the click has been handled; some browsers read the URL after it returns.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }

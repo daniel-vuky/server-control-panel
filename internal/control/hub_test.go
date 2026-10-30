@@ -797,11 +797,77 @@ func TestMetricsCadenceAndNoOverlap(t *testing.T) {
 	if p := e.cmd.maxInFlightOf(runner.DockerStats); p != 1 {
 		t.Fatalf("%d stats reads in flight at once, want 1", p)
 	}
+	// The fake stamps a call a moment after the hub notes its start, so allow
+	// a little slack below the interval.
+	slack := interval / 10
 	calls := e.cmd.callsOf(runner.DockerStats)
 	for i := 1; i < len(calls); i++ {
-		if gap := calls[i].At.Sub(calls[i-1].At); gap < interval {
+		if gap := calls[i].At.Sub(calls[i-1].At); gap < interval-slack {
 			t.Fatalf("stats reads %d and %d began %s apart, want at least %s", i-1, i, gap, interval)
 		}
+	}
+}
+
+// Reads begin metricsInterval apart: the wait after a read is what is left
+// of the interval, not a whole interval after the read ends.
+func TestMetricsStartsIntervalApartWhenTheReadTakesTime(t *testing.T) {
+	interval, read := 200*time.Millisecond, 150*time.Millisecond
+	setMetrics(t, interval, time.Hour)
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerStats, reply{stdout: statsLine("shop", "app", "1.00%", "1MiB"), delay: read})
+	subscribe(t, h)
+	deadline := time.Now().Add(5 * time.Second)
+	for e.cmd.count(runner.DockerStats) < 4 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d stats reads, want 4", e.cmd.count(runner.DockerStats))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	calls := e.cmd.callsOf(runner.DockerStats)
+	slack := interval / 20 // the fake stamps a call a moment after the hub notes its start
+	for i := 1; i < len(calls); i++ {
+		// A whole interval after the read ends would be interval+read apart.
+		if gap := calls[i].At.Sub(calls[i-1].At); gap < interval-slack || gap >= interval+read*2/3 {
+			t.Fatalf("stats reads %d and %d began %s apart, want %s", i-1, i, gap, interval)
+		}
+	}
+}
+
+// While the hub knows Docker is down it runs no docker.stats, but the max
+// age still clears the last values; reads come back with Docker.
+func TestNoMetricsWhileDockerDown(t *testing.T) {
+	maxAge := 150 * time.Millisecond
+	setMetrics(t, 5*time.Millisecond, maxAge)
+	e, h := newHubEnv(t, 5*time.Millisecond)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerStats, reply{stdout: statsLine("shop", "app", "1.00%", "1MiB")})
+	cur, updates := subscribe(t, h)
+	if cpuOf(t, cur, "shop") == nil {
+		untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "shop") != nil })
+	}
+
+	e.cmd.set(runner.DockerPing, reply{err: errors.New("Cannot connect to the Docker daemon")})
+	waitTicks(t, e.cmd, 2)
+	// A read that checked Docker just before the down tick may still finish.
+	time.Sleep(20 * time.Millisecond)
+	e.cmd.waitRunning(t, runner.DockerStats, 0)
+	n := e.cmd.count(runner.DockerStats)
+	time.Sleep(maxAge + 50*time.Millisecond)
+	if got := e.cmd.count(runner.DockerStats); got != n {
+		t.Fatalf("%d stats reads while Docker was down, want 0", got-n)
+	}
+	h.mu.Lock()
+	use := h.use
+	h.mu.Unlock()
+	if use != nil {
+		t.Fatalf("metrics = %v after the max age with Docker down, want cleared", use)
+	}
+
+	e.cmd.set(runner.DockerPing, reply{})
+	untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "shop") != nil })
+	if got := e.cmd.count(runner.DockerStats); got <= n {
+		t.Fatal("no stats read once Docker was up again")
 	}
 }
 

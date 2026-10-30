@@ -160,7 +160,9 @@ type Hub struct {
 	cs       []project.Container
 	csOK     bool // cs is a successful read
 	dockerUp bool
-	at       time.Time // when cs (or Docker down) was last seen
+	// dockerSeen: a tick has checked Docker, so dockerUp is known.
+	dockerSeen bool
+	at         time.Time // when cs (or Docker down) was last seen
 
 	lastSent []byte // the JSON of the last state broadcast
 
@@ -420,7 +422,7 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 		if tsErr == nil || h.ready {
 			h.ready = true
 		}
-		h.dockerUp = up
+		h.dockerUp, h.dockerSeen = up, true
 		if !stale {
 			h.cs, h.csOK, h.at = cs, up && readErr == nil, time.Now()
 			if h.csOK {
@@ -522,12 +524,14 @@ func (h *Hub) metricsLoop(ctx context.Context) {
 }
 
 // readMetrics runs one docker.stats read, unless one is running (a loop that
-// ended may have left it) or the last one began less than metricsInterval ago,
-// and returns how long to wait before the next try. It never holds h.mu
-// during the read. A successful read replaces the metrics; a failed one (its
-// context ending included) keeps them until they are metricsMaxAge old, then
-// clears them. Either way the state is published when it changed. A panic is
-// logged and recovered, as in a tick.
+// ended may have left it), the last one began less than metricsInterval ago
+// or the last tick found Docker down, and returns how long to wait before the
+// next try: what is left of metricsInterval since this read began, so reads
+// begin metricsInterval apart however long each takes. It never holds h.mu
+// during the read. A successful read replaces the metrics; a failed or skipped
+// one (its context ending included) keeps them until they are metricsMaxAge
+// old, then clears them. Either way the state is published when it changed. A
+// panic is logged and recovered, as in a tick.
 func (h *Hub) readMetrics(ctx context.Context) (wait time.Duration) {
 	h.mu.Lock()
 	if h.metricsBusy {
@@ -538,7 +542,16 @@ func (h *Hub) readMetrics(ctx context.Context) (wait time.Duration) {
 		h.mu.Unlock()
 		return metricsInterval - since
 	}
-	h.metricsBusy, h.metricsStart = true, time.Now()
+	if h.dockerSeen && !h.dockerUp {
+		// docker stats would only fail; the values still age out.
+		if h.expireMetricsLocked(time.Now()) && h.ready && h.cacheGen == h.ctl.Generation() {
+			h.publishLocked()
+		}
+		h.mu.Unlock()
+		return metricsInterval
+	}
+	start := time.Now()
+	h.metricsBusy, h.metricsStart = true, start
 	h.mu.Unlock()
 
 	var (
@@ -554,16 +567,15 @@ func (h *Hub) readMetrics(ctx context.Context) (wait time.Duration) {
 		defer h.mu.Unlock()
 		h.metricsBusy = false
 		now := time.Now()
-		switch {
-		case ok:
+		if ok {
 			h.use, h.useAt = use, now
-		case h.use != nil && now.Sub(h.useAt) > metricsMaxAge:
-			h.use = nil
+		} else {
+			_ = h.expireMetricsLocked(now)
 		}
 		if h.ready && h.cacheGen == h.ctl.Generation() {
 			h.publishLocked()
 		}
-		wait = metricsInterval
+		wait = max(0, metricsInterval-now.Sub(start))
 	}()
 	res, err := h.cmd.Run(ctx, runner.StackDocker, runner.DockerStats, nil, nil)
 	switch {
@@ -576,7 +588,17 @@ func (h *Hub) readMetrics(ctx context.Context) (wait time.Duration) {
 	default:
 		use, ok = project.ParseStats(res.Stdout), true
 	}
-	return metricsInterval
+	return // the deferred func sets wait
+}
+
+// expireMetricsLocked clears the metrics once they are metricsMaxAge old and
+// reports whether it did. Call it with h.mu held.
+func (h *Hub) expireMetricsLocked(now time.Time) bool {
+	if h.use == nil || now.Sub(h.useAt) <= metricsMaxAge {
+		return false
+	}
+	h.use = nil
+	return true
 }
 
 // recent returns the cached container list when it is at most maxAge old.

@@ -9,8 +9,9 @@ import (
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
 )
 
-// sseHeartbeat is how often an open event stream sends a ": ping" comment, so
-// proxies keep an idle stream open. Tests shorten it.
+// sseHeartbeat is how often an open event stream sends a "ping" event, so
+// proxies keep an idle stream open and the browser can tell a live stream
+// from a stalled one (a comment never reaches its listeners). Tests shorten it.
 var sseHeartbeat = 25 * time.Second
 
 // sseWriter writes server-sent events to one response, flushing each.
@@ -40,9 +41,9 @@ func (s *sseWriter) send(event string, data any) error {
 	return s.rc.Flush()
 }
 
-// ping writes the heartbeat comment.
+// ping writes the heartbeat: a named "ping" event with an empty object.
 func (s *sseWriter) ping() error {
-	if _, err := fmt.Fprint(s.w, ": ping\n\n"); err != nil {
+	if _, err := fmt.Fprint(s.w, "event: ping\ndata: {}\n\n"); err != nil {
 		return err
 	}
 	return s.rc.Flush()
