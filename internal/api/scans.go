@@ -33,6 +33,15 @@ const (
 	msgAddedMeanwhile = "Some of these projects were added from another scan in the meantime. Scan this folder again."
 )
 
+// Codes and reasons of refused scans, as the field error and the activity
+// record give them.
+const (
+	codeInvalidDepth = "invalid_depth"
+	codeAlreadyAdded = "already_added"
+	reasonBusy       = "busy"
+	msgInternal      = "internal error" // the reason of a failed track
+)
+
 // Job states as the API reports them.
 const (
 	stateRunning = "running"
@@ -40,16 +49,22 @@ const (
 	stateFailed  = "failed"
 )
 
-// startScan is POST /api/scans.
+// startScan is POST /api/scans. A refusal (a path error, a bad depth, a
+// folder already added, or another scan running) is recorded as a refused
+// scan.start; the scan manager records a scan it starts.
 func (s *server) startScan(w http.ResponseWriter, r *http.Request) {
 	var req ScanRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
+	refuse := func(target, reason string) {
+		s.record(r, store.Activity{Action: store.ActScanStart, Target: target}, store.ResultRefused, reason)
+	}
 	resolved, err := s.Guard.Check(strings.TrimSpace(req.Path))
 	if err != nil {
 		var pe *roots.PathError
 		if errors.As(err, &pe) {
+			refuse(req.Path, pe.Code) // the raw path: the store cleans and cuts it
 			writeFieldError(w, "path", pe.Code, pe.Message)
 			return
 		}
@@ -57,12 +72,14 @@ func (s *server) startScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Depth < 1 || req.Depth > 3 {
-		writeFieldError(w, "depth", "invalid_depth", msgBadDepth)
+		refuse(resolved, codeInvalidDepth)
+		writeFieldError(w, "depth", codeInvalidDepth, msgBadDepth)
 		return
 	}
 	switch _, err := s.Store.WorkspaceByPath(r.Context(), resolved); {
 	case err == nil:
-		writeFieldError(w, "path", "already_added", msgAlreadyAdded)
+		refuse(resolved, codeAlreadyAdded)
+		writeFieldError(w, "path", codeAlreadyAdded, msgAlreadyAdded)
 		return
 	case !errors.Is(err, store.ErrNotFound):
 		s.internalError(w, r, err)
@@ -77,6 +94,7 @@ func (s *server) startScan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var busy *scan.BusyError
 		if errors.As(err, &busy) {
+			refuse(resolved, reasonBusy)
 			writeJSON(w, http.StatusConflict, ScanBusy{Error: msgScanBusy, ID: busy.ID, Path: busy.Path, Depth: busy.Depth})
 			return
 		}
@@ -130,14 +148,25 @@ func (s *server) getScan(w http.ResponseWriter, r *http.Request) {
 
 // trackScan is POST /api/scans/{id}/track. It stores the scanned folder as a
 // workspace and every row of the result as a tracked or ignored project, in
-// one transaction.
+// one transaction. Every answer after the job is found is recorded as a
+// scan.track: ok, refused (409 or 422, with the message) or failed (500).
 func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.loadJob(w, r)
 	if !ok {
 		return
 	}
+	rec := store.Activity{Action: store.ActScanTrack, Target: job.Target}
+	refuse := func(status int, msg string) {
+		s.record(r, rec, store.ResultRefused, msg)
+		writeError(w, status, msg)
+	}
+	fail := func(err error) {
+		s.record(r, rec, store.ResultFailed, msgInternal)
+		s.internalError(w, r, err)
+	}
+
 	if job.State != stateDone {
-		writeError(w, http.StatusConflict, msgNotDone)
+		refuse(http.StatusConflict, msgNotDone)
 		return
 	}
 	var req TrackRequest
@@ -146,11 +175,12 @@ func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := jobResult(job)
 	if err != nil {
-		s.internalError(w, r, err)
+		fail(err)
 		return
 	}
 	projects, fe := newProjects(res.Rows, req.Projects)
 	if fe != nil {
+		s.record(r, rec, store.ResultRefused, fe.Error)
 		writeJSON(w, http.StatusUnprocessableEntity, fe)
 		return
 	}
@@ -158,10 +188,10 @@ func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	switch _, err := s.Store.WorkspaceByPath(ctx, job.Target); {
 	case err == nil:
-		writeError(w, http.StatusConflict, msgAlreadyAdded)
+		refuse(http.StatusConflict, msgAlreadyAdded)
 		return
 	case !errors.Is(err, store.ErrNotFound):
-		s.internalError(w, r, err)
+		fail(err)
 		return
 	}
 	// A project of this result may have been stored by another scan's track
@@ -169,12 +199,12 @@ func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 	// on the unique path.
 	known, err := s.Store.KnownProjects(ctx)
 	if err != nil {
-		s.internalError(w, r, err)
+		fail(err)
 		return
 	}
 	for _, p := range projects {
 		if _, ok := known[p.Path]; ok {
-			writeError(w, http.StatusConflict, msgAddedMeanwhile)
+			refuse(http.StatusConflict, msgAddedMeanwhile)
 			return
 		}
 	}
@@ -190,13 +220,14 @@ func (s *server) trackScan(w http.ResponseWriter, r *http.Request) {
 		LastScanAt: last,
 	}, projects)
 	if errors.Is(err, store.ErrAlreadyAdded) {
-		writeError(w, http.StatusConflict, msgAlreadyAdded)
+		refuse(http.StatusConflict, msgAlreadyAdded)
 		return
 	}
 	if err != nil {
-		s.internalError(w, r, err)
+		fail(err)
 		return
 	}
+	s.record(r, rec, store.ResultOK, "")
 	s.log.Info("workspace added", "workspace", wsID, "path", job.Target, "tracked", added, "projects", len(projects))
 	writeJSON(w, http.StatusOK, TrackResponse{WorkspaceID: wsID, Added: added})
 }

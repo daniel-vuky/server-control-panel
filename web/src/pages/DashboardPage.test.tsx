@@ -12,6 +12,7 @@ const projects: Project[] = [
     workspaceId: 1,
     self: false,
     status: 'running',
+    actions: ['stop', 'restart'],
     databases: [
       { type: 'postgresql', name: 'shop', locationKind: 'container', location: 'db', sources: [] },
       { type: 'sqlite', name: 'cache', locationKind: 'file', location: './cache.db', sources: [] },
@@ -24,6 +25,7 @@ const projects: Project[] = [
     workspaceId: 1,
     self: true,
     status: 'partial',
+    actions: [],
     databases: [],
   },
 ]

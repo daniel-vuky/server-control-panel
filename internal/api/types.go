@@ -1,9 +1,9 @@
 package api
 
-// The request and response bodies of the scan, track, workspace and project
-// endpoints. tygo turns them into web/src/api/types.gen.ts, so every field is
-// a built-in type, a slice of one, or another type of this file. Slices are
-// never null in a response.
+// The request and response bodies of the scan, track, workspace, project,
+// action, event and Docker check endpoints. tygo turns them into
+// web/src/api/types.gen.ts, so every field is a built-in type, a slice of one,
+// or another type of this file. Slices are never null in a response.
 
 // FieldError is a 422 body: the message to show under the named form field
 // and a stable code.
@@ -118,8 +118,10 @@ type Workspace struct {
 	Ignored    int    `json:"ignored"`
 }
 
-// Project is one element of GET /api/projects: a tracked project with its
-// live status (running, partial, stopped, error or unknown).
+// Project is one element of GET /api/projects and of LiveState: a tracked
+// project with its effective status (running, partial, stopped, error,
+// unknown, or starting, stopping or restarting while a command runs on it)
+// and the actions it allows now (start, stop, restart; [] when none).
 type Project struct {
 	ID          int64      `json:"id"`
 	DisplayName string     `json:"displayName"`
@@ -127,5 +129,37 @@ type Project struct {
 	WorkspaceID int64      `json:"workspaceId"`
 	Self        bool       `json:"self"`
 	Status      string     `json:"status"`
+	Actions     []string   `json:"actions"`
 	Databases   []Database `json:"databases"`
+}
+
+// ActionResult is the 200 body of POST /api/projects/{id}/{action}: how the
+// command ended (ok, failed or timed_out), the project's status re-read after
+// it, and the masked reason when it did not succeed (empty on ok).
+type ActionResult struct {
+	Outcome string `json:"outcome"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// ActionRefused is the 409 or 503 body of POST /api/projects/{id}/{action}
+// when the command was not run. Code is locked, not_allowed or docker_down;
+// Status is the project's status at the time (its in-flight status when
+// locked, unknown when Docker is down).
+type ActionRefused struct {
+	Error  string `json:"error"`
+	Code   string `json:"code"`
+	Status string `json:"status"`
+}
+
+// LiveState is the data of the "state" event of GET /api/events: whether
+// Docker answers, and every tracked project as GET /api/projects returns it.
+type LiveState struct {
+	DockerUp bool      `json:"dockerUp"`
+	Projects []Project `json:"projects"`
+}
+
+// DockerCheck is the body of POST /api/docker/check.
+type DockerCheck struct {
+	DockerUp bool `json:"dockerUp"`
 }

@@ -12,8 +12,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
+	"github.com/daniel-vuky/server-control-panel/internal/control"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -34,23 +36,44 @@ func webStub() http.Handler {
 }
 
 // fakeDocker answers compose.config with canned JSON per {dir} (a project
-// with one nginx service by default) and docker.containers with canned lines.
+// with one nginx service by default), docker.containers with canned lines,
+// docker.ping with pingErr, and the lifecycle commands with lifecycleErr. A
+// lifecycle command that succeeds replaces the container lines with after,
+// when set. It logs every action it is asked to run.
 type fakeDocker struct {
 	mu            sync.Mutex
 	configs       map[string]string
 	containers    string
 	containersErr error
-	gate          chan struct{} // when set, docker.containers waits for it to close
-	once          sync.Once
+	pingErr       error
+	lifecycleErr  error
+	after         *string // containers after a successful lifecycle command
+	calls         []runner.Action
+	lifecycleRuns []runner.Values
+
+	gate  chan struct{} // when set, docker.containers waits for it to close
+	once  sync.Once
+	lgate chan struct{} // when set, the lifecycle commands wait for it to close
+	lonce sync.Once
+}
+
+func isLifecycle(a runner.Action) bool {
+	switch a {
+	case runner.ComposeUp, runner.ComposeUpOverride, runner.ComposeStop, runner.ComposeStopOverride,
+		runner.ComposeRestart, runner.ComposeRestartOverride:
+		return true
+	}
+	return false
 }
 
 func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v runner.Values, _ []string) (runner.Result, error) {
 	f.mu.Lock()
-	gate, containers, containersErr := f.gate, f.containers, f.containersErr
+	f.calls = append(f.calls, a)
+	gate, lgate, containers, containersErr := f.gate, f.lgate, f.containers, f.containersErr
 	cfg, ok := f.configs[v["dir"]]
 	f.mu.Unlock()
-	switch a {
-	case runner.DockerContainers:
+	switch {
+	case a == runner.DockerContainers:
 		if gate != nil {
 			<-gate
 		}
@@ -58,11 +81,29 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 			return runner.Result{}, containersErr
 		}
 		return runner.Result{Stdout: []byte(containers)}, nil
-	case runner.ComposeConfig, runner.ComposeConfigOverride:
+	case a == runner.ComposeConfig || a == runner.ComposeConfigOverride:
 		if !ok {
 			cfg = configJSON(scan.NormalizeProjectName(filepath.Base(v["dir"])), map[string]service{"app": {Image: "nginx"}})
 		}
 		return runner.Result{Stdout: []byte(cfg)}, nil
+	case a == runner.DockerPing:
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return runner.Result{Stdout: []byte("29.0.0\n")}, f.pingErr
+	case isLifecycle(a):
+		if lgate != nil {
+			<-lgate
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.lifecycleRuns = append(f.lifecycleRuns, v)
+		if f.lifecycleErr != nil {
+			return runner.Result{ExitCode: 1}, f.lifecycleErr
+		}
+		if f.after != nil {
+			f.containers = *f.after
+		}
+		return runner.Result{}, nil
 	}
 	return runner.Result{}, fmt.Errorf("fake: unexpected %s %s", s, a)
 }
@@ -87,6 +128,41 @@ func (f *fakeDocker) release() {
 	}
 }
 
+// holdLifecycle makes the lifecycle commands wait until releaseLifecycle is
+// called. It does not hold docker.containers, which the pre-check and the
+// re-read need answered. releaseLifecycle also runs at cleanup.
+func (f *fakeDocker) holdLifecycle(t *testing.T) {
+	t.Helper()
+	f.mu.Lock()
+	f.lgate = make(chan struct{})
+	f.lonce = sync.Once{}
+	f.mu.Unlock()
+	t.Cleanup(f.releaseLifecycle)
+}
+
+func (f *fakeDocker) releaseLifecycle() {
+	f.mu.Lock()
+	gate := f.lgate
+	f.mu.Unlock()
+	if gate != nil {
+		f.lonce.Do(func() { close(gate) })
+	}
+}
+
+// set runs fn with the fake locked, to change its answers.
+func (f *fakeDocker) set(fn func(f *fakeDocker)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn(f)
+}
+
+// callCount returns how many commands the fake was asked to run.
+func (f *fakeDocker) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
 func (f *fakeDocker) setConfig(dir, cfg string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -109,7 +185,8 @@ func configJSON(name string, services map[string]service) string {
 
 // newTestDeps returns router dependencies for tests: an identity that is
 // always allowed, a temp store, a guard over one temp root (resolved, so it
-// compares equal to stored paths), a fakeDocker and a scan manager.
+// compares equal to stored paths), a fakeDocker, a scan manager, and the
+// lifecycle controller and live hub on the same fake.
 func newTestDeps(t *testing.T) Deps {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -123,6 +200,14 @@ func newTestDeps(t *testing.T) Deps {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	docker := &fakeDocker{configs: map[string]string{}}
+	ctl, hub := control.New(st, docker, log)
+	// Runs before the store closes: a command a test left running stores its
+	// outcome first.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = ctl.Wait(ctx)
+	})
 	return Deps{
 		Version:  "1.2.3",
 		Verifier: allowVerifier{},
@@ -131,6 +216,8 @@ func newTestDeps(t *testing.T) Deps {
 		Store:    st,
 		Scans:    scan.NewManager(st, docker, log),
 		Docker:   docker,
+		Control:  ctl,
+		Hub:      hub,
 	}
 }
 
@@ -227,6 +314,8 @@ func TestNewRouterPanicsOnMissingDeps(t *testing.T) {
 		{"nil Store", func(d *Deps) { d.Store = nil }},
 		{"nil Scans", func(d *Deps) { d.Scans = nil }},
 		{"nil Docker", func(d *Deps) { d.Docker = nil }},
+		{"nil Control", func(d *Deps) { d.Control = nil }},
+		{"nil Hub", func(d *Deps) { d.Hub = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -251,6 +340,11 @@ func TestNewEndpointsNeedIdentity(t *testing.T) {
 		{http.MethodPost, "/api/scans/1/track"},
 		{http.MethodGet, "/api/workspaces"},
 		{http.MethodGet, "/api/projects"},
+		{http.MethodPost, "/api/projects/1/start"},
+		{http.MethodPost, "/api/projects/1/stop"},
+		{http.MethodPost, "/api/projects/1/restart"},
+		{http.MethodGet, "/api/events"},
+		{http.MethodPost, "/api/docker/check"},
 	} {
 		if rec := do(h, tc.method, tc.path); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", tc.method, tc.path, rec.Code)

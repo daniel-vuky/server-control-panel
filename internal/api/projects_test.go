@@ -119,3 +119,47 @@ func TestEmptyListsAreArrays(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectsIncludeActionsAndInFlight(t *testing.T) {
+	d := newTestDeps(t)
+	h := NewRouter(d)
+	addProjects(t, d)
+	alpha, _ := trackedIDs(t, d)
+	f := dockerOf(d)
+	f.set(func(f *fakeDocker) {
+		f.containers = alphaUp() + containerLine("beta", "web", "running", "Up 2 hours")
+	})
+
+	rec := do(h, http.MethodGet, "/api/projects")
+	got := decode[[]Project](t, rec)
+	if len(got) != 2 {
+		t.Fatalf("projects = %+v", got)
+	}
+	if got[0].Status != "running" || strings.Join(got[0].Actions, ",") != "stop,restart" {
+		t.Errorf("alpha = %+v, want running with stop and restart", got[0])
+	}
+	if got[1].Status != "partial" || got[1].Actions == nil || len(got[1].Actions) != 0 {
+		t.Errorf("beta (self) = %+v, want partial with no actions", got[1])
+	}
+	if !strings.Contains(rec.Body.String(), `"actions":[]`) {
+		t.Errorf("body = %s, want beta's actions as []", rec.Body.String())
+	}
+
+	f.holdLifecycle(t)
+	done := postAsync(h, actionURL(alpha, "stop"))
+	waitLocked(t, d, alpha)
+	got = decode[[]Project](t, do(h, http.MethodGet, "/api/projects"))
+	if got[0].Status != "stopping" || len(got[0].Actions) != 0 {
+		t.Errorf("alpha while stopping = %+v, want stopping with no actions", got[0])
+	}
+	f.releaseLifecycle()
+	<-done
+
+	f.set(func(f *fakeDocker) { f.containersErr = errors.New("Cannot connect to the Docker daemon") })
+	got = decode[[]Project](t, do(h, http.MethodGet, "/api/projects"))
+	for _, p := range got {
+		if p.Status != "unknown" || len(p.Actions) != 0 {
+			t.Errorf("%s with Docker down = %+v, want unknown with no actions", p.DisplayName, p)
+		}
+	}
+}

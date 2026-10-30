@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 )
 
@@ -39,4 +40,19 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// requireJSON answers 415 to a request whose Content-Type is missing or is not
+// application/json (parameters such as charset are allowed), and runs nothing.
+// A cross-site form cannot send that type without a CORS preflight, which the
+// panel never answers, so this keeps such forms from reaching a state change.
+func requireJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mt != "application/json" {
+			writeError(w, http.StatusUnsupportedMediaType, "Send the request as application/json.")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
