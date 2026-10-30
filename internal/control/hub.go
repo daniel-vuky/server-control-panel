@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -46,22 +47,50 @@ var errNoRead = errors.New("control: the container list could not be read")
 // allows, its containers and its totals. Components is empty (never nil) when
 // Docker could not be read. CPUPercent and MemBytes are nil when no running
 // container has a value; UpSince is nil unless the status is Running or
-// Partial and a running container's start time is known.
+// Partial and a running container's start time is known. DatabaseViews has one
+// entry per detected database, in Tracked.Databases order (empty, never nil).
 type ProjectView struct {
 	store.Tracked
-	Status     project.Status
-	Actions    []project.Action
-	Components []project.Component
-	CPUPercent *float64
-	MemBytes   *int64
-	UpSince    *time.Time
+	Status        project.Status
+	Actions       []project.Action
+	Components    []project.Component
+	CPUPercent    *float64
+	MemBytes      *int64
+	UpSince       *time.Time
+	DatabaseViews []DatabaseView
 }
 
-// State is one snapshot of the tracked projects. Subscribers share it, so they
-// must not modify it.
+// DatabaseView is a detected database with its key (project.DatabaseKey) and
+// whether it can be backed up now.
+type DatabaseView struct {
+	project.Database
+	Key    string
+	Backup BackupRule
+}
+
+// BackupRule says whether a backup may start now. Allowed is true only when
+// Reason is "". Reason is one of project.ReasonNotSupported, ReasonNoDBName,
+// ReasonDBNotRunning, ReasonDriveNotConnected or ReasonDriveExpired.
+type BackupRule struct {
+	Allowed bool
+	Reason  string
+}
+
+// The Drive reasons a database cannot be backed up, layered on top of
+// project.BackupReason.
+const (
+	ReasonDriveNotConnected = "drive_not_connected"
+	ReasonDriveExpired      = "drive_expired"
+)
+
+// State is one snapshot of the tracked projects, the active backups (queued
+// and running, from the backup source) and the Drive connection. Subscribers
+// share it, so they must not modify it.
 type State struct {
 	DockerUp bool
 	Projects []ProjectView
+	Backups  []store.Backup
+	Drive    drive.Status
 }
 
 // Views gives each tracked project its effective status and allowed actions:
@@ -74,9 +103,13 @@ type State struct {
 // When cs was read, each view also lists the project's containers with the
 // inspect and usage data in insp and use (keyed by container id; either may
 // be nil) and sums them; otherwise it has no component and no metrics.
+//
+// Each detected database gets its backup rule (databaseViews) from cs, with
+// Docker down or a failed read counting as not running, and from drv.
 func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp bool,
 	lock func(int64) (status project.Status, held bool, ok bool),
-	insp map[string]project.Inspect, use map[string]project.Usage) []ProjectView {
+	insp map[string]project.Inspect, use map[string]project.Usage, drv drive.Status) []ProjectView {
+	read := dockerUp && readErr == nil
 	out := make([]ProjectView, 0, len(ts))
 	for _, t := range ts {
 		s, held, locked := lookup(lock, t.ID)
@@ -93,8 +126,9 @@ func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp b
 		if held {
 			actions = []project.Action{}
 		}
-		v := ProjectView{Tracked: t, Status: status, Actions: actions, Components: []project.Component{}}
-		if dockerUp && readErr == nil {
+		v := ProjectView{Tracked: t, Status: status, Actions: actions, Components: []project.Component{},
+			DatabaseViews: databaseViews(t, cs, read, drv)}
+		if read {
 			v.Components = project.Components(cs, t.ComposeProject, t.Services, insp, use)
 			v.CPUPercent, v.MemBytes, v.UpSince = project.Totals(v.Components)
 			if status != project.StatusRunning && status != project.StatusPartial {
@@ -104,6 +138,35 @@ func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp b
 		out = append(out, v)
 	}
 	return out
+}
+
+// databaseViews gives each database of t its key and backup rule:
+// project.BackupReason, then, only when that allows it, the Drive reason. A
+// Drive that is not configured, not connected or in an unknown state is
+// drive_not_connected; an expired one is drive_expired.
+func databaseViews(t store.Tracked, cs []project.Container, dockerUp bool, drv drive.Status) []DatabaseView {
+	out := make([]DatabaseView, 0, len(t.Databases))
+	for _, d := range t.Databases {
+		_, reason := project.BackupReason(d, t.ComposeProject, t.ServiceDetails, cs, dockerUp)
+		if reason == "" {
+			reason = driveReason(drv)
+		}
+		out = append(out, DatabaseView{Database: d, Key: project.DatabaseKey(d), Backup: BackupRule{Allowed: reason == "", Reason: reason}})
+	}
+	return out
+}
+
+// driveReason is the reason Drive gives for refusing a backup, "" when it is
+// connected.
+func driveReason(drv drive.Status) string {
+	switch drv.State {
+	case drive.StateConnected:
+		return ""
+	case drive.StateExpired:
+		return ReasonDriveExpired
+	default:
+		return ReasonDriveNotConnected
+	}
 }
 
 func lookup(lock func(int64) (project.Status, bool, bool), id int64) (project.Status, bool, bool) {
@@ -137,13 +200,20 @@ type tickRun struct {
 // only) does not blank them.
 //
 // Lock order: the hub calls the Controller's Lock and Generation while it
-// holds mu (hub.mu → ctl.mu); it never runs Docker or reads the store with mu
-// held.
+// holds mu (hub.mu → ctl.mu), and the backup and Drive sources while it builds
+// a state (hub.mu → mgr.mu, hub.mu → drive.mu); it never runs Docker or reads
+// the store with mu held.
 type Hub struct {
 	st  *store.Store
 	cmd scan.Commander
 	ctl *Controller
 	log *slog.Logger
+
+	// The optional in-memory sources a state is built with, set once before
+	// the first Subscribe. Both are called with mu held, so neither may call
+	// the hub, read the store or run a command.
+	backups  func() []store.Backup
+	driveNow func() drive.Status
 
 	loops sync.WaitGroup // running loops; tests wait on it
 
@@ -183,6 +253,54 @@ type Hub struct {
 
 func newHub(st *store.Store, cmd scan.Commander, ctl *Controller, log *slog.Logger) *Hub {
 	return &Hub{st: st, cmd: cmd, ctl: ctl, log: log, subs: map[chan State]struct{}{}}
+}
+
+// SetBackupSource sets where states get the active backups (the backup
+// manager's Active). Call it before the first Subscribe. src is called with
+// the hub's mutex held: it must be in-memory and never call the hub.
+func (h *Hub) SetBackupSource(src func() []store.Backup) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.backups = src
+}
+
+// SetDriveSource sets where states get the Drive connection (the Drive
+// service's Status). Call it before the first Subscribe. src is called with
+// the hub's mutex held: it must be in-memory and never call the hub. Without
+// a source, Drive is not connected.
+func (h *Hub) SetDriveSource(src func() drive.Status) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.driveNow = src
+}
+
+// Publish rebuilds the state from the cache, with the sources read again, and
+// broadcasts it when it changed; the backup manager and the Drive service call
+// it from their OnChange, never with their own lock held. It reads neither
+// Docker nor the store. Like the metrics merge it publishes only once a tick
+// has loaded the cache and while the cache matches the Controller (see
+// cacheGen); otherwise the next tick or lock change carries the change.
+func (h *Hub) Publish() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.ready && h.cacheGen == h.ctl.Generation() {
+		h.publishLocked()
+	}
+}
+
+// RecentContainers returns the cached container list when it is at most
+// maxAge old, else reads Docker as Containers does (sharing a tick in
+// progress). ok is false when Docker is down or the list could not be read;
+// cs is then nil. A recent Docker-down check is reused too. Callers must not
+// modify cs.
+func (h *Hub) RecentContainers(ctx context.Context, maxAge time.Duration) (cs []project.Container, ok bool) {
+	if cs, up, fresh := h.recent(maxAge); fresh {
+		if !up {
+			return nil, false
+		}
+		return cs, true
+	}
+	return h.Containers(ctx)
 }
 
 // Subscribe returns the current state and a channel of later ones. The
@@ -651,7 +769,29 @@ func (h *Hub) buildLocked() State {
 	if !h.csOK {
 		readErr = errNoRead
 	}
-	return State{DockerUp: h.dockerUp, Projects: Views(h.ts, h.cs, readErr, h.dockerUp, h.ctl.Lock, h.insp, h.use)}
+	drv := drive.Status{State: drive.StateNotConnected}
+	if h.driveNow != nil {
+		drv = h.driveNow()
+	}
+	backups := []store.Backup{}
+	if h.backups != nil {
+		if bs := h.backups(); bs != nil {
+			backups = bs
+		}
+	}
+	return State{
+		DockerUp: h.dockerUp,
+		Projects: Views(h.ts, h.cs, readErr, h.dockerUp, h.ctl.Lock, h.insp, h.use, drv),
+		Backups:  backups,
+		Drive:    drv,
+	}
+}
+
+// stateKey is what publishLocked compares: the state plus the backups' queue
+// positions, which store.Backup leaves out of its JSON.
+type stateKey struct {
+	State          State
+	QueuePositions []int
 }
 
 // publishLocked builds the state and sends it to every subscriber when its
@@ -659,7 +799,11 @@ func (h *Hub) buildLocked() State {
 // state. h.mu must be held; it is the only place that sends.
 func (h *Hub) publishLocked() State {
 	s := h.buildLocked()
-	b, err := json.Marshal(s)
+	key := stateKey{State: s, QueuePositions: make([]int, len(s.Backups))}
+	for i, b := range s.Backups {
+		key.QueuePositions[i] = b.QueuePosition
+	}
+	b, err := json.Marshal(key)
 	if err != nil {
 		h.log.Error("hub: encode the state", "err", err)
 		return s

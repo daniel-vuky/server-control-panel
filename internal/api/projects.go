@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/daniel-vuky/server-control-panel/internal/control"
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -27,7 +28,8 @@ func (s *server) listProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 // readViews gives ts their views from one docker.containers read of its own
-// (not the hub's cache), with no inspect or stats data.
+// (not the hub's cache), with no inspect or stats data. The Drive status is a
+// placeholder until the API holds the Drive service.
 func (s *server) readViews(ctx context.Context, ts []store.Tracked) []control.ProjectView {
 	var containers []project.Container
 	var cerr error
@@ -36,7 +38,7 @@ func (s *server) readViews(ctx context.Context, ts []store.Tracked) []control.Pr
 			s.log.Warn("projects: cannot read containers; every status is unknown", "err", cerr)
 		}
 	}
-	return control.Views(ts, containers, cerr, cerr == nil, s.Control.Lock, nil, nil)
+	return control.Views(ts, containers, cerr, cerr == nil, s.Control.Lock, nil, nil, drive.Status{State: drive.StateNotConnected})
 }
 
 // toProjects maps project views to the API type, shared by GET /api/projects

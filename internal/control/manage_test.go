@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -87,7 +88,7 @@ func TestViewsMissingIsNotFound(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vs := Views(ts, cs, tt.readErr, tt.dockerUp, lock, nil, nil)
+			vs := Views(ts, cs, tt.readErr, tt.dockerUp, lock, nil, nil, drive.Status{})
 			for i, v := range vs {
 				if v.Status != tt.want[i].status || !slices.Equal(v.Actions, tt.want[i].actions) || v.Actions == nil {
 					t.Errorf("view %s = %s %v, want %s %v", v.DisplayName, v.Status, v.Actions, tt.want[i].status, tt.want[i].actions)
@@ -111,7 +112,7 @@ func TestViewsHeldHasNoActions(t *testing.T) {
 		}
 		return "", false, false
 	}
-	vs := Views(ts, cs, nil, true, lock, nil, nil)
+	vs := Views(ts, cs, nil, true, lock, nil, nil, drive.Status{})
 	want := []struct {
 		status  project.Status
 		actions []project.Action
