@@ -177,8 +177,8 @@ describe('DashboardPage', () => {
     }
     const posts = (stub: ReturnType<typeof vi.fn>) =>
       stub.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'POST')
-    const ok = (status: string, outcome = 'ok', message = '') =>
-      new Response(JSON.stringify({ outcome, status, message }), { status: 200 })
+    const ok = (status: string, outcome = 'ok', message = '', actions: string[] = []) =>
+      new Response(JSON.stringify({ outcome, status, actions, message }), { status: 200 })
     const row = (name: RegExp) => screen.getByRole('row', { name })
 
     it('confirms a stop, cancel sends nothing, confirm posts and shows Stopping then the toast', async () => {
@@ -411,11 +411,35 @@ describe('DashboardPage', () => {
       const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const { unmount } = renderPage()
       await screen.findByRole('row', { name: /blog/ })
+      vi.useFakeTimers({ shouldAdvanceTime: true })
       fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
       unmount()
-      await act(async () => release(ok('running')))
+      const before = vi.getTimerCount()
+      // A failed result shows an error toast, which holds no timer, so any
+      // timer left is the page's own 5 s expiry.
+      await act(async () => release(ok('stopped', 'failed', 'boom', ['start'])))
+      expect(vi.getTimerCount()).toBe(before)
       expect(spy).not.toHaveBeenCalled()
       spy.mockRestore()
+    })
+
+    it('uses the settled status and actions the server sent, and none while running', async () => {
+      let release: (r: Response) => void = () => {}
+      serveActions(() => new Promise<Response>((res) => (release = res)))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+      fireEvent.click(within(row(/shop/)).getByRole('button', { name: 'More actions for shop' }))
+      for (const name of ['Start', 'Restart']) {
+        expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'true')
+      }
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+
+      await act(async () => release(ok('stopped', 'ok', '', ['start'])))
+      const sw = within(row(/shop/)).getByRole('switch', { name: 'Start shop' })
+      expect(sw).toBeEnabled()
+      expect(sw).not.toHaveAttribute('title')
     })
   })
 })

@@ -12,7 +12,7 @@ import MonitorOnlyTag from '../components/MonitorOnlyTag'
 import ProjectSwitch from '../components/ProjectSwitch'
 import StatusBadge from '../components/StatusBadge'
 import { useToast } from '../components/Toast'
-import { allowedActions, inFlightStatus, type Status } from '../lib/status'
+import { inFlightStatus, type Status } from '../lib/status'
 import { useLoad } from '../lib/useLoad'
 
 /** PENDING_MS is how long a finished command's status outlives it when no state event arrives. */
@@ -26,6 +26,9 @@ const VERB: Record<LifecycleAction, { done: string; failed: string }> = {
 
 const mono = (name: string): ReactNode => <span className="font-mono">{name}</span>
 
+/** Pending is what a row shows while a command runs, and until the next state or PENDING_MS after. */
+type Pending = { status: Status; actions: string[] }
+
 type Confirm = { action: 'stop' | 'restart'; id: number; name: string }
 
 /**
@@ -35,7 +38,7 @@ type Confirm = { action: 'stop' | 'restart'; id: number; name: string }
 function useProjectActions() {
   const toast = useToast()
   const live = useLive()
-  const [pending, setPending] = useState<Record<number, Status>>({})
+  const [pending, setPending] = useState<Record<number, Pending>>({})
   const inflight = useRef(new Set<number>())
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
   const mounted = useRef(true)
@@ -56,19 +59,18 @@ function useProjectActions() {
     timers.current.delete(id)
   }, [])
 
-  // A new state event is the truth again, except for a command still running.
+  // A new state event is the truth again. Only a settled row holds a timer,
+  // so a command still running keeps its in-flight status.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only a new state event re-runs this.
   useEffect(() => {
     if (live.projects === null) return
+    const settled = [...timers.current.keys()]
+    if (settled.length === 0) return
+    for (const id of settled) forget(id)
     setPending((prev) => {
-      const ids = Object.keys(prev).map(Number)
-      const drop = ids.filter((id) => !inflight.current.has(id))
-      if (drop.length === 0) return prev
+      if (!settled.some((id) => id in prev)) return prev
       const next = { ...prev }
-      for (const id of drop) {
-        delete next[id]
-        forget(id)
-      }
+      for (const id of settled) delete next[id]
       return next
     })
   }, [live.projects])
@@ -78,12 +80,13 @@ function useProjectActions() {
       const verb = VERB[action]
       forget(id)
       inflight.current.add(id)
-      setPending((p) => ({ ...p, [id]: inFlightStatus(action) }))
+      // While a command runs nothing else may start, so the row has no actions.
+      setPending((p) => ({ ...p, [id]: { status: inFlightStatus(action), actions: [] } }))
 
-      let settled: Status | null = null
+      let settled: Pending | null = null
       try {
         const result = await runAction(id, action)
-        settled = result.status as Status
+        settled = { status: result.status as Status, actions: result.actions }
         if (result.outcome === 'ok') {
           toast.success(
             <>
@@ -116,8 +119,8 @@ function useProjectActions() {
         setPending(({ [id]: _gone, ...rest }) => rest)
         return
       }
-      const status = settled
-      setPending((p) => ({ ...p, [id]: status }))
+      const done = settled
+      setPending((p) => ({ ...p, [id]: done }))
       timers.current.set(
         id,
         setTimeout(() => {
@@ -142,7 +145,7 @@ export default function DashboardPage() {
 
   const dockerDown = live.dockerUp === false
   const base = live.projects ?? (load.state === 'ok' ? load.data : null)
-  const rows = base?.map((p) => overlay(p, pending[p.id], !dockerDown))
+  const rows = base?.map((p) => overlay(p, pending[p.id]))
 
   const stop = (p: Project) => setConfirm({ action: 'stop', id: p.id, name: p.displayName })
   const restart = (p: Project) => {
@@ -205,10 +208,9 @@ export default function DashboardPage() {
   )
 }
 
-/** overlay shows the status a command set optimistically, with the actions that status allows. */
-function overlay(p: Project, pending: Status | undefined, dockerUp: boolean): Project {
-  if (pending === undefined || pending === p.status) return p
-  return { ...p, status: pending, actions: allowedActions(pending, p.self, dockerUp) }
+/** overlay shows the status a command set optimistically, with the actions the server sent for it. */
+function overlay(p: Project, pending: Pending | undefined): Project {
+  return pending === undefined ? p : { ...p, status: pending.status, actions: pending.actions }
 }
 
 function Loading() {

@@ -43,27 +43,6 @@ export function inFlightStatus(action: 'start' | 'stop' | 'restart'): Status {
   return 'restarting'
 }
 
-/**
- * allowedActions mirrors the server's project.Allowed: the actions a project
- * in this status may take. The Dashboard uses it for a status it set itself
- * before the next live state arrives.
- */
-export function allowedActions(status: string, self: boolean, dockerUp: boolean): string[] {
-  if (self || !dockerUp) return []
-  switch (status) {
-    case 'running':
-      return ['stop', 'restart']
-    case 'partial':
-      return ['start', 'stop', 'restart']
-    case 'stopped':
-      return ['start']
-    case 'error':
-      return ['start', 'restart']
-    default:
-      return []
-  }
-}
-
 /** disabledReason is the title of a control whose action is not allowed. */
 export function disabledReason(status: string, self?: boolean, dockerDown?: boolean): string {
   if (isInFlight(status)) return 'Locked while a command runs'

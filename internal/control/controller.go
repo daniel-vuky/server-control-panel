@@ -33,10 +33,12 @@ const (
 
 // Result is the outcome of a command and the project's status after it, as
 // re-read from Docker (unknown when the re-read failed). Message is empty on
-// ok, and the masked reason otherwise.
+// ok, and the masked reason otherwise. Actions are what that status allows
+// now (empty when the re-read failed), so a client never re-derives them.
 type Result struct {
 	Outcome Outcome
 	Status  project.Status
+	Actions []project.Action
 	Message string
 }
 
@@ -323,6 +325,7 @@ func (c *Controller) execute(ctx context.Context, t store.Tracked, a project.Act
 	} else {
 		c.log.Warn("control: cannot re-read containers", "project", t.ID, "err", readErr)
 	}
+	res.Actions = project.Allowed(res.Status, t.Self, readErr == nil)
 	finishedBut := "The command finished but " + t.DisplayName + " is " + project.Word(res.Status) + "."
 
 	var exitErr *runner.ExitError

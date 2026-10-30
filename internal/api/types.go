@@ -135,11 +135,14 @@ type Project struct {
 
 // ActionResult is the 200 body of POST /api/projects/{id}/{action}: how the
 // command ended (ok, failed or timed_out), the project's status re-read after
-// it, and the masked reason when it did not succeed (empty on ok).
+// it, the actions that status allows now (start, stop, restart; [] when none
+// or when Docker could not be read), and the masked reason when it did not
+// succeed (empty on ok).
 type ActionResult struct {
-	Outcome string `json:"outcome"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
+	Outcome string   `json:"outcome"`
+	Status  string   `json:"status"`
+	Actions []string `json:"actions"`
+	Message string   `json:"message"`
 }
 
 // ActionRefused is the 409 or 503 body of POST /api/projects/{id}/{action}

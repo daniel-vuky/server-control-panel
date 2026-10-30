@@ -155,7 +155,11 @@ func TestDoStartOK(t *testing.T) {
 func TestDoStopOK(t *testing.T) {
 	e := newEnv(t)
 	e.cmd.containers(runningOut("shop"), stoppedOut("shop")).on(runner.ComposeStop, reply{})
-	wantResult(t, e.do(t, "shop", project.ActionStop), OutcomeOK, project.StatusStopped, "")
+	res := e.do(t, "shop", project.ActionStop)
+	wantResult(t, res, OutcomeOK, project.StatusStopped, "")
+	if !slices.Equal(res.Actions, []project.Action{project.ActionStart}) {
+		t.Errorf("actions = %v, want [start]", res.Actions)
+	}
 	wantRow(t, e, "shop", store.ActProjectStop, store.ResultOK, "")
 }
 
@@ -207,7 +211,11 @@ func TestDoRereadFails(t *testing.T) {
 			e.cmd.on(runner.DockerContainers, reply{stdout: before}, reply{err: errors.New("cannot connect to the Docker daemon")}).
 				on(runner.ComposeUp, reply{}).on(runner.ComposeStop, reply{})
 			msg := "The command finished but Docker could not be read."
-			wantResult(t, e.do(t, "shop", a), OutcomeFailed, project.StatusUnknown, msg)
+			res := e.do(t, "shop", a)
+			wantResult(t, res, OutcomeFailed, project.StatusUnknown, msg)
+			if len(res.Actions) != 0 {
+				t.Errorf("actions = %v, want none when Docker could not be read", res.Actions)
+			}
 			wantRow(t, e, "shop", "project."+string(a), store.ResultFailed, msg)
 		})
 	}

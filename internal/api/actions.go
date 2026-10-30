@@ -40,7 +40,11 @@ func (s *server) projectAction(w http.ResponseWriter, r *http.Request) {
 	var refusal *control.Refusal
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, ActionResult{Outcome: string(res.Outcome), Status: string(res.Status), Message: res.Message})
+		actions := make([]string, 0, len(res.Actions))
+		for _, a := range res.Actions {
+			actions = append(actions, string(a))
+		}
+		writeJSON(w, http.StatusOK, ActionResult{Outcome: string(res.Outcome), Status: string(res.Status), Actions: actions, Message: res.Message})
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, msgNotTracked)
 	case errors.As(err, &refusal):

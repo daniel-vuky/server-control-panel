@@ -189,11 +189,14 @@ export interface Project {
 /**
  * ActionResult is the 200 body of POST /api/projects/{id}/{action}: how the
  * command ended (ok, failed or timed_out), the project's status re-read after
- * it, and the masked reason when it did not succeed (empty on ok).
+ * it, the actions that status allows now (start, stop, restart; [] when none
+ * or when Docker could not be read), and the masked reason when it did not
+ * succeed (empty on ok).
  */
 export interface ActionResult {
   outcome: string;
   status: string;
+  actions: string[];
   message: string;
 }
 /**
