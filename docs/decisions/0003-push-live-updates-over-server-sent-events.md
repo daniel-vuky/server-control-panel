@@ -67,7 +67,7 @@ The workspace scan (#18) added a second kind of stream next to the hub:
 The project lifecycle flow (#33, #39 to #44) built the hub of decision 2, scoped to project status and the Docker state. Metrics and live logs are not on it yet.
 
 - **One shared read.** `GET /api/events` sends a `state` event (`LiveState {dockerUp, projects}`) to every subscriber. The hub runs one `docker.containers` read every 5 seconds, ticks never overlap, and it does nothing while nobody is connected (decision 3). A new subscriber gets the current state straight away.
-- **Stale reads are dropped.** A generation counter, bumped on every lock change, discards a read that started before a project's lock was released, so the post-command status is not overwritten by an older one.
+- **Stale reads are dropped.** A generation counter, bumped on every lock change, discards a read that started before the change (a lock taken or released) and reads again, up to 3 reads, so the post-command status is not overwritten by an older one.
 - **Retry.** `POST /api/docker/check` asks the hub for one fresh read and returns the result, so the Docker banner can recover without waiting for the next tick.
 - **The action response travels with the action.** `POST /api/projects/{id}/{action}` waits for the command and returns the outcome, the status read from Docker afterwards and the actions now allowed. The toast does not wait for the stream. The stream still carries the in-between status (Starting…, Stopping…, Restarting…) to other tabs while the command runs. This refines the consequence "actions and results travel on different channels": the action's own result comes back on the action request.
-- **Client.** One `EventSource` for the whole app, in `LiveProvider`. It sends the heartbeat of decision 4 and reconnects on its own.
+- **Client.** One `EventSource` for the whole app, in `LiveProvider`. It receives the heartbeat of decision 4 and reconnects on its own.

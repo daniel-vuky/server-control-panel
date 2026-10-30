@@ -61,7 +61,7 @@ The implementation of #12 refined the decision:
 
 The project lifecycle flow (#39 to #41, #43) added the lifecycle entries and tightened process handling:
 
-- **Registry.** It gains `compose.up`, `compose.stop` and `compose.restart`, each with a `.override` variant, and `docker.ping` for the Docker check. The compose entries use `up -d`, `stop` and `restart` with the usual `--project-directory` and `-f` arguments (decision 5); no value other than the two paths is accepted.
+- **Registry.** It gains `compose.up`, `compose.stop` and `compose.restart`, each with a `.override` variant, and `docker.ping` for the Docker check. The compose entries use `up -d`, `stop` and `restart` with the usual `--project-directory` and `-f` arguments (decision 5); the values are the two paths, plus the override path for the `.override` entries, and nothing else is accepted.
 - **Timeouts.** Lifecycle commands get the 60 seconds of decision 4. `docker.ping` gets 5 seconds. Read commands keep 15 seconds.
 - **Process group.** Each command starts in its own process group. On timeout or cancel the whole group is sent SIGKILL, because `docker compose` runs as a plugin child that would otherwise outlive the kill. The panel containers run with `init: true` to reap the killed trees.
 - **Masking at action time.** The controller reads the project's `.env` when the action runs and passes those values to the runner as that call's secrets (the per-call masking of the 2026-10-29 note). The outcome message and the activity reason carry the masked text only.
