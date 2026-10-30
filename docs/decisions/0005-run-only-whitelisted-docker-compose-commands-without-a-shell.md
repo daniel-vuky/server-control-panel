@@ -56,3 +56,12 @@ The implementation of #12 refined the decision:
 - **Masking is per call** (decision 4). The caller passes the secret values for that call. Stderr and the error message are masked (`••••`) before they leave the runner. Stdout goes to the caller unmasked because the caller parses it, and is never logged or stored as it is.
 - **Timeouts.** Read commands get 15 seconds. Lifecycle commands keep the 60 seconds of decision 4 when they arrive. Each output stream is capped at 4 MiB.
 - **Minimal child environment.** The child gets `PATH`, `HOME` and `DOCKER_CONFIG` (both under `$PANEL_DATA_DIR/docker`, created on first use with mode 0700) and `DOCKER_HOST` only if the panel has it set. It never inherits the panel's own environment, so the `CF_ACCESS_*` values stay out of it.
+
+## Note (2026-10-30)
+
+The project lifecycle flow (#39 to #41, #43) added the lifecycle entries and tightened process handling:
+
+- **Registry.** It gains `compose.up`, `compose.stop` and `compose.restart`, each with a `.override` variant, and `docker.ping` for the Docker check. The compose entries use `up -d`, `stop` and `restart` with the usual `--project-directory` and `-f` arguments (decision 5); no value other than the two paths is accepted.
+- **Timeouts.** Lifecycle commands get the 60 seconds of decision 4. `docker.ping` gets 5 seconds. Read commands keep 15 seconds.
+- **Process group.** Each command starts in its own process group. On timeout or cancel the whole group is sent SIGKILL, because `docker compose` runs as a plugin child that would otherwise outlive the kill. The panel containers run with `init: true` to reap the killed trees.
+- **Masking at action time.** The controller reads the project's `.env` when the action runs and passes those values to the runner as that call's secrets (the per-call masking of the 2026-10-29 note). The outcome message and the activity reason carry the masked text only.

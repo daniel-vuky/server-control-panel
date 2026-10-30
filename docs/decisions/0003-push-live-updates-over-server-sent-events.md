@@ -61,3 +61,13 @@ The workspace scan (#18) added a second kind of stream next to the hub:
 - **Behaviour.** A client that connects gets the current snapshot as a `progress` event, then further `progress` events at most about 5 per second (later updates are coalesced), then one `end` event with the final state, and the stream closes. A client that connects after the end gets the snapshot and `end` straight away. A `: ping` heartbeat goes out every 25 seconds (decision 4).
 - **Fan-out.** A small in-memory broadcaster keyed by job id lets several tabs watch one scan. It starts no work of its own.
 - **Client.** The browser uses `EventSource`. On `end` it fetches the job for the result. If the connection drops before `end`, it fetches the job once and reconnects if the job is still running.
+
+## Note (2026-10-30)
+
+The project lifecycle flow (#33, #39 to #44) built the hub of decision 2, scoped to project status and the Docker state. Metrics and live logs are not on it yet.
+
+- **One shared read.** `GET /api/events` sends a `state` event (`LiveState {dockerUp, projects}`) to every subscriber. The hub runs one `docker.containers` read every 5 seconds, ticks never overlap, and it does nothing while nobody is connected (decision 3). A new subscriber gets the current state straight away.
+- **Stale reads are dropped.** A generation counter, bumped on every lock change, discards a read that started before a project's lock was released, so the post-command status is not overwritten by an older one.
+- **Retry.** `POST /api/docker/check` asks the hub for one fresh read and returns the result, so the Docker banner can recover without waiting for the next tick.
+- **The action response travels with the action.** `POST /api/projects/{id}/{action}` waits for the command and returns the outcome, the status read from Docker afterwards and the actions now allowed. The toast does not wait for the stream. The stream still carries the in-between status (Starting…, Stopping…, Restarting…) to other tabs while the command runs. This refines the consequence "actions and results travel on different channels": the action's own result comes back on the action request.
+- **Client.** One `EventSource` for the whole app, in `LiveProvider`. It sends the heartbeat of decision 4 and reconnects on its own.

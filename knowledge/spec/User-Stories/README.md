@@ -44,6 +44,13 @@ The spec does not say these, but a story needed a decision to be testable. Each 
 10. Only scheduled backup failures send external alerts; manual failures are shown on screen (E7-F23-US02).
 11. The panel lists its own resource usage in usage by app (E6-F20-US01).
 
+Added on 2026-10-30 with the project lifecycle flow (#33, #39 to #44, #72), numbering on from the list above:
+
+12. Restarting… is a third in-between status, next to Starting… and Stopping… (E4-F12-US03).
+13. Restart of a Running or Partial project asks first (E4-F12-US03).
+14. A start or restart that exits 0 but leaves the project in Error or Unknown is reported as failed. Partial counts as started (E4-F12-US01, E4-F12-US03).
+15. A stop that exits 0 but leaves something running or restarting is reported as failed (E4-F12-US02).
+
 <a id="open-questions"></a>
 ## Decisions (2026-10-28)
 
