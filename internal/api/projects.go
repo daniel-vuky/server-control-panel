@@ -27,7 +27,7 @@ func (s *server) listProjects(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("projects: cannot read containers; every status is unknown", "err", cerr)
 		}
 	}
-	writeJSON(w, http.StatusOK, toProjects(control.Views(ts, containers, cerr, cerr == nil, s.Control.Lock)))
+	writeJSON(w, http.StatusOK, toProjects(control.Views(ts, containers, cerr, cerr == nil, s.Control.Lock, nil, nil)))
 }
 
 // toProjects maps project views to the API type, shared by GET /api/projects

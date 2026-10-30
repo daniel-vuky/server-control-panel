@@ -17,7 +17,8 @@ import (
 
 // reply is one canned answer of the fake. A non-nil gate blocks the call until
 // it is closed; delay then holds it a while longer; a non-nil hook runs next;
-// panic makes the call panic.
+// panic makes the call panic. stdout is returned with err too, as the runner
+// returns the output of a command that exited non-zero.
 type reply struct {
 	stdout string
 	err    error
@@ -33,6 +34,7 @@ type fakeCall struct {
 	Action  runner.Action
 	Values  runner.Values
 	Secrets []string
+	At      time.Time // when the call began
 }
 
 // fakeCmd answers each action from its own reply queue. A queue with one reply
@@ -43,12 +45,13 @@ type fakeCmd struct {
 	queues   map[runner.Action][]reply
 	calls    []fakeCall
 	inFlight map[runner.Action]int
+	peakOf   map[runner.Action]int
 	total    int
 	peak     int
 }
 
 func newFakeCmd() *fakeCmd {
-	return &fakeCmd{queues: map[runner.Action][]reply{}, inFlight: map[runner.Action]int{}}
+	return &fakeCmd{queues: map[runner.Action][]reply{}, inFlight: map[runner.Action]int{}, peakOf: map[runner.Action]int{}}
 }
 
 // on appends replies to the queue of action a.
@@ -77,7 +80,7 @@ func (f *fakeCmd) containers(outs ...string) *fakeCmd {
 
 func (f *fakeCmd) Run(_ context.Context, s runner.Stack, a runner.Action, v runner.Values, secrets []string) (runner.Result, error) {
 	f.mu.Lock()
-	f.calls = append(f.calls, fakeCall{s, a, v, slices.Clone(secrets)})
+	f.calls = append(f.calls, fakeCall{s, a, v, slices.Clone(secrets), time.Now()})
 	var r reply
 	q := f.queues[a]
 	switch {
@@ -90,6 +93,7 @@ func (f *fakeCmd) Run(_ context.Context, s runner.Stack, a runner.Action, v runn
 		r, f.queues[a] = q[0], q[1:]
 	}
 	f.inFlight[a]++
+	f.peakOf[a] = max(f.peakOf[a], f.inFlight[a])
 	f.total++
 	f.peak = max(f.peak, f.total)
 	f.mu.Unlock()
@@ -111,7 +115,7 @@ func (f *fakeCmd) Run(_ context.Context, s runner.Stack, a runner.Action, v runn
 		panic("fake: " + string(a))
 	}
 	if r.err != nil {
-		return runner.Result{ExitCode: 1}, r.err
+		return runner.Result{ExitCode: 1, Stdout: []byte(r.stdout)}, r.err
 	}
 	return runner.Result{Stdout: []byte(r.stdout)}, nil
 }
@@ -139,6 +143,13 @@ func (f *fakeCmd) maxInFlight() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.peak
+}
+
+// maxInFlightOf returns the most calls of action a that were in flight at once.
+func (f *fakeCmd) maxInFlightOf(a runner.Action) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.peakOf[a]
 }
 
 // running returns how many calls of action a are in flight.
@@ -197,6 +208,18 @@ func errorOut(proj string) string {
 // exited1Out is a project whose app exited 1 on SIGTERM: Error, but nothing active.
 func exited1Out(proj string) string {
 	return containerLine(proj, "app", "exited", "Exited (1) 1 second ago") + containerLine(proj, "db", "exited", "Exited (0) 1 second ago")
+}
+
+// inspectLine is one docker.inspect line for the container of (proj, service):
+// restarts restarts, started at started (RFC 3339).
+func inspectLine(proj, service string, restarts int, started string) string {
+	return fmt.Sprintf("%s\t%d\t{\"StartedAt\":%q,\"FinishedAt\":\"0001-01-01T00:00:00Z\",\"ExitCode\":0,\"OOMKilled\":false,\"Error\":\"\"}\n",
+		containerID(proj, service), restarts, started)
+}
+
+// statsLine is one docker.stats line for the container of (proj, service).
+func statsLine(proj, service, cpu, mem string) string {
+	return containerID(proj, service) + "\t" + cpu + "\t" + mem + " / 7.6GiB\n"
 }
 
 // fakeObserver records the observer calls. Each lockChanged call also reads

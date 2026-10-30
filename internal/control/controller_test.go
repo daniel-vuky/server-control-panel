@@ -625,3 +625,58 @@ func TestDoEmptyRereadIsFresh(t *testing.T) {
 		t.Fatalf("release fresh = %#v, want an empty non-nil list", release.fresh)
 	}
 }
+
+// setStopTemplate stores tmpl as the stop template of the project named name.
+func (e *env) setStopTemplate(t *testing.T, name, tmpl string) {
+	t.Helper()
+	ctx := context.Background()
+	tr, err := e.st.TrackedProject(ctx, e.ids[name])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.st.UpdateSettings(ctx, tr.ID, store.Settings{DisplayName: tr.DisplayName, StopTemplate: tmpl}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStopUsesDownWhenTemplateDown(t *testing.T) {
+	cases := []struct {
+		name       string
+		want, not  runner.Action
+		valueCount int
+	}{
+		{"shop", runner.ComposeDown, runner.ComposeStop, 2},
+		{"over", runner.ComposeDownOverride, runner.ComposeStopOverride, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.setStopTemplate(t, tc.name, "down")
+			// down removes the containers: the re-read lists none.
+			e.cmd.containers(runningOut(tc.name), "").on(tc.want, reply{})
+			wantResult(t, e.do(t, tc.name, project.ActionStop), OutcomeOK, project.StatusStopped, "")
+			calls := e.cmd.callsOf(tc.want)
+			if len(calls) != 1 || calls[0].Stack != runner.StackCompose || len(calls[0].Values) != tc.valueCount ||
+				calls[0].Values["dir"] != e.dirs[tc.name] {
+				t.Fatalf("%s calls = %+v", tc.want, calls)
+			}
+			if n := e.cmd.count(tc.not); n != 0 {
+				t.Fatalf("%d %s calls, want 0", n, tc.not)
+			}
+			wantRow(t, e, tc.name, store.ActProjectStop, store.ResultOK, "")
+		})
+	}
+}
+
+func TestRestartIgnoresTemplate(t *testing.T) {
+	e := newEnv(t)
+	e.setStopTemplate(t, "shop", "down")
+	// restart: pre-check and re-read; start: pre-check and re-read.
+	e.cmd.containers(runningOut("shop"), runningOut("shop"), stoppedOut("shop"), runningOut("shop")).
+		on(runner.ComposeRestart, reply{}).on(runner.ComposeUp, reply{})
+	wantResult(t, e.do(t, "shop", project.ActionRestart), OutcomeOK, project.StatusRunning, "")
+	wantResult(t, e.do(t, "shop", project.ActionStart), OutcomeOK, project.StatusRunning, "")
+	if r, u, d := e.cmd.count(runner.ComposeRestart), e.cmd.count(runner.ComposeUp), e.cmd.count(runner.ComposeDown); r != 1 || u != 1 || d != 0 {
+		t.Fatalf("restart %d, up %d, down %d calls; want 1, 1, 0", r, u, d)
+	}
+}

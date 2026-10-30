@@ -3,12 +3,14 @@ package control
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,7 +173,7 @@ func TestViewsEffectiveStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vs := Views(ts, cs, tt.readErr, tt.dockerUp, tt.inFlight)
+			vs := Views(ts, cs, tt.readErr, tt.dockerUp, tt.inFlight, nil, nil)
 			if len(vs) != len(ts) {
 				t.Fatalf("got %d views, want %d", len(vs), len(ts))
 			}
@@ -593,5 +595,388 @@ func TestHubNotReadyWhenTheFirstTickCannotReadTheProjects(t *testing.T) {
 	subscribe(t, h)
 	if got := e.cmd.count(runner.DockerPing); got <= n {
 		t.Fatalf("the second subscribe ran no tick (%d pings, had %d)", got, n)
+	}
+}
+
+// setMetrics sets metricsInterval and metricsMaxAge for the test. Call it
+// before newHubEnv, so the values are restored only after the loops stopped.
+func setMetrics(t *testing.T, interval, maxAge time.Duration) {
+	t.Helper()
+	oldInterval, oldAge := metricsInterval, metricsMaxAge
+	metricsInterval, metricsMaxAge = interval, maxAge
+	t.Cleanup(func() { metricsInterval, metricsMaxAge = oldInterval, oldAge })
+}
+
+// componentOf returns the component of v for service.
+func componentOf(t *testing.T, v ProjectView, service string) project.Component {
+	t.Helper()
+	for _, c := range v.Components {
+		if c.Service == service {
+			return c
+		}
+	}
+	t.Fatalf("no component %s in %+v", service, v.Components)
+	return project.Component{}
+}
+
+// untilUpdate reads updates until ok accepts one.
+func untilUpdate(t *testing.T, updates <-chan State, ok func(State) bool) State {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case s := <-updates:
+			if ok(s) {
+				return s
+			}
+		case <-deadline:
+			t.Fatal("no matching update within 5s")
+			return State{}
+		}
+	}
+}
+
+// cpuOf returns the CPU total of the project named name.
+func cpuOf(t *testing.T, s State, name string) *float64 {
+	t.Helper()
+	return viewOf(t, s, name).CPUPercent
+}
+
+func TestTickRunsInspectForTrackedContainers(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.markMissing(t, "notes")
+	oneOff := strings.Join([]string{"shop", "app", "running", "Up 1 second", "nginx", "True",
+		containerID("shop", "run"), "shop-app-run-1", "nginx", ""}, "\t") + "\n"
+	e.cmd.on(runner.DockerPing, reply{}).
+		containers(runningOut("shop")+oneOff+partialOut("blog")+runningOut("stranger")+runningOut("notes")).
+		on(runner.DockerInspect, reply{})
+	subscribe(t, h)
+
+	calls := e.cmd.callsOf(runner.DockerInspect)
+	if len(calls) == 0 {
+		t.Fatal("no docker.inspect call")
+	}
+	want := []string{containerID("shop", "app"), containerID("shop", "db"), containerID("blog", "app"), containerID("blog", "db")}
+	slices.Sort(want)
+	for _, c := range calls {
+		got := strings.Split(c.Values["ids"], " ")
+		slices.Sort(got)
+		if c.Stack != runner.StackDocker || len(c.Values) != 1 || !slices.Equal(got, want) {
+			t.Fatalf("inspect call = %s %v, want the ids of shop and blog only %v", c.Stack, got, want)
+		}
+	}
+}
+
+func TestTickSkipsInspectWithNoContainers(t *testing.T) {
+	for name, out := range map[string]string{"none at all": "", "only untracked": runningOut("stranger")} {
+		t.Run(name, func(t *testing.T) {
+			e, h := newHubEnv(t, time.Hour)
+			e.cmd.on(runner.DockerPing, reply{}).containers(out).on(runner.DockerInspect, reply{})
+			subscribe(t, h)
+			h.Check(context.Background())
+			if n := e.cmd.count(runner.DockerInspect); n != 0 {
+				t.Fatalf("%d inspect calls, want 0", n)
+			}
+		})
+	}
+}
+
+func TestTickInspectPartialFailureKeepsGoodLines(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	started := "2026-10-30T08:00:00Z"
+	// db vanished between docker ps and docker inspect: app's line, then exit 1.
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerInspect, reply{stdout: inspectLine("shop", "app", 3, started),
+			err: &runner.ExitError{Code: 1, Stderr: "Error: No such object: " + containerID("shop", "db")}})
+	cur, _ := subscribe(t, h)
+
+	v := viewOf(t, cur, "shop")
+	app := componentOf(t, v, "app")
+	if app.RestartCount != 3 || app.StartedAt == nil || app.StartedAt.Format(time.RFC3339) != started {
+		t.Fatalf("app = %+v, want 3 restarts, started %s", app, started)
+	}
+	if db := componentOf(t, v, "db"); db.StartedAt != nil {
+		t.Fatalf("db = %+v, want no start time", db)
+	}
+	if v.UpSince == nil || v.UpSince.Format(time.RFC3339) != started {
+		t.Fatalf("shop up since %v, want %s", v.UpSince, started)
+	}
+
+	// A run with no parseable line keeps the last data.
+	e.cmd.set(runner.DockerInspect, reply{err: &runner.ExitError{Code: 1, Stderr: "boom"}})
+	s := h.Check(context.Background())
+	if app := componentOf(t, viewOf(t, s, "shop"), "app"); app.RestartCount != 3 || app.StartedAt == nil {
+		t.Fatalf("app after a failed inspect = %+v, want the last data", app)
+	}
+
+	// Ids no longer listed are dropped.
+	e.cmd.set(runner.DockerContainers, reply{stdout: ""})
+	h.Check(context.Background())
+	h.mu.Lock()
+	n := len(h.insp)
+	h.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d inspect entries for containers no longer listed, want 0", n)
+	}
+}
+
+func TestLockChangedKeepsInspectAndMetrics(t *testing.T) {
+	setMetrics(t, time.Hour, time.Hour)
+	e, h := newHubEnv(t, time.Hour)
+	started := "2026-10-30T08:00:00Z"
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerInspect, reply{stdout: inspectLine("shop", "app", 3, started) + inspectLine("shop", "db", 1, started)}).
+		on(runner.DockerStats, reply{stdout: statsLine("shop", "app", "1.50%", "100MiB") + statsLine("shop", "db", "2.50%", "200MiB")})
+	cur, updates := subscribe(t, h)
+	if cpuOf(t, cur, "shop") == nil {
+		untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "shop") != nil })
+	}
+
+	check := func(s State, status project.Status) {
+		t.Helper()
+		v := viewOf(t, s, "shop")
+		if v.Status != status || v.CPUPercent == nil || *v.CPUPercent != 4 || v.MemBytes == nil || *v.MemBytes != 300<<20 ||
+			componentOf(t, v, "app").RestartCount != 3 || componentOf(t, v, "db").StartedAt == nil {
+			t.Fatalf("shop = %s cpu %v mem %v %+v, want %s with its inspect and metrics", v.Status, v.CPUPercent, v.MemBytes, v.Components, status)
+		}
+	}
+	id := e.ids["shop"]
+	e.ctl.mu.Lock()
+	e.ctl.locks[id] = projectLock{status: project.StatusRestarting}
+	e.ctl.gen++
+	e.ctl.mu.Unlock()
+	h.lockChanged(nil)
+	check(nextUpdate(t, updates, time.Second), project.StatusRestarting)
+
+	// The release's re-read runs no inspect: the hub keeps its maps.
+	e.ctl.unlock(id)
+	h.lockChanged(project.ParseContainers([]byte(runningOut("shop"))))
+	check(nextUpdate(t, updates, time.Second), project.StatusRunning)
+}
+
+func TestMetricsCadenceAndNoOverlap(t *testing.T) {
+	interval := 20 * time.Millisecond
+	setMetrics(t, interval, time.Hour)
+	e, h := newHubEnv(t, 5*time.Millisecond)
+	gate := make(chan struct{})
+	line := statsLine("shop", "app", "5.00%", "64MiB")
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerStats, reply{stdout: line, gate: gate}, reply{stdout: line})
+	_, updates, cancel := h.Subscribe()
+	e.cmd.waitRunning(t, runner.DockerStats, 1)
+
+	// The status ticks go on while the stats read is blocked.
+	e.cmd.set(runner.DockerContainers, reply{stdout: partialOut("shop")})
+	untilUpdate(t, updates, func(s State) bool { return viewOf(t, s, "shop").Status == project.StatusPartial })
+	waitTicks(t, e.cmd, 5)
+
+	// The last subscriber leaves and a new one comes: the new loop does not
+	// start a second read while the first is still running.
+	cancel()
+	_, updates, cancel = h.Subscribe()
+	t.Cleanup(cancel)
+	waitTicks(t, e.cmd, 5)
+	time.Sleep(3 * interval)
+	if n := e.cmd.count(runner.DockerStats); n != 1 {
+		t.Fatalf("%d stats reads while the first one ran, want 1", n)
+	}
+	close(gate)
+
+	// The cut read counts as failed; the new loop's next read fills the values.
+	s := untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "shop") != nil })
+	if cpu := cpuOf(t, s, "shop"); *cpu != 5 {
+		t.Fatalf("shop cpu = %v, want 5", *cpu)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for e.cmd.count(runner.DockerStats) < 4 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d stats reads, want 4", e.cmd.count(runner.DockerStats))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if p := e.cmd.maxInFlightOf(runner.DockerStats); p != 1 {
+		t.Fatalf("%d stats reads in flight at once, want 1", p)
+	}
+	calls := e.cmd.callsOf(runner.DockerStats)
+	for i := 1; i < len(calls); i++ {
+		if gap := calls[i].At.Sub(calls[i-1].At); gap < interval {
+			t.Fatalf("stats reads %d and %d began %s apart, want at least %s", i-1, i, gap, interval)
+		}
+	}
+}
+
+func TestMetricsClearedAfterMaxAge(t *testing.T) {
+	maxAge := 200 * time.Millisecond
+	setMetrics(t, 10*time.Millisecond, maxAge)
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerStats, reply{stdout: statsLine("shop", "app", "1.00%", "1MiB")}, reply{err: errors.New("stats failed")})
+	cur, updates := subscribe(t, h)
+	if cpuOf(t, cur, "shop") == nil {
+		untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "shop") != nil })
+	}
+	seen := time.Now()
+	s := untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "shop") == nil })
+	if d := time.Since(seen); d < maxAge*3/4 {
+		t.Fatalf("metrics cleared %s after the last good read, want after about %s", d, maxAge)
+	}
+	v := viewOf(t, s, "shop")
+	if len(v.Components) != 2 || v.MemBytes != nil || componentOf(t, v, "app").CPUPercent != nil {
+		t.Fatalf("shop after the clear = %+v", v)
+	}
+}
+
+func TestNoMetricsWithoutSubscriber(t *testing.T) {
+	setMetrics(t, 5*time.Millisecond, time.Hour)
+	e, h := newHubEnv(t, 5*time.Millisecond)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerStats, reply{stdout: statsLine("shop", "app", "1.00%", "1MiB")})
+	h.Check(context.Background())
+	h.Refresh()
+	time.Sleep(50 * time.Millisecond)
+	if n := e.cmd.count(runner.DockerStats); n != 0 {
+		t.Fatalf("%d stats reads with no subscriber, want 0", n)
+	}
+
+	_, _, cancel := h.Subscribe()
+	deadline := time.Now().Add(5 * time.Second)
+	for e.cmd.count(runner.DockerStats) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no stats read with a subscriber")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	waitLoops(t, h)
+	n := e.cmd.count(runner.DockerStats)
+	time.Sleep(50 * time.Millisecond)
+	if got := e.cmd.count(runner.DockerStats); got != n {
+		t.Fatalf("%d stats reads after the last subscriber left, want 0", got-n)
+	}
+}
+
+// After a successful WithLocks write the hub's cached list still holds the
+// rows the write dropped; a metrics merge must not publish them with their
+// actions before the caller's Refresh.
+func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
+	setMetrics(t, 5*time.Millisecond, time.Hour)
+	e, h := newHubEnv(t, time.Hour)
+	var rs []reply
+	for i := range 2000 { // each read changes the values, so each merge would publish
+		rs = append(rs, reply{stdout: statsLine("blog", "app", fmt.Sprintf("%d.00%%", i%7+1), "1MiB")})
+	}
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")+runningOut("blog")).on(runner.DockerStats, rs...)
+	cur, updates := subscribe(t, h)
+	if cpuOf(t, cur, "blog") == nil {
+		untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "blog") != nil })
+	}
+
+	shop := e.ids["shop"]
+	if err := e.ctl.WithLocks([]int64{shop}, func() error {
+		_, err := e.st.UntrackProject(context.Background(), shop)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reads := e.cmd.count(runner.DockerStats)
+	end := time.After(100 * time.Millisecond)
+	for done := false; !done; {
+		select {
+		case s := <-updates:
+			for _, v := range s.Projects {
+				if v.ID == shop && len(v.Actions) > 0 {
+					t.Fatalf("published the untracked shop with actions %v", v.Actions)
+				}
+			}
+		case <-end:
+			done = true
+		}
+	}
+	if n := e.cmd.count(runner.DockerStats) - reads; n < 3 {
+		t.Fatalf("%d stats reads during the check, want at least 3", n)
+	}
+	h.Refresh()
+	untilUpdate(t, updates, func(s State) bool {
+		return !slices.ContainsFunc(s.Projects, func(v ProjectView) bool { return v.ID == shop })
+	})
+}
+
+func TestHubContainers(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	cs, ok := h.Containers(context.Background())
+	if !ok || len(cs) != 2 {
+		t.Fatalf("Containers = %v %v, want shop's two containers", cs, ok)
+	}
+	e.cmd.set(runner.DockerPing, reply{err: errors.New("Cannot connect to the Docker daemon")})
+	if cs, ok := h.Containers(context.Background()); ok {
+		t.Fatalf("Containers with Docker down = %v, ok", cs)
+	}
+	e.cmd.set(runner.DockerPing, reply{})
+	e.cmd.set(runner.DockerContainers, reply{err: errors.New("boom")})
+	if cs, ok := h.Containers(context.Background()); ok {
+		t.Fatalf("Containers after a failed read = %v, ok", cs)
+	}
+}
+
+func TestViewsComponentsAndTotals(t *testing.T) {
+	ts := []store.Tracked{
+		{ID: 1, DisplayName: "shop", ComposeProject: "shop", Services: []string{"app", "db"}},
+		{ID: 2, DisplayName: "blog", ComposeProject: "blog", Services: []string{"app", "db"}},
+		{ID: 3, DisplayName: "over", ComposeProject: "over", Services: []string{"app", "db"}},
+	}
+	cs := project.ParseContainers([]byte(runningOut("shop") + partialOut("blog") + errorOut("over")))
+	early := time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC)
+	late := early.Add(time.Hour)
+	insp := map[string]project.Inspect{
+		containerID("shop", "app"): {RestartCount: 2, StartedAt: late},
+		containerID("shop", "db"):  {StartedAt: early},
+		containerID("blog", "app"): {StartedAt: late},
+		containerID("over", "db"):  {StartedAt: early},
+	}
+	use := map[string]project.Usage{
+		containerID("shop", "app"): {CPUPercent: 1.5, MemBytes: 100},
+		containerID("shop", "db"):  {CPUPercent: 2, MemBytes: 50},
+		containerID("blog", "db"):  {CPUPercent: 9, MemBytes: 9}, // exited: not counted
+		containerID("over", "db"):  {CPUPercent: 3, MemBytes: 30},
+	}
+	vs := Views(ts, cs, nil, true, nil, insp, use)
+
+	shop := vs[0]
+	if len(shop.Components) != 2 || shop.CPUPercent == nil || *shop.CPUPercent != 3.5 || shop.MemBytes == nil || *shop.MemBytes != 150 ||
+		shop.UpSince == nil || !shop.UpSince.Equal(early) || componentOf(t, shop, "app").RestartCount != 2 {
+		t.Fatalf("shop = cpu %v mem %v up %v %+v", shop.CPUPercent, shop.MemBytes, shop.UpSince, shop.Components)
+	}
+	blog := vs[1]
+	if blog.Status != project.StatusPartial || blog.CPUPercent != nil || blog.MemBytes != nil || blog.UpSince == nil || !blog.UpSince.Equal(late) {
+		t.Fatalf("blog = %s cpu %v mem %v up %v, want Partial, no metrics, up since %s", blog.Status, blog.CPUPercent, blog.MemBytes, blog.UpSince, late)
+	}
+	over := vs[2]
+	if over.Status != project.StatusError || len(over.Components) != 2 || over.CPUPercent == nil || *over.CPUPercent != 3 || over.UpSince != nil {
+		t.Fatalf("over = %s cpu %v up %v, want Error, cpu 3, no up since", over.Status, over.CPUPercent, over.UpSince)
+	}
+
+	// Without the maps (GET /api/projects) the docker ps part is still there.
+	vs = Views(ts, cs, nil, true, nil, nil, nil)
+	if v := vs[0]; len(v.Components) != 2 || v.CPUPercent != nil || v.MemBytes != nil || v.UpSince != nil {
+		t.Fatalf("shop without maps = cpu %v mem %v up %v %+v", v.CPUPercent, v.MemBytes, v.UpSince, v.Components)
+	}
+}
+
+func TestViewsDockerDownNoComponents(t *testing.T) {
+	ts := []store.Tracked{{ID: 1, DisplayName: "shop", ComposeProject: "shop", Services: []string{"app", "db"}}}
+	cs := project.ParseContainers([]byte(runningOut("shop")))
+	insp := map[string]project.Inspect{containerID("shop", "app"): {StartedAt: time.Now()}}
+	use := map[string]project.Usage{containerID("shop", "app"): {CPUPercent: 1, MemBytes: 1}}
+	for name, tc := range map[string]struct {
+		readErr  error
+		dockerUp bool
+	}{"Docker down": {errors.New("down"), false}, "read failed": {errors.New("boom"), true}} {
+		t.Run(name, func(t *testing.T) {
+			v := Views(ts, cs, tc.readErr, tc.dockerUp, nil, insp, use)[0]
+			if v.Components == nil || len(v.Components) != 0 || v.CPUPercent != nil || v.MemBytes != nil || v.UpSince != nil {
+				t.Fatalf("shop = %+v, want no components and no metrics", v)
+			}
+		})
 	}
 }
