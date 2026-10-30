@@ -79,8 +79,8 @@ func TestMigration0003OnPopulatedDB(t *testing.T) {
 		t.Fatalf("reopen with 0003 pending: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 3 {
-		t.Fatalf("schema_migrations has %d rows, want 3", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 4 {
+		t.Fatalf("schema_migrations has %d rows, want 4", n)
 	}
 	ts, err := s.TrackedProjects(ctx)
 	if err != nil || len(ts) != 1 || ts[0].DisplayName != "Shop" || ts[0].MissingSince != nil {

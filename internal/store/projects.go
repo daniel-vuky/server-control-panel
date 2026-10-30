@@ -49,6 +49,12 @@ type Tracked struct {
 	// MissingSince is set when a rescan could not find the folder; nil when
 	// the project is present.
 	MissingSince *time.Time
+	// PublicDomain is empty when unset. StopTemplate is "stop" or "down". A nil
+	// alert threshold means the server default.
+	PublicDomain    string
+	StopTemplate    string
+	AlertCPUPercent *int
+	AlertRAMMB      *int
 }
 
 // TrackedProjects lists the tracked projects, oldest first.
@@ -93,7 +99,8 @@ type queryer interface {
 // trackedIn is tracked on a transaction the caller owns.
 func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, workspace_id, display_name, path, compose_project, self, compose_files, details, missing_since FROM projects
+		`SELECT id, workspace_id, display_name, path, compose_project, self, compose_files, details, missing_since,
+		        public_domain, stop_template, alert_cpu_percent, alert_ram_mb FROM projects
 		 WHERE state = 'tracked' AND (? = 0 OR id = ?) ORDER BY id`, only, only)
 	if err != nil {
 		return nil, fmt.Errorf("store: list tracked projects: %w", err)
@@ -107,9 +114,22 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 			files   string
 			details string
 			missing sql.NullString
+			domain  sql.NullString
+			cpu     sql.NullInt64
+			ram     sql.NullInt64
 		)
-		if err := rows.Scan(&t.ID, &t.WorkspaceID, &t.DisplayName, &t.Path, &t.ComposeProject, &t.Self, &files, &details, &missing); err != nil {
+		if err := rows.Scan(&t.ID, &t.WorkspaceID, &t.DisplayName, &t.Path, &t.ComposeProject, &t.Self, &files, &details, &missing,
+			&domain, &t.StopTemplate, &cpu, &ram); err != nil {
 			return nil, fmt.Errorf("store: list tracked projects: %w", err)
+		}
+		t.PublicDomain = domain.String
+		if cpu.Valid {
+			v := int(cpu.Int64)
+			t.AlertCPUPercent = &v
+		}
+		if ram.Valid {
+			v := int(ram.Int64)
+			t.AlertRAMMB = &v
 		}
 		if missing.Valid {
 			m, err := parseTime(missing.String)
