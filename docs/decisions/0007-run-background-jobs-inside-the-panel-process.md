@@ -57,3 +57,11 @@ The project lifecycle flow (#16, #39 to #43) added the `activity` table next to 
 - **Results.** `running`, `ok`, `failed`, `timed_out`, `refused` (locked, not allowed, Docker down) and `interrupted`.
 - **Interrupted rows.** As with jobs (decision 5), a row left `running` by a crash or restart is marked `interrupted` when the store reopens.
 - **Reading it.** The timeline and its read API are #64 and not built yet.
+
+## Note (2026-10-30, #24)
+
+Rescans of tracked workspaces (#24) run as `scan` jobs: the same table, the same single-flight rule and the same progress stream as a first scan. What marks a rescan is `params.rescan`, the list of workspace ids (`{"depth":0,"rescan":[...]}`), and `ScanJob.rescan` on the API.
+
+- **One scan at a time.** A rescan is refused with 409 while any scan runs, and the 409 body tells the client whether the running job is a rescan.
+- **`WhileIdle`.** Removing a workspace must not race a scan of it. The scan manager's `WhileIdle(fn)` runs `fn` only while no scan runs, and a scan cannot start until `fn` returns.
+- **Result.** The rescan stores its result on the job like a scan; the store applies it (`ApplyRescan`) when it finishes, and `scan.track` on the rescan job adds the New rows the owner picked. The activity record uses `workspace.rescan`.

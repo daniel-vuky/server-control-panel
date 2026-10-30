@@ -51,6 +51,12 @@ Added on 2026-10-30 with the project lifecycle flow (#33, #39 to #44, #72), numb
 14. A start or restart that exits 0 but leaves the project in Error or Unknown is reported as failed. Partial counts as started (E4-F12-US01, E4-F12-US03).
 15. A stop that exits 0 but leaves something running or restarting is reported as failed (E4-F12-US02).
 
+Added on 2026-10-30 with the workspace management flow (#11, #19, #24, #25), numbering on from the list above:
+
+16. A workspace whose root is missing, unreadable or empty, or that fails the workspace-roots check, marks no project Not found when it is rescanned; the rescan shows a warning for it instead (E2-F04-US03, E2-F05-US01).
+17. Remove from list deletes the record of a project a rescan could not find, while Stop tracking on a present project remembers it as ignored (E2-F06-US03).
+18. An ignored project can be tracked again from the rescan results, through Show ignored (E2-F06-US01).
+
 <a id="open-questions"></a>
 ## Decisions (2026-10-28)
 
