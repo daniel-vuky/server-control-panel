@@ -231,7 +231,10 @@ func (c *Controller) Do(ctx context.Context, id int64, a project.Action, actor s
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{}, c.refuse(ctx, rec, notAllowed(t, a, verb, project.StatusNotFound))
+		return Result{}, c.refuse(ctx, rec, &Refusal{
+			Code: CodeNotAllowed, Status: project.StatusNotFound, ProjectID: t.ID,
+			Message: verb + " is not allowed while " + t.DisplayName + " is " + project.Word(project.StatusNotFound) + ".",
+		})
 	}
 
 	activityID, err := c.st.StartActivity(ctx, rec)
@@ -329,9 +332,16 @@ func lockedRefusal(t store.Tracked, l projectLock, status project.Status) *Refus
 // critical section, or none is: when any id is locked it returns a locked
 // *Refusal for the first such id and fn does not run. fn runs outside the
 // Controller's mutex, so it may call the store. The locks are released on
-// every path, a panic in fn included (the panic goes on). The observer hears
-// of the take and of the release. fn's error is returned as is.
-func (c *Controller) WithLocks(ids []int64, fn func() error) error {
+// every path, a panic in fn included (the panic goes on). fn's error is
+// returned as is.
+//
+// The observer hears of the take, and of the release only when fn failed or
+// panicked, so the projects get their actions back. After a successful write
+// it is not told: its cached list still holds the rows fn changed, and a
+// publish from it would show them again with their actions. The caller must
+// call Hub.Refresh after a successful write instead; the generation bump on
+// release makes a tick already running read again.
+func (c *Controller) WithLocks(ids []int64, fn func() error) (err error) {
 	c.mu.Lock()
 	for _, id := range ids {
 		if l, locked := c.locks[id]; locked {
@@ -351,6 +361,7 @@ func (c *Controller) WithLocks(ids []int64, fn func() error) error {
 	c.mu.Unlock()
 	c.notify(nil)
 
+	succeeded := false // stays false on a panic
 	defer func() {
 		c.mu.Lock()
 		for _, id := range ids {
@@ -358,9 +369,13 @@ func (c *Controller) WithLocks(ids []int64, fn func() error) error {
 		}
 		c.gen++
 		c.mu.Unlock()
-		c.notify(nil)
+		if !succeeded {
+			c.notify(nil)
+		}
 	}()
-	return fn()
+	err = fn()
+	succeeded = err == nil
+	return err
 }
 
 // Untrack stops tracking project id for actor and returns it as it was: a
@@ -369,7 +384,8 @@ func (c *Controller) WithLocks(ids []int64, fn func() error) error {
 // refused (locked) while a command runs on it, and no command can start
 // meanwhile. It records project.untrack, or project.remove for a missing
 // project, as ok or refused. It returns store.ErrNotFound for an unknown or
-// ignored project. The caller refreshes the hub.
+// ignored project. After it succeeds the caller must call Hub.Refresh: the
+// release does not tell the hub (see WithLocks).
 func (c *Controller) Untrack(ctx context.Context, id int64, actor string) (store.Tracked, error) {
 	t, err := c.st.TrackedProject(ctx, id)
 	if err != nil {

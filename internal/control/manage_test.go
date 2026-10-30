@@ -387,6 +387,33 @@ func TestWithLocksHoldsAndReleases(t *testing.T) {
 	}
 }
 
+// A successful write does not tell the observer of the release: its cached
+// list still holds the changed rows. The generation still moves.
+func TestWithLocksSuccessSkipsReleaseNotify(t *testing.T) {
+	e := newEnv(t)
+	shop := e.ids["shop"]
+	obs := &fakeObserver{ctl: e.ctl, id: shop}
+	e.ctl.setObserver(obs)
+	gen := e.ctl.Generation()
+	if err := e.ctl.WithLocks([]int64{shop}, func() error { return nil }); err != nil {
+		t.Fatalf("WithLocks = %v", err)
+	}
+	if _, _, ok := e.ctl.Lock(shop); ok {
+		t.Fatal("shop still locked")
+	}
+	if g := e.ctl.Generation(); g != gen+2 {
+		t.Fatalf("generation = %d, want %d", g, gen+2)
+	}
+	if _, err := e.ctl.Untrack(context.Background(), e.ids["blog"], actor); err != nil {
+		t.Fatalf("Untrack: %v", err)
+	}
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.changes) != 2 || obs.changes[0].gen != gen+1 || obs.changes[1].gen != gen+3 {
+		t.Fatalf("lockChanged calls = %+v, want only the two takes", obs.changes)
+	}
+}
+
 func TestWithLocksReleasesOnPanic(t *testing.T) {
 	e := newEnv(t)
 	shop, blog := e.ids["shop"], e.ids["blog"]
@@ -501,6 +528,29 @@ func TestHubRefreshRepublishesWithoutStaleTs(t *testing.T) {
 	}
 	if p := e.cmd.maxInFlight(); p != 1 {
 		t.Fatalf("%d Docker calls in flight at once, want 1", p)
+	}
+}
+
+// A successful Untrack never republishes the removed project with actions:
+// the take shows it held (no actions), and the Refresh tick drops it.
+func TestHubUntrackThenRefresh(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	_, updates := subscribe(t, h)
+
+	if _, err := e.ctl.Untrack(context.Background(), e.ids["shop"], actor); err != nil {
+		t.Fatalf("Untrack: %v", err)
+	}
+	u := nextUpdate(t, updates, time.Second)
+	if v := viewOf(t, u, "shop"); v.Status != project.StatusRunning || len(v.Actions) != 0 {
+		t.Fatalf("shop after the take = %s %v, want running with no actions", v.Status, v.Actions)
+	}
+	noUpdate(t, updates) // the release published nothing
+
+	h.Refresh()
+	u = nextUpdate(t, updates, time.Second)
+	if len(u.Projects) != 4 || slices.ContainsFunc(u.Projects, func(v ProjectView) bool { return v.DisplayName == "shop" }) {
+		t.Fatalf("update after Refresh = %+v, want 4 projects without shop", u)
 	}
 }
 

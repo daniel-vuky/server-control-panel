@@ -198,7 +198,12 @@ func (h *Hub) Refresh() {
 	case h.stopLoop == nil:
 		h.ready = false
 	case h.running != nil:
+		// That tick is now stale and its runner ticks again. A Check runner
+		// whose context ends, or the maxTickReads cap, can still leave the
+		// old list until the next interval tick.
 	default:
+		// Two quick Refresh calls may start two goroutines; the second finds
+		// the first one's tick running and shares it.
 		h.loops.Add(1)
 		go func() {
 			defer h.loops.Done()
