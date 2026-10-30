@@ -1,17 +1,30 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { disabledReason } from '../lib/status'
 
 type Props = {
   name: string
   actions: string[]
   onStart(): void
   onRestart(): void
+  /** status, self and dockerDown give a disabled item its reason as a title. */
+  status?: string
+  self?: boolean
+  dockerDown?: boolean
 }
 
 /**
  * ActionMenu is the ⋯ button of design 01 and its menu of design 09. An item
  * that is not allowed stays focusable but is aria-disabled and does nothing.
  */
-export default function ActionMenu({ name, actions, onStart, onRestart }: Props) {
+export default function ActionMenu({
+  name,
+  actions,
+  onStart,
+  onRestart,
+  status,
+  self,
+  dockerDown,
+}: Props) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -94,6 +107,11 @@ export default function ActionMenu({ name, actions, onStart, onRestart }: Props)
                 type="button"
                 role="menuitem"
                 aria-disabled={allowed ? undefined : true}
+                title={
+                  allowed || status === undefined
+                    ? undefined
+                    : disabledReason(status, self, dockerDown)
+                }
                 onClick={() => {
                   if (!allowed) return
                   close(true)

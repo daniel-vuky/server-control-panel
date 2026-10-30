@@ -145,4 +145,21 @@ describe('ActionMenu', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(trigger).toHaveFocus()
   })
+
+  it('gives a disabled item its reason as a title when it knows the status', () => {
+    render(
+      <ActionMenu
+        name="shop"
+        actions={['stop']}
+        status="running"
+        onStart={() => {}}
+        onRestart={() => {}}
+      />,
+    )
+    open(screen.getByRole('button', { name: 'More actions for shop' }))
+    expect(screen.getByRole('menuitem', { name: 'Start' })).toHaveAttribute(
+      'title',
+      'Not allowed while Running',
+    )
+  })
 })

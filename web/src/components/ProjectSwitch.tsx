@@ -1,4 +1,4 @@
-import { isInFlight, type Status, statusWord } from '../lib/status'
+import { disabledReason, isInFlight, type Status } from '../lib/status'
 
 type Props = {
   name: string
@@ -40,13 +40,7 @@ export default function ProjectSwitch({
   const needed = on ? 'stop' : 'start'
   const disabled = !actions.includes(needed)
 
-  let reason: string | undefined
-  if (disabled) {
-    if (busy) reason = 'Locked while a command runs'
-    else if (self) reason = 'Monitor only'
-    else if (dockerDown) reason = 'Docker is not responding'
-    else reason = `Not allowed while ${statusWord(status).replace('…', '')}`
-  }
+  const reason = disabled ? disabledReason(status, self, dockerDown) : undefined
 
   // Design 01 colours by `on` first: a stopping switch is off, so it stays grey.
   const bg = on ? (busy ? 'bg-switch-busy' : 'bg-switch-on') : 'bg-switch-off'
