@@ -389,15 +389,22 @@ func toResult(r scan.Result) *ScanResult {
 func toDatabases(ds []project.Database) []Database {
 	out := make([]Database, 0, len(ds))
 	for _, d := range ds {
-		out = append(out, Database{
-			Type:         d.Type,
-			Name:         d.Name,
-			LocationKind: d.LocationKind,
-			Location:     d.Location,
-			Sources:      nonNil(d.Sources),
-		})
+		out = append(out, toDatabase(d))
 	}
 	return out
+}
+
+// toDatabase maps a detected database to the API type with its key and no
+// backup rule (a scan row's).
+func toDatabase(d project.Database) Database {
+	return Database{
+		Type:         d.Type,
+		Name:         d.Name,
+		LocationKind: d.LocationKind,
+		Location:     d.Location,
+		Sources:      nonNil(d.Sources),
+		Key:          project.DatabaseKey(d),
+	}
 }
 
 // nonNil returns s, or an empty slice for nil, so it encodes as [] not null.

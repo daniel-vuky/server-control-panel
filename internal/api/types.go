@@ -1,7 +1,8 @@
 package api
 
 // The request and response bodies of the scan, rescan, track, workspace,
-// project, action, untrack, settings, logs, event and Docker check endpoints. tygo turns them into
+// project, action, untrack, settings, logs, event, Docker check, Drive and
+// backup endpoints. tygo turns them into
 // web/src/api/types.gen.ts, so every field is a built-in type, a slice of one,
 // or another type of this file. Slices are never null in a response.
 
@@ -113,13 +114,26 @@ type ScanRow struct {
 }
 
 // Database is a database a project uses. It holds names only, never values:
-// Sources lists the variables or services it was found in.
+// Sources lists the variables or services it was found in. Key identifies it
+// within its project (type:location:name). Backup says whether a backup may
+// start now; it is null on a scan row and set on a tracked project's row.
 type Database struct {
-	Type         string   `json:"type"`         // postgresql | mysql | mongodb | sqlite
-	Name         string   `json:"name"`         // database name, or the service name
-	LocationKind string   `json:"locationKind"` // container | host | external | file | unknown
-	Location     string   `json:"location"`     // service or container name, host name or file path
-	Sources      []string `json:"sources"`
+	Type         string      `json:"type"`         // postgresql | mysql | mongodb | sqlite
+	Name         string      `json:"name"`         // database name, or the service name
+	LocationKind string      `json:"locationKind"` // container | host | external | file | unknown
+	Location     string      `json:"location"`     // service or container name, host name or file path
+	Sources      []string    `json:"sources"`
+	Key          string      `json:"key"`
+	Backup       *BackupRule `json:"backup" tstype:"BackupRule | null,required"`
+}
+
+// BackupRule says whether a database can be backed up now. Allowed is true
+// only when Reason is "". Reason is not_found (the project's folder is
+// missing), not_supported, no_db_name, db_not_running, drive_not_connected,
+// drive_expired or folder_missing.
+type BackupRule struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason"`
 }
 
 // TrackRequest is the body of POST /api/scans/{id}/track. For a first-time
@@ -305,13 +319,153 @@ type RemoveResponse struct {
 }
 
 // LiveState is the data of the "state" event of GET /api/events: whether
-// Docker answers, and every tracked project as GET /api/projects returns it.
+// Docker answers, every tracked project as GET /api/projects returns it, the
+// active backups (running first, then the queue in order) and the Drive
+// connection as GET /api/drive returns it.
 type LiveState struct {
-	DockerUp bool      `json:"dockerUp"`
-	Projects []Project `json:"projects"`
+	DockerUp bool        `json:"dockerUp"`
+	Projects []Project   `json:"projects"`
+	Backups  []Backup    `json:"backups"`
+	Drive    DriveStatus `json:"drive"`
 }
 
 // DockerCheck is the body of POST /api/docker/check.
 type DockerCheck struct {
 	DockerUp bool `json:"dockerUp"`
+}
+
+// DriveFolder is a Google Drive folder the panel created.
+type DriveFolder struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// DriveStatus is the body of GET /api/drive and LiveState.Drive. State is
+// not_configured, not_connected, connected or expired. Email is the connected
+// account ("" when none), Folder the destination folder (null until chosen)
+// and Reason why Drive is not configured ("" otherwise). It never carries a
+// token.
+type DriveStatus struct {
+	State  string       `json:"state"`
+	Email  string       `json:"email"`
+	Folder *DriveFolder `json:"folder" tstype:"DriveFolder | null,required"`
+	Reason string       `json:"reason"`
+}
+
+// DriveConnectRequest is the body of POST /api/drive/connect: the same-site
+// path to come back to; anything else becomes /settings.
+type DriveConnectRequest struct {
+	ReturnTo string `json:"returnTo"`
+}
+
+// DriveConnectResponse is the 200 body of POST /api/drive/connect: the
+// consent page the browser navigates to.
+type DriveConnectResponse struct {
+	URL string `json:"url"`
+}
+
+// DriveFolderRequest is the body of POST /api/drive/folder: ID selects one of
+// the panel's folders; without an ID, Name (trimmed, 1 to 100 characters, no
+// /) creates a folder in My Drive root, or selects the panel's folder of that
+// name, and selects it.
+type DriveFolderRequest struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// DriveTestResult is the 200 body of POST /api/drive/test: OK, or the Drive
+// code (token_expired, no_access, folder_missing, quota, unreachable,
+// not_configured or not_connected) and its words.
+type DriveTestResult struct {
+	OK      bool   `json:"ok"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// DriveError is the body of a Drive route or a download that Drive (or the
+// connection) refused: Error is the code (not_configured, not_connected,
+// busy, or a Drive code such as token_expired), Message its words.
+type DriveError struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+// BackupRequest is the body of POST /api/projects/{id}/backups: the key of
+// the database to back up (Database.Key).
+type BackupRequest struct {
+	Database string `json:"database"`
+}
+
+// BackupStarted is the 202 body of POST /api/projects/{id}/backups and POST
+// /api/backups/{id}/retry: the queued backup.
+type BackupStarted struct {
+	ID int64 `json:"id"`
+}
+
+// BackupRefused is the 409 body of a backup that was not queued. Error is the
+// code: not_found, not_supported, no_db_name, drive_not_connected,
+// drive_expired, folder_missing, already_running, db_not_running, disk_short or
+// not_retryable; Message its words. ID is the backup already running (only
+// for already_running), NeedBytes and FreeBytes are set for disk_short, and
+// Service is the database's compose service once it is resolved.
+type BackupRefused struct {
+	Error     string `json:"error"`
+	Message   string `json:"message"`
+	ID        int64  `json:"id,omitempty"`
+	NeedBytes int64  `json:"needBytes,omitempty"`
+	FreeBytes int64  `json:"freeBytes,omitempty"`
+	Service   string `json:"service,omitempty"`
+}
+
+// BackupDatabase is the snapshot of the database a backup was taken of.
+type BackupDatabase struct {
+	Type         string `json:"type"`
+	Name         string `json:"name"`
+	LocationKind string `json:"locationKind"`
+	Location     string `json:"location"`
+	Key          string `json:"key"`
+}
+
+// BackupStep is one step of a backup: Step is dump, compress, upload or
+// prune; State is waiting, running, done, failed or skipped; Detail is the
+// line shown under it.
+type BackupStep struct {
+	Step   string `json:"step"`
+	State  string `json:"state"`
+	Detail string `json:"detail"`
+}
+
+// Backup is one backup run: GET /api/backups/{id}, an element of
+// BackupHistory and of LiveState.Backups. State is queued, running, ok,
+// failed, refused or interrupted; FailedStep is the step that failed ("" when
+// none). Error and Hint are masked. The times are UTC RFC 3339 ("" when not
+// reached). QueuePosition is 0 when running or finished, and N ≥ 1 while
+// waiting.
+type Backup struct {
+	ID            int64          `json:"id"`
+	ProjectID     int64          `json:"projectId"`
+	ProjectName   string         `json:"projectName"`
+	Database      BackupDatabase `json:"database"`
+	State         string         `json:"state"`
+	FailedStep    string         `json:"failedStep"`
+	Steps         []BackupStep   `json:"steps"`
+	Error         string         `json:"error"`
+	Hint          string         `json:"hint"`
+	RawBytes      int64          `json:"rawBytes"`
+	SizeBytes     int64          `json:"sizeBytes"`
+	FileName      string         `json:"fileName"`
+	DriveLink     string         `json:"driveLink"`
+	StartedBy     string         `json:"startedBy"`
+	CreatedAt     string         `json:"createdAt"`
+	StartedAt     string         `json:"startedAt"`
+	FinishedAt    string         `json:"finishedAt"`
+	DurationMS    int64          `json:"durationMs"`
+	QueuePosition int            `json:"queuePosition"`
+}
+
+// BackupHistory is the body of GET /api/projects/{id}/backups: a page of the
+// project's backups, newest first, and whether older ones remain.
+type BackupHistory struct {
+	Backups []Backup `json:"backups"`
+	More    bool     `json:"more"`
 }

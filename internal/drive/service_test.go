@@ -571,3 +571,42 @@ func TestNoTokenInStatusOrErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadNeedsNoFolder(t *testing.T) {
+	ctx := context.Background()
+	e := newSvcEnv(t)
+	if _, err := e.svc.Download(ctx, "x"); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("Download not connected = %v, want ErrNotConnected", err)
+	}
+	e.connect(t, "a@x")
+	f, err := e.svc.CreateFolder(ctx, "server-backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, _, err := e.svc.Session(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, err := sess.Upload(ctx, f.ID, "a.gz", 3, bytes.NewReader([]byte("abc")), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// With no destination folder chosen, a stored file is still readable.
+	if err := e.st.SetDriveFolder(ctx, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	e.svc = e.newService(t, testConfig())
+	if st := e.svc.Status(); st.Folder != nil {
+		t.Fatalf("Status = %+v, want no folder", st)
+	}
+	rc, err := e.svc.Download(ctx, id)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	if b, _ := io.ReadAll(rc); string(b) != "abc" {
+		t.Fatalf("content = %q", b)
+	}
+	_, err = e.svc.Download(ctx, "missing")
+	wantCode(t, err, CodeFolderMissing)
+}

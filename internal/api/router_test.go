@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,8 +16,12 @@ import (
 	"time"
 
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
+	"github.com/daniel-vuky/server-control-panel/internal/backup"
+	"github.com/daniel-vuky/server-control-panel/internal/config"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/logs"
+	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -64,6 +69,18 @@ type fakeDocker struct {
 	follow          chan string        // the follow's lines; closed, the follow exits 0
 	streamStarted   chan runner.Values // one value per Stream call
 	streamCancelled chan struct{}      // one value per Stream that ended on its ctx
+
+	dbSize string        // what the db.*.size actions print ("1024" by default)
+	dump   []byte        // what the db.*.dump actions write (dumpData by default)
+	dgate  chan struct{} // when set, the dumps wait for it to close
+	donce  sync.Once
+}
+
+// dumpData is what a dump writes by default.
+var dumpData = bytes.Repeat([]byte("INSERT INTO t VALUES (1);\n"), 64)
+
+func isDBAction(a runner.Action, kind string) bool {
+	return strings.HasPrefix(string(a), "db.") && strings.Contains(string(a), "."+kind)
 }
 
 func newFakeDocker() *fakeDocker {
@@ -120,6 +137,14 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		return runner.Result{Stdout: []byte("29.0.0\n")}, f.pingErr
+	case isDBAction(a, "size"):
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		size := f.dbSize
+		if size == "" {
+			size = "1024"
+		}
+		return runner.Result{Stdout: []byte(size + "\n")}, nil
 	case isLifecycle(a):
 		if lgate != nil {
 			<-lgate
@@ -136,6 +161,50 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 		return runner.Result{}, nil
 	}
 	return runner.Result{}, fmt.Errorf("fake: unexpected %s %s", s, a)
+}
+
+// RunTo answers the db.*.dump actions: it writes dump (dumpData by default)
+// to stdout, after waiting for dgate when it is set.
+func (f *fakeDocker) RunTo(ctx context.Context, s runner.Stack, a runner.Action, _ runner.Values, _ []string, stdout io.Writer) ([]byte, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, a)
+	gate, data := f.dgate, f.dump
+	f.mu.Unlock()
+	if !isDBAction(a, "dump") {
+		return nil, fmt.Errorf("fake: unexpected %s %s", s, a)
+	}
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if data == nil {
+		data = dumpData
+	}
+	_, err := stdout.Write(data)
+	return nil, err
+}
+
+// holdDumps makes the dumps wait until releaseDumps is called, which also
+// runs at cleanup.
+func (f *fakeDocker) holdDumps(t *testing.T) {
+	t.Helper()
+	f.mu.Lock()
+	f.dgate = make(chan struct{})
+	f.donce = sync.Once{}
+	f.mu.Unlock()
+	t.Cleanup(f.releaseDumps)
+}
+
+func (f *fakeDocker) releaseDumps() {
+	f.mu.Lock()
+	gate := f.dgate
+	f.mu.Unlock()
+	if gate != nil {
+		f.donce.Do(func() { close(gate) })
+	}
 }
 
 // Stream is the compose.logs follow: see fakeDocker.
@@ -234,18 +303,39 @@ func configJSON(name string, services map[string]service) string {
 	return string(b)
 }
 
+// testPublicURL is the panel's public origin in the test config.
+const testPublicURL = "http://localhost:5173"
+
+// testDriveConfig is a config whose DriveReason() is "" in both tag sets.
+func testDriveConfig() config.Config {
+	return config.Config{
+		SecretKey: bytes.Repeat([]byte{7}, 32), PublicURL: testPublicURL,
+		GoogleClientID: "client-id", GoogleClientSecret: "client-secret",
+	}
+}
+
 // newTestDeps returns router dependencies for tests: an identity that is
 // always allowed, a temp store, a guard over one temp root (resolved, so it
-// compares equal to stored paths), a fakeDocker, a scan manager, and the
-// lifecycle controller and live hub on the same fake.
+// compares equal to stored paths), a fakeDocker, a scan manager, the
+// lifecycle controller and live hub on the same fake, a Drive service over
+// the fake Drive (not connected) and a started backup manager, wired as in
+// cmd/panel.
 func newTestDeps(t *testing.T) Deps {
+	t.Helper()
+	return newTestDepsWith(t, nil)
+}
+
+// newTestDepsWith is newTestDeps with the fake Drive client wrapped by wrap
+// (when not nil).
+func newTestDepsWith(t *testing.T, wrap func(drive.Client) drive.Client) Deps {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "panel.db"))
+	dataDir := t.TempDir()
+	st, err := store.Open(context.Background(), filepath.Join(dataDir, "panel.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +354,33 @@ func newTestDeps(t *testing.T) Deps {
 	scans := scan.NewManager(st, docker, log)
 	scans.SetGuard(guard)
 	scans.SetOnChange(hub.Refresh)
+
+	client := drive.NewFake(filepath.Join(dataDir, "fake-drive"), testPublicURL)
+	if wrap != nil {
+		client = wrap(client)
+	}
+	drv, err := drive.NewService(testDriveConfig(), st, client, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers := func(ctx context.Context) ([]project.Container, bool) {
+		return hub.RecentContainers(ctx, 10*time.Second)
+	}
+	backups := backup.New(st, docker, drv, containers, dataDir, time.Now, log)
+	hub.SetBackupSource(backups.Active)
+	hub.SetDriveSource(drv.Status)
+	backups.OnChange(hub.Publish)
+	drv.OnChange(hub.Publish)
+	backups.Start(context.Background())
+	// Runs before the store closes: the worker stores its last row first.
+	t.Cleanup(func() {
+		backups.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := backups.Wait(ctx); err != nil {
+			t.Errorf("backups.Wait: %v", err)
+		}
+	})
 	return Deps{
 		Version:  "1.2.3",
 		Verifier: allowVerifier{},
@@ -275,6 +392,8 @@ func newTestDeps(t *testing.T) Deps {
 		Control:  ctl,
 		Hub:      hub,
 		Logs:     logs.New(docker, hub.Containers, time.Now),
+		Drive:    drv,
+		Backups:  backups,
 	}
 }
 
@@ -374,6 +493,8 @@ func TestNewRouterPanicsOnMissingDeps(t *testing.T) {
 		{"nil Control", func(d *Deps) { d.Control = nil }},
 		{"nil Hub", func(d *Deps) { d.Hub = nil }},
 		{"nil Logs", func(d *Deps) { d.Logs = nil }},
+		{"nil Drive", func(d *Deps) { d.Drive = nil }},
+		{"nil Backups", func(d *Deps) { d.Backups = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -408,6 +529,20 @@ func TestNewEndpointsNeedIdentity(t *testing.T) {
 		{http.MethodPost, "/api/projects/1/untrack"},
 		{http.MethodPost, "/api/projects/1/settings"},
 		{http.MethodGet, "/api/projects/1/logs"},
+		{http.MethodGet, "/api/drive"},
+		{http.MethodPost, "/api/drive/connect"},
+		{http.MethodGet, "/api/drive/callback"},
+		{http.MethodGet, "/api/drive/folders"},
+		{http.MethodPost, "/api/drive/folder"},
+		{http.MethodPost, "/api/drive/test"},
+		{http.MethodPost, "/api/drive/disconnect"},
+		{http.MethodGet, "/api/drive/fake-consent"},
+		{http.MethodPost, "/api/drive/fake-consent"},
+		{http.MethodPost, "/api/projects/1/backups"},
+		{http.MethodGet, "/api/projects/1/backups"},
+		{http.MethodGet, "/api/backups/1"},
+		{http.MethodPost, "/api/backups/1/retry"},
+		{http.MethodGet, "/api/backups/1/download"},
 	} {
 		if rec := do(h, tc.method, tc.path); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", tc.method, tc.path, rec.Code)

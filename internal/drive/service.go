@@ -361,6 +361,16 @@ func (s *Service) Session(ctx context.Context) (Session, Folder, error) {
 	return sess, folder, nil
 }
 
+// Download streams a file the panel uploaded. It needs a connection but not a
+// destination folder. A token_expired marks the connection expired.
+func (s *Service) Download(ctx context.Context, fileID string) (io.ReadCloser, error) {
+	sess, _, err := s.session(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	return sess.Download(ctx, fileID)
+}
+
 // markExpired records token_expired for the token of generation gen; a newer
 // connection is left alone.
 func (s *Service) markExpired(ctx context.Context, gen uint64) {

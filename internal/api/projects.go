@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/daniel-vuky/server-control-panel/internal/control"
-	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -28,8 +27,8 @@ func (s *server) listProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 // readViews gives ts their views from one docker.containers read of its own
-// (not the hub's cache), with no inspect or stats data. The Drive status is a
-// placeholder until the API holds the Drive service.
+// (not the hub's cache), with no inspect or stats data, and the Drive status
+// from the Drive service's cache.
 func (s *server) readViews(ctx context.Context, ts []store.Tracked) []control.ProjectView {
 	var containers []project.Container
 	var cerr error
@@ -38,7 +37,7 @@ func (s *server) readViews(ctx context.Context, ts []store.Tracked) []control.Pr
 			s.log.Warn("projects: cannot read containers; every status is unknown", "err", cerr)
 		}
 	}
-	return control.Views(ts, containers, cerr, cerr == nil, s.Control.Lock, nil, nil, drive.Status{State: drive.StateNotConnected})
+	return control.Views(ts, containers, cerr, cerr == nil, s.Control.Lock, nil, nil, s.Drive.Status())
 }
 
 // toProjects maps project views to the API type, shared by GET /api/projects
@@ -58,7 +57,7 @@ func toProjects(vs []control.ProjectView) []Project {
 			Self:        v.Self,
 			Status:      string(v.Status),
 			Actions:     actions,
-			Databases:   toDatabases(v.Databases),
+			Databases:   toProjectDatabases(v.DatabaseViews),
 
 			MissingSince:    formatTime(v.MissingSince),
 			PublicDomain:    v.PublicDomain,
@@ -72,6 +71,19 @@ func toProjects(vs []control.ProjectView) []Project {
 			Containers:      toContainers(v.Components),
 		}
 		out = append(out, p)
+	}
+	return out
+}
+
+// toProjectDatabases maps a project's databases with their backup rules.
+// The slice is never nil.
+func toProjectDatabases(ds []control.DatabaseView) []Database {
+	out := make([]Database, 0, len(ds))
+	for _, d := range ds {
+		db := toDatabase(d.Database)
+		db.Key = d.Key
+		db.Backup = &BackupRule{Allowed: d.Backup.Allowed, Reason: d.Backup.Reason}
+		out = append(out, db)
 	}
 	return out
 }
@@ -109,5 +121,10 @@ func formatTime(t *time.Time) string {
 
 // toLiveState maps a hub snapshot to the data of the state event.
 func toLiveState(st control.State) LiveState {
-	return LiveState{DockerUp: st.DockerUp, Projects: toProjects(st.Projects)}
+	return LiveState{
+		DockerUp: st.DockerUp,
+		Projects: toProjects(st.Projects),
+		Backups:  toBackups(st.Backups),
+		Drive:    toDriveStatus(st.Drive),
+	}
 }

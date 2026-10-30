@@ -7,7 +7,9 @@ import (
 	"net/http"
 
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
+	"github.com/daniel-vuky/server-control-panel/internal/backup"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/logs"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -28,6 +30,9 @@ type Deps struct {
 	Control *control.Controller // runs the lifecycle commands
 	Hub     *control.Hub        // the live state behind GET /api/events
 	Logs    *logs.Manager       // the shared log streams behind GET /api/projects/{id}/logs
+
+	Drive   *drive.Service  // the Google Drive connection
+	Backups *backup.Manager // queues and runs the backups
 }
 
 // server holds what the handlers share.
@@ -54,6 +59,8 @@ func NewRouter(d Deps) http.Handler {
 		{"Control", d.Control == nil},
 		{"Hub", d.Hub == nil},
 		{"Logs", d.Logs == nil},
+		{"Drive", d.Drive == nil},
+		{"Backups", d.Backups == nil},
 	} {
 		if dep.nil {
 			panic("api.NewRouter: Deps." + dep.name + " is nil")
@@ -80,9 +87,27 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/projects/{id}/untrack", protect(requireJSON(http.HandlerFunc(s.untrackProject))))
 	mux.Handle("POST /api/projects/{id}/settings", protect(requireJSON(http.HandlerFunc(s.projectSettings))))
 	mux.Handle("GET /api/projects/{id}/logs", protect(http.HandlerFunc(s.projectLogs)))
+	// The literal backups segment wins over {action} too, so a backup never
+	// reaches projectAction.
+	mux.Handle("POST /api/projects/{id}/backups", protect(requireJSON(http.HandlerFunc(s.enqueueBackup))))
+	mux.Handle("GET /api/projects/{id}/backups", protect(http.HandlerFunc(s.projectBackups)))
 	mux.Handle("POST /api/projects/{id}/{action}", protect(requireJSON(http.HandlerFunc(s.projectAction))))
+	mux.Handle("GET /api/backups/{id}", protect(http.HandlerFunc(s.getBackup)))
+	mux.Handle("POST /api/backups/{id}/retry", protect(requireJSON(http.HandlerFunc(s.retryBackup))))
+	mux.Handle("GET /api/backups/{id}/download", protect(http.HandlerFunc(s.downloadBackup)))
 	mux.Handle("GET /api/events", protect(http.HandlerFunc(s.events)))
 	mux.Handle("POST /api/docker/check", protect(requireJSON(http.HandlerFunc(s.dockerCheck))))
+	mux.Handle("GET /api/drive", protect(http.HandlerFunc(s.driveStatus)))
+	mux.Handle("POST /api/drive/connect", protect(requireJSON(http.HandlerFunc(s.driveConnect))))
+	// Google redirects the browser here, so it is a GET with no JSON body; its
+	// single-use state, bound to the actor, is the CSRF guard.
+	mux.Handle("GET /api/drive/callback", protect(http.HandlerFunc(s.driveCallback)))
+	mux.Handle("GET /api/drive/folders", protect(http.HandlerFunc(s.driveFolders)))
+	mux.Handle("POST /api/drive/folder", protect(requireJSON(http.HandlerFunc(s.driveFolder))))
+	mux.Handle("POST /api/drive/test", protect(requireJSON(http.HandlerFunc(s.driveTest))))
+	mux.Handle("POST /api/drive/disconnect", protect(requireJSON(http.HandlerFunc(s.driveDisconnect))))
+	// The fake Drive's consent page, in a dev build only.
+	registerDevRoutes(mux, s, protect)
 	mux.Handle("/api/", protect(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})))
