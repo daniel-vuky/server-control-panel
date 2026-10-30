@@ -64,7 +64,7 @@ One Go binary (`cmd/panel`) serves the JSON API and the embedded React app (`web
 - `dev/workspaces/`: sample compose projects used as the dev `WORKSPACE_ROOTS` (`shop`, `blog`, `notes`, `clients/acme/web`, `broken`, `tools`, and an `outside` symlink that must be skipped). `shop/.env` holds `devpassword`, which must never appear in the DB, logs or API.
 - v1 manages docker compose projects only.
 
-Decisions live in `docs/decisions/` (ADRs 0001-0009). The product spec and design references are in `knowledge/`.
+Decisions live in `docs/decisions/` (ADRs 0001-0010). The product spec and design references are in `knowledge/`.
 
 ## Conventions
 
