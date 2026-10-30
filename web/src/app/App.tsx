@@ -6,6 +6,7 @@ import NotFoundPage from '../pages/NotFoundPage'
 import OnboardingPage from '../pages/onboarding/OnboardingPage'
 import PlaceholderPage from '../pages/PlaceholderPage'
 import ProjectDatabase from '../pages/project/ProjectDatabase'
+import ProjectLogs from '../pages/project/ProjectLogs'
 import ProjectOverview from '../pages/project/ProjectOverview'
 import ProjectPage from '../pages/project/ProjectPage'
 import TabPlaceholder from '../pages/project/TabPlaceholder'
@@ -28,7 +29,7 @@ export const projectRoute = {
   element: <ProjectPage />,
   children: [
     { index: true, element: <ProjectOverview /> },
-    { path: 'logs', element: <TabPlaceholder issues={[37]} /> },
+    { path: 'logs', element: <ProjectLogs /> },
     { path: 'database', element: <ProjectDatabase /> },
     { path: 'settings', element: <TabPlaceholder issues={[38]} /> },
   ],

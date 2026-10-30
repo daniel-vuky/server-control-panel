@@ -34,6 +34,14 @@ const LiveContext = createContext<Live | null>(null)
 const CLOSED = 2
 /** Delays before recreating a closed source: 1 s, 2 s, 5 s, then every 10 s. */
 const BACKOFF_MS = [1000, 2000, 5000, 10000]
+
+/**
+ * backoffDelay is the wait before reconnect attempt n (1-based): 1 s, 2 s,
+ * 5 s, then 10 s. The live state and the log stream both reconnect with it.
+ */
+export function backoffDelay(attempt: number): number {
+  return BACKOFF_MS[Math.min(Math.max(attempt, 1), BACKOFF_MS.length) - 1]
+}
 /** After this many closed attempts in a row, ask whether the session expired. */
 const CHECK_SESSION_AFTER = 3
 
@@ -86,8 +94,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         return
       }
       if (stopped) return
-      const delay = BACKOFF_MS[Math.min(closedInRow, BACKOFF_MS.length) - 1]
-      timer = setTimeout(connect, delay)
+      timer = setTimeout(connect, backoffDelay(closedInRow))
     }
 
     function connect() {
