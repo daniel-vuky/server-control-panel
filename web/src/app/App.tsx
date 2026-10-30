@@ -9,7 +9,7 @@ import ProjectDatabase from '../pages/project/ProjectDatabase'
 import ProjectLogs from '../pages/project/ProjectLogs'
 import ProjectOverview from '../pages/project/ProjectOverview'
 import ProjectPage from '../pages/project/ProjectPage'
-import TabPlaceholder from '../pages/project/TabPlaceholder'
+import ProjectSettings from '../pages/project/ProjectSettings'
 import RescanPage from '../pages/RescanPage'
 import SettingsPage from '../pages/SettingsPage'
 import AppShell from './AppShell'
@@ -31,7 +31,7 @@ export const projectRoute = {
     { index: true, element: <ProjectOverview /> },
     { path: 'logs', element: <ProjectLogs /> },
     { path: 'database', element: <ProjectDatabase /> },
-    { path: 'settings', element: <TabPlaceholder issues={[38]} /> },
+    { path: 'settings', element: <ProjectSettings /> },
   ],
 } satisfies RouteObject
 

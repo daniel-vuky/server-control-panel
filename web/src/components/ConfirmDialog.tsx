@@ -6,6 +6,8 @@ type Props = {
   /** command is shown in a box under the body; without it there is no box. */
   command?: string
   confirmLabel: string
+  /** cancelLabel names the button that closes the dialog; it defaults to Cancel. */
+  cancelLabel?: string
   tone: 'danger' | 'primary'
   onConfirm(): void
   onCancel(): void
@@ -21,6 +23,7 @@ export default function ConfirmDialog({
   body,
   command,
   confirmLabel,
+  cancelLabel = 'Cancel',
   tone,
   onConfirm,
   onCancel,
@@ -96,7 +99,7 @@ export default function ConfirmDialog({
             onClick={onCancel}
             className="h-[38px] cursor-pointer rounded-lg border border-border-strong bg-transparent px-4 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
-            Cancel
+            {cancelLabel}
           </button>
           <button
             type="button"

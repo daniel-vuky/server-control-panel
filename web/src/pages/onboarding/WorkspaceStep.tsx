@@ -1,5 +1,6 @@
-import { CircleAlert, Folder, Search } from 'lucide-react'
+import { Folder, Search } from 'lucide-react'
 import type { FormEvent, ReactNode, Ref } from 'react'
+import FieldMessage from '../../components/FieldMessage'
 
 export const DEPTHS = [1, 2, 3] as const
 
@@ -134,14 +135,5 @@ export default function WorkspaceStep({
         </div>
       </form>
     </section>
-  )
-}
-
-function FieldMessage({ id, message }: { id: string; message: string }) {
-  return (
-    <p id={id} role="alert" className="flex items-start gap-[7px] text-[13px] text-danger">
-      <CircleAlert aria-hidden="true" size={15} strokeWidth={2} className="mt-0.5 flex-none" />
-      <span>{message}</span>
-    </p>
   )
 }

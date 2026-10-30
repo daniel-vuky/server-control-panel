@@ -40,9 +40,12 @@ export default function ProjectPage() {
   }, [removed, navigate])
 
   let body: ReactNode
-  if (loading) {
+  if (removed) {
+    // On its way back to the list: nothing to show for the paint before it goes.
+    body = null
+  } else if (loading) {
     body = <Loading />
-  } else if (project === null || removed) {
+  } else if (project === null) {
     body = <NotTracked />
   } else {
     const shown = actions.overlay(project)
