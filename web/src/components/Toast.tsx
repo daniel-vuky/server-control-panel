@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { Link } from 'react-router'
 
 const TOAST_MS = 4000
 const MAX_TOASTS = 4
@@ -18,12 +19,16 @@ type ToastItem = {
   kind: 'success' | 'error'
   title: ReactNode
   detail?: string
+  link?: ToastLink
 }
+
+/** ToastLink is an in-app link under an error toast's detail ("View disk usage by app"). */
+export type ToastLink = { label: string; to: string }
 
 type ToastApi = {
   show(message: ReactNode): void
   success(message: ReactNode): void
-  error(title: ReactNode, detail?: string): void
+  error(title: ReactNode, detail?: string, link?: ToastLink): void
 }
 
 const ToastContext = createContext<ToastApi | null>(null)
@@ -65,9 +70,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [dismiss],
   )
 
-  const error = useCallback((title: ReactNode, detail?: string) => {
+  const error = useCallback((title: ReactNode, detail?: string, link?: ToastLink) => {
     const id = nextId.current++
-    setToasts((list) => push(list, { id, kind: 'error', title, detail }))
+    setToasts((list) => push(list, { id, kind: 'error', title, detail, link }))
   }, [])
 
   useEffect(() => {
@@ -111,6 +116,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   <span className="whitespace-pre-line text-[13px] text-error-text">
                     {t.detail}
                   </span>
+                ) : null}
+                {t.link ? (
+                  <Link
+                    to={t.link.to}
+                    onClick={() => dismiss(t.id)}
+                    className="text-[13px] text-[#ffd7d8] hover:text-white"
+                  >
+                    {t.link.label}
+                  </Link>
                 ) : null}
               </div>
               <button

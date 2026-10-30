@@ -43,6 +43,45 @@ export function makeDatabase(overrides: Partial<Database> = {}): Database {
   return { key: `${d.type}:${d.location}:${d.name}`, backup: null, ...d }
 }
 
+/**
+ * makeBackup is backup 7 of shop's Postgres database, queued first in line,
+ * with its four steps waiting; overrides win.
+ */
+export function makeBackup(overrides: Partial<Backup> = {}): Backup {
+  return {
+    id: 7,
+    projectId: 1,
+    projectName: 'shop',
+    database: {
+      type: 'postgresql',
+      name: 'shop',
+      locationKind: 'container',
+      location: 'db',
+      key: 'postgresql:db:shop',
+    },
+    state: 'queued',
+    failedStep: '',
+    steps: ['dump', 'compress', 'upload', 'prune'].map((step) => ({
+      step,
+      state: 'waiting',
+      detail: '',
+    })),
+    error: '',
+    hint: '',
+    rawBytes: 0,
+    sizeBytes: 0,
+    fileName: '',
+    driveLink: '',
+    startedBy: 'dev@localhost',
+    createdAt: '2026-10-31T10:00:00Z',
+    startedAt: '',
+    finishedAt: '',
+    durationMs: 0,
+    queuePosition: 1,
+    ...overrides,
+  }
+}
+
 /** makeContainer is a running container of service `service`; overrides win. */
 export function makeContainer(service: string, overrides: Partial<Container> = {}): Container {
   return {

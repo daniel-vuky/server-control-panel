@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCpu, formatMem, formatUptime } from './format'
+import { formatBytes, formatCpu, formatMem, formatUptime } from './format'
 
 const MB = 1024 * 1024
 
@@ -53,5 +53,18 @@ describe('formatUptime', () => {
     [ago(-5 * min), '0m'],
   ])('%s is %s', (since, want) => {
     expect(formatUptime(since, now)).toBe(want)
+  })
+})
+
+describe('formatBytes', () => {
+  it.each([
+    [0, '0 B'],
+    [512, '512 B'],
+    [1024, '1.0 KB'],
+    [38 * MB, '38 MB'],
+    [4.2 * 1024 * MB, '4.2 GB'],
+    [212 * MB, '212 MB'],
+  ])('%s is %s, as the server words it', (n, want) => {
+    expect(formatBytes(n)).toBe(want)
   })
 })

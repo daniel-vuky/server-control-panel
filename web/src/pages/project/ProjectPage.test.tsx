@@ -155,12 +155,98 @@ describe('project page', () => {
     expect(within(header()).getByText('Running')).toBeInTheDocument()
   })
 
-  it('back up now is disabled with tooltip', () => {
-    renderProject('/projects/1')
-    pushState([shop])
-    const backup = within(header()).getByRole('button', { name: 'Back up now' })
-    expect(backup).toBeDisabled()
-    expect(backup).toHaveAttribute('title', 'Backups are not set up yet')
+  describe('back up now', () => {
+    const allowed = { allowed: true, reason: '' }
+    const drive = (state: string) => ({
+      state,
+      email: '',
+      folder: state === 'connected' ? { id: 'f', name: 'server-backups' } : null,
+      reason: '',
+    })
+    const button = () => within(header()).getByRole('button', { name: 'Back up now' })
+
+    it('is disabled with a reason when there is no database', () => {
+      renderProject('/projects/1')
+      pushState([shop])
+      expect(button()).toBeDisabled()
+      expect(button()).toHaveAttribute('title', 'No databases detected in this project.')
+    })
+
+    it("is disabled with the first database's reason when none can be backed up", () => {
+      renderProject('/projects/1')
+      pushState([
+        makeProject({
+          databases: [
+            makeDatabase({ location: 'pg', backup: { allowed: false, reason: 'db_not_running' } }),
+            makeDatabase({
+              name: 'x',
+              locationKind: 'host',
+              backup: { allowed: false, reason: 'not_supported' },
+            }),
+          ],
+        }),
+      ])
+      expect(button()).toBeDisabled()
+      expect(button()).toHaveAttribute('title', 'Start pg first')
+    })
+
+    it('stays enabled without Drive, unless Drive is not set up on this server', () => {
+      const p = makeProject({
+        databases: [makeDatabase({ backup: { allowed: false, reason: 'drive_not_connected' } })],
+      })
+      renderProject('/projects/1')
+      pushState([p], true, { drive: drive('not_connected') })
+      expect(button()).toBeEnabled()
+      fireEvent.click(button())
+      expect(screen.getByRole('dialog', { name: 'Connect Google Drive first' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Later' }))
+      pushState([p], true, { drive: drive('not_configured') })
+      expect(button()).toBeDisabled()
+      expect(button()).toHaveAttribute('title', 'Google Drive is not set up on this server.')
+    })
+
+    it('starts the one database, pending while the POST runs', async () => {
+      let answer: (r: Response) => void = () => {}
+      const stub = serve(() => new Promise<Response>((res) => (answer = res)))
+      renderProject('/projects/1')
+      pushState([makeProject({ databases: [makeDatabase({ backup: allowed })] })], true, {
+        drive: drive('connected'),
+      })
+      expect(button()).toBeEnabled()
+      fireEvent.click(button())
+      expect(button()).toBeDisabled()
+      expect(button()).toHaveAttribute('aria-busy', 'true')
+      expect(posts(stub)[0][0]).toBe('/api/projects/1/backups')
+      await act(async () => answer(json(202, { id: 7 })))
+      expect(button()).toBeEnabled()
+      // The progress dialog opens on the new id (its GET is a 401 here).
+      expect(screen.getByRole('dialog', { name: /^Backup/ })).toBeInTheDocument()
+    })
+
+    it('opens the chooser on ?backup=<key> with that database chosen, and starts nothing', () => {
+      const stub = serve(() => json(202, { id: 7 }))
+      const second = makeDatabase({ name: 'crm', backup: allowed })
+      renderProject(`/projects/1/database?backup=${encodeURIComponent(second.key)}`)
+      pushState([makeProject({ databases: [makeDatabase({ backup: allowed }), second] })], true, {
+        drive: drive('connected'),
+      })
+      const chooser = screen.getByRole('dialog', { name: 'Backup shop' })
+      expect(within(chooser).getByRole('radio', { name: 'crm' })).toBeChecked()
+      expect(posts(stub)).toHaveLength(0)
+      // The parameter is used once: a live update does not reopen it.
+      fireEvent.click(within(chooser).getByRole('button', { name: 'Cancel' }))
+      pushState([makeProject({ databases: [makeDatabase({ backup: allowed }), second] })])
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    it('opens the chooser on ?backup=<key> even for a single database', () => {
+      serve(() => json(202, { id: 7 }))
+      const only = makeDatabase({ backup: allowed })
+      renderProject(`/projects/1/database?backup=${encodeURIComponent(only.key)}`)
+      pushState([makeProject({ databases: [only] })], true, { drive: drive('connected') })
+      const chooser = screen.getByRole('dialog', { name: 'Backup shop' })
+      expect(within(chooser).getByRole('radio', { name: 'shop' })).toBeChecked()
+    })
   })
 
   it('tabs are links with their own URLs and Overview first', () => {

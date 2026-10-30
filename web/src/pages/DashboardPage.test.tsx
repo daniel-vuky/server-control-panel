@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project, Workspace } from '../api/types.gen'
 import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
-import { makeDatabase } from '../test/projects'
+import { makeBackup, makeDatabase } from '../test/projects'
 import { renderApp } from '../test/renderApp'
 import DashboardPage from './DashboardPage'
 
@@ -989,6 +989,62 @@ describe('DashboardPage', () => {
         expect(screen.queryByRole('menuitem', { name: 'Stop tracking' })).toBeNull()
         expect(screen.queryByRole('menuitem', { name: 'Remove from list' })).toBeNull()
       })
+    })
+  })
+
+  describe('back up now in the ⋯ menu', () => {
+    const one: Project = {
+      ...projects[0],
+      databases: [makeDatabase({ name: 'shop', backup: { allowed: true, reason: '' } })],
+    }
+    const none: Project = {
+      ...projects[0],
+      id: 3,
+      displayName: 'blog',
+      path: '/srv/work/blog',
+      databases: [],
+    }
+
+    function serveBackup() {
+      const stub = vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'POST' && url === '/api/projects/1/backups')
+          return json(202, { id: 7 })
+        if (url === '/api/backups/7') return json(200, makeBackup())
+        if (url === '/api/workspaces') return json(200, workspaces)
+        return json(200, [one, none])
+      })
+      vi.stubGlobal('fetch', stub)
+      return stub
+    }
+
+    it('starts the backup from the menu and opens its progress', async () => {
+      const stub = serveBackup()
+      renderPage()
+      const row = await screen.findByRole('row', { name: /shop/ })
+      fireEvent.click(within(row).getByRole('button', { name: 'More actions for shop' }))
+      const item = screen.getByRole('menuitem', { name: 'Back up now' })
+      expect(item).not.toHaveAttribute('aria-disabled')
+      fireEvent.click(item)
+      expect(await screen.findByRole('dialog', { name: 'Backup shop · shop' })).toBeInTheDocument()
+      const [, init] = stub.mock.calls.find((c) => c[0] === '/api/projects/1/backups') ?? []
+      expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+        database: 'postgresql:db:shop',
+      })
+    })
+
+    it('disables the item with its reason', async () => {
+      const stub = serveBackup()
+      renderPage()
+      const row = await screen.findByRole('row', { name: /blog/ })
+      fireEvent.click(within(row).getByRole('button', { name: 'More actions for blog' }))
+      const item = screen.getByRole('menuitem', { name: 'Back up now' })
+      expect(item).toHaveAttribute('aria-disabled', 'true')
+      expect(item).toHaveAttribute('title', 'No databases detected in this project.')
+      fireEvent.click(item)
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(
+        stub.mock.calls.some((c) => (c[1] as RequestInit | undefined)?.method === 'POST'),
+      ).toBe(false)
     })
   })
 })
