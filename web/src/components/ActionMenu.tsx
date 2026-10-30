@@ -1,0 +1,115 @@
+import { useEffect, useId, useRef, useState } from 'react'
+
+type Props = {
+  name: string
+  actions: string[]
+  onStart(): void
+  onRestart(): void
+}
+
+/**
+ * ActionMenu is the ⋯ button of design 01 and its menu of design 09. An item
+ * that is not allowed stays focusable but is aria-disabled and does nothing.
+ */
+export default function ActionMenu({ name, actions, onStart, onRestart }: Props) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+
+  const items = [
+    { key: 'start', label: 'Start', run: onStart },
+    { key: 'restart', label: 'Restart', run: onRestart },
+  ]
+
+  const close = (restoreFocus: boolean) => {
+    setOpen(false)
+    if (restoreFocus) trigger.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!open) return
+    menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    const onPointerDown = (event: MouseEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) {
+        setOpen(false)
+        trigger.current?.focus()
+      }
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    return () => document.removeEventListener('mousedown', onPointerDown)
+  }, [open])
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      close(true)
+      return
+    }
+    if (event.key === 'Tab') {
+      close(false)
+      return
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    const els = Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
+    if (els.length === 0) return
+    const at = els.indexOf(document.activeElement as HTMLElement)
+    const step = event.key === 'ArrowDown' ? 1 : -1
+    els[(at + step + els.length) % els.length].focus()
+  }
+
+  return (
+    <div ref={root} className="relative">
+      <button
+        ref={trigger}
+        type="button"
+        aria-label={`More actions for ${name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen((v) => !v)}
+        className="flex size-8 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-text-2 hover:bg-nav-active focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      >
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="5" cy="12" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="19" cy="12" r="1.7" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          ref={menu}
+          id={menuId}
+          role="menu"
+          aria-label={`Actions for ${name}`}
+          tabIndex={-1}
+          onKeyDown={onKeyDown}
+          className="absolute top-full right-0 z-10 mt-1 flex w-[220px] flex-col gap-0.5 rounded-[9px] border border-border-strong bg-[#181c22] p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+        >
+          {items.map((item) => {
+            const allowed = actions.includes(item.key)
+            return (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitem"
+                aria-disabled={allowed ? undefined : true}
+                onClick={() => {
+                  if (!allowed) return
+                  setOpen(false)
+                  item.run()
+                }}
+                className={`h-9 rounded-md border-0 bg-transparent px-2.5 text-left text-text hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-none ${allowed ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+              >
+                {item.label}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}

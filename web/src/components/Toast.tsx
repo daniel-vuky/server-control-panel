@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import {
   createContext,
   type ReactNode,
@@ -10,40 +11,113 @@ import {
 } from 'react'
 
 const TOAST_MS = 4000
+const MAX_TOASTS = 4
 
-type ToastApi = { show(message: string): void }
+type ToastItem = {
+  id: number
+  kind: 'success' | 'error'
+  title: ReactNode
+  detail?: string
+}
+
+type ToastApi = {
+  show(message: ReactNode): void
+  success(message: ReactNode): void
+  error(title: ReactNode, detail?: string): void
+}
 
 const ToastContext = createContext<ToastApi | null>(null)
 
-/** ToastProvider shows one toast at a time, bottom right, for 4 seconds. */
-export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toast, setToast] = useState<string | null>(null)
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+/** push appends a toast and trims to the cap: the oldest success goes first, an error only when all are errors. */
+function push(list: ToastItem[], next: ToastItem): ToastItem[] {
+  const out = [...list, next]
+  if (out.length <= MAX_TOASTS) return out
+  const victim = out.findIndex((t) => t.kind === 'success')
+  out.splice(victim === -1 ? 0 : victim, 1)
+  return out
+}
 
-  const show = useCallback((message: string) => {
-    clearTimeout(timer.current)
-    setToast(message)
-    timer.current = setTimeout(() => setToast(null), TOAST_MS)
+/**
+ * ToastProvider shows a stack of toasts, bottom right, newest last, at most four.
+ * A success toast clears itself after 4 seconds; an error stays until it is closed.
+ */
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<ToastItem[]>([])
+  const nextId = useRef(0)
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
+
+  const dismiss = useCallback((id: number) => {
+    setToasts((list) => list.filter((t) => t.id !== id))
   }, [])
 
-  useEffect(() => () => clearTimeout(timer.current), [])
+  const success = useCallback(
+    (message: ReactNode) => {
+      const id = nextId.current++
+      setToasts((list) => push(list, { id, kind: 'success', title: message }))
+      const timer = setTimeout(() => {
+        timers.current.delete(timer)
+        dismiss(id)
+      }, TOAST_MS)
+      timers.current.add(timer)
+    },
+    [dismiss],
+  )
 
-  const api = useMemo(() => ({ show }), [show])
+  const error = useCallback((title: ReactNode, detail?: string) => {
+    const id = nextId.current++
+    setToasts((list) => push(list, { id, kind: 'error', title, detail }))
+  }, [])
+
+  useEffect(() => {
+    const pending = timers.current
+    return () => {
+      for (const timer of pending) clearTimeout(timer)
+      pending.clear()
+    }
+  }, [])
+
+  const api = useMemo(() => ({ show: success, success, error }), [success, error])
 
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="pointer-events-none fixed right-6 bottom-6 z-50">
-        <div
-          role="status"
-          className={
-            toast
-              ? 'rounded-lg border border-border-strong bg-surface-2 px-4 py-3 text-sm text-text shadow-lg'
-              : undefined
-          }
-        >
-          {toast}
-        </div>
+      <div className="pointer-events-none fixed right-6 bottom-6 z-50 flex flex-col items-end gap-2.5">
+        {toasts.map((t) =>
+          t.kind === 'success' ? (
+            <div
+              key={t.id}
+              role="status"
+              className="pointer-events-auto flex items-center gap-2.5 rounded-[10px] border border-[#1e3a2d] bg-surface-2 px-4 py-3 text-text shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+            >
+              <span aria-hidden="true" className="size-2 flex-none rounded-full bg-success" />
+              <span>{t.title}</span>
+            </div>
+          ) : (
+            <div
+              key={t.id}
+              role="alert"
+              className="pointer-events-auto flex max-w-[420px] items-start gap-2.5 rounded-[10px] border border-error-border bg-[#1a1012] px-4 py-3 text-text shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+            >
+              <span aria-hidden="true" className="mt-1.5 size-2 flex-none rounded-full bg-danger" />
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="font-semibold">{t.title}</span>
+                {t.detail ? (
+                  <span className="whitespace-pre-line text-[13px] text-error-text">
+                    {t.detail}
+                  </span>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                aria-label="Dismiss"
+                onClick={() => dismiss(t.id)}
+                className="-my-1 -mr-2 ml-1 flex size-6 flex-none cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-error-text focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+              >
+                <X aria-hidden="true" size={14} strokeWidth={2} />
+              </button>
+            </div>
+          ),
+        )}
       </div>
     </ToastContext.Provider>
   )
