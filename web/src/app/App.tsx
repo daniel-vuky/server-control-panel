@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router'
+import { createBrowserRouter, type RouteObject, RouterProvider } from 'react-router'
 import { ToastProvider } from '../components/Toast'
 import DashboardPage from '../pages/DashboardPage'
 import NotFoundPage from '../pages/NotFoundPage'
@@ -18,30 +18,31 @@ const pages: Record<string, ReactNode> = {
   '/settings': <SettingsPage />,
 }
 
-/** The route tree without a router, so tests can wrap it in a MemoryRouter. */
-export function AppRoutes() {
-  return (
-    <ToastProvider>
-      <Routes>
-        <Route element={<AppShell />}>
-          {appRoutes.map((route) => (
-            <Route
-              key={route.path}
-              path={route.path}
-              element={pages[route.path] ?? <PlaceholderPage route={route} />}
-            />
-          ))}
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
-    </ToastProvider>
-  )
-}
+/**
+ * The route tree: the shell, every page and Page not found. The browser uses it
+ * in a data router (so a page can block navigation); tests use it in a memory one.
+ */
+export const routeObjects: RouteObject[] = [
+  {
+    element: (
+      <ToastProvider>
+        <AppShell />
+      </ToastProvider>
+    ),
+    children: [
+      ...appRoutes.map((route) => ({
+        path: route.path,
+        element: pages[route.path] ?? <PlaceholderPage route={route} />,
+      })),
+      { path: '*', element: <NotFoundPage /> },
+    ],
+  },
+]
+
+let browserRouter: ReturnType<typeof createBrowserRouter> | undefined
 
 export default function App() {
-  return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
-  )
+  // Created on first render, not on import, so importing routeObjects has no side effect.
+  browserRouter ??= createBrowserRouter(routeObjects)
+  return <RouterProvider router={browserRouter} />
 }

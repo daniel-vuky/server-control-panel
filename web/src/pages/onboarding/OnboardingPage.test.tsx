@@ -1,8 +1,7 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScanJob, ScanResult, ScanRow } from '../../api/types.gen'
-import { AppRoutes } from '../../app/App'
+import { renderApp } from '../../test/renderApp'
 
 type Listener = (e: MessageEvent) => void
 
@@ -146,12 +145,7 @@ const scanRoute =
     return extra?.(c)
   }
 
-const renderPage = () =>
-  render(
-    <MemoryRouter initialEntries={['/onboarding']}>
-      <AppRoutes />
-    </MemoryRouter>,
-  )
+const renderPage = () => renderApp('/onboarding')
 
 const pathInput = () => screen.getByLabelText('Root folder path')
 
@@ -532,11 +526,7 @@ describe('onboarding, hand-off from the rescan page and the dashboard', () => {
         ? [200, job({ path: '/srv/busy', depth: 2 })]
         : undefined,
     )
-    render(
-      <MemoryRouter initialEntries={[{ pathname: '/onboarding', state: { scanId: 7 } }]}>
-        <AppRoutes />
-      </MemoryRouter>,
-    )
+    renderApp({ pathname: '/onboarding', state: { scanId: 7 } })
     const es = await eventSource()
     expect(es.url).toBe('/api/scans/7/events')
     expect(posts('/api/scans')).toHaveLength(0)

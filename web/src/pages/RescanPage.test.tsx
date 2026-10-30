@@ -1,8 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScanJob, ScanResult, ScanRow } from '../api/types.gen'
-import { AppRoutes } from '../app/App'
+import { renderApp } from '../test/renderApp'
 
 type Listener = (e: MessageEvent) => void
 
@@ -119,11 +118,7 @@ const jobRoute =
   }
 
 const renderAt = (entries = ['/', '/rescan/7'], index = entries.length - 1) =>
-  render(
-    <MemoryRouter initialEntries={entries} initialIndex={index}>
-      <AppRoutes />
-    </MemoryRouter>,
-  )
+  renderApp(entries, { index })
 
 const eventSource = async () => {
   await waitFor(() => expect(StubEventSource.instances.length).toBeGreaterThan(0))

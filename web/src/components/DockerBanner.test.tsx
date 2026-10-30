@@ -1,16 +1,9 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AppRoutes } from '../app/App'
 import { FakeEventSource } from '../test/fakeEventSource'
+import { renderApp } from '../test/renderApp'
 
-function renderSettings() {
-  return render(
-    <MemoryRouter initialEntries={['/settings']}>
-      <AppRoutes />
-    </MemoryRouter>,
-  )
-}
+const renderSettings = () => renderApp('/settings')
 
 const NOT_RESPONDING = 'Docker daemon is not responding.'
 

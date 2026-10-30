@@ -1,14 +1,8 @@
-import { render, screen, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { AppRoutes } from './App'
+import { renderApp } from '../test/renderApp'
 
-const renderAt = (path: string) =>
-  render(
-    <MemoryRouter initialEntries={[path]}>
-      <AppRoutes />
-    </MemoryRouter>,
-  )
+const renderAt = (path: string) => renderApp(path)
 
 describe('app shell', () => {
   it('shows the six nav entries in design order', () => {

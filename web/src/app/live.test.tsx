@@ -5,9 +5,10 @@ import { FakeEventSource } from '../test/fakeEventSource'
 import { LiveProvider, useLive } from './live'
 
 function Probe() {
-  const { dockerUp, projects, checking, recheckDocker } = useLive()
+  const { dockerUp, projects, checking, recheckDocker, connection } = useLive()
   return (
     <div>
+      <span data-testid="connection">{connection}</span>
       <span data-testid="docker">{String(dockerUp)}</span>
       <span data-testid="projects">{projects === null ? 'null' : projects.length}</span>
       <span data-testid="checking">{String(checking)}</span>
@@ -169,5 +170,197 @@ describe('LiveProvider', () => {
     fireEvent.click(screen.getByRole('button', { name: 'recheck' }))
     await waitFor(() => expect(screen.getByTestId('checking')).toHaveTextContent('false'))
     expect(screen.getByTestId('docker')).toHaveTextContent('false')
+  })
+})
+
+describe('LiveProvider connection', () => {
+  const EVENTS = '/api/events'
+  const latest = () => {
+    const es = FakeEventSource.latest(EVENTS)
+    if (!es) throw new Error('no EventSource for /api/events')
+    return es
+  }
+  const connection = () => screen.getByTestId('connection')
+  const renderProbe = () =>
+    render(
+      <LiveProvider>
+        <Probe />
+      </LiveProvider>,
+    )
+  /** advance moves the fake clock and lets the timers' callbacks and promises settle. */
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  /** closeLatest makes the current source CLOSED and lets the provider react. */
+  const closeLatest = () =>
+    act(async () => {
+      latest().closeWithError()
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+  beforeEach(() => {
+    FakeEventSource.instances = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('opens then shows Realtime', () => {
+    renderProbe()
+    expect(connection()).toHaveTextContent('connecting')
+    act(() => latest().open())
+    // Open counts from the first state, which carries the current values.
+    expect(connection()).toHaveTextContent('connecting')
+    act(() => latest().emit('state', state))
+    expect(connection()).toHaveTextContent('open')
+  })
+
+  it('stays connecting on an error before the first state', () => {
+    renderProbe()
+    act(() => latest().fail())
+    expect(connection()).toHaveTextContent('connecting')
+  })
+
+  it('error after open shows lost and keeps the last values', () => {
+    renderProbe()
+    act(() => latest().emit('state', state))
+    act(() => latest().fail())
+    expect(connection()).toHaveTextContent('lost')
+    expect(screen.getByTestId('projects')).toHaveTextContent('1')
+    expect(screen.getByTestId('docker')).toHaveTextContent('true')
+    // The browser retries a CONNECTING source on its own.
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(1)
+  })
+
+  it('recovers on the next state event', () => {
+    renderProbe()
+    act(() => latest().emit('state', state))
+    act(() => latest().fail())
+    expect(connection()).toHaveTextContent('lost')
+    act(() => latest().open())
+    expect(connection()).toHaveTextContent('lost')
+    act(() => latest().emit('state', { dockerUp: false, projects: [] }))
+    expect(connection()).toHaveTextContent('open')
+    expect(screen.getByTestId('projects')).toHaveTextContent('0')
+  })
+
+  it('recreates a closed EventSource with backoff', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"email":"dev@localhost"}', { status: 200 })),
+    )
+    renderProbe()
+    act(() => latest().emit('state', state))
+
+    // Delays 1 s, 2 s, 5 s, then every 10 s.
+    for (const [n, delay] of [
+      [2, 1000],
+      [3, 2000],
+      [4, 5000],
+      [5, 10000],
+      [6, 10000],
+    ]) {
+      const before = latest()
+      await closeLatest()
+      expect(before.closed).toBe(true)
+      expect(connection()).toHaveTextContent('lost')
+      await advance(delay - 1)
+      expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(n - 1)
+      await advance(1)
+      expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(n)
+    }
+
+    // A state on the new source resets the backoff.
+    act(() => latest().emit('state', state))
+    expect(connection()).toHaveTextContent('open')
+    await closeLatest()
+    await advance(1000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(7)
+  })
+
+  it('detects an expired session after 3 closed attempts', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => new Response('{"error":"unauthorized"}', { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderProbe()
+    act(() => latest().emit('state', state))
+
+    await closeLatest()
+    await advance(1000)
+    await closeLatest()
+    await advance(2000)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(connection()).toHaveTextContent('lost')
+
+    await closeLatest()
+    expect(fetchMock).toHaveBeenCalledWith('/api/me', { redirect: 'manual' })
+    expect(connection()).toHaveTextContent('expired')
+
+    // An expired session is not retried: Reload is the way back.
+    await advance(60000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(3)
+  })
+
+  it.each([
+    [
+      'an opaque redirect',
+      () => {
+        const r = new Response(null)
+        Object.defineProperty(r, 'type', { value: 'opaqueredirect' })
+        return r
+      },
+    ],
+    ['a 403', () => new Response('', { status: 403 })],
+  ])('treats %s from /api/me as expired', async (_name, answer) => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => answer()),
+    )
+    renderProbe()
+    await closeLatest()
+    await advance(1000)
+    await closeLatest()
+    await advance(2000)
+    await closeLatest()
+    expect(connection()).toHaveTextContent('expired')
+  })
+
+  it('keeps retrying every 10 s while /api/me answers or fails', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"email":"dev@localhost"}', { status: 200 }))
+      .mockRejectedValueOnce(new TypeError('network down'))
+    vi.stubGlobal('fetch', fetchMock)
+    renderProbe()
+    act(() => latest().emit('state', state))
+    await closeLatest()
+    await advance(1000)
+    await closeLatest()
+    await advance(2000)
+    await closeLatest()
+    expect(connection()).toHaveTextContent('lost')
+    await advance(5000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(4)
+    await closeLatest()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(connection()).toHaveTextContent('lost')
+    await advance(10000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(5)
+  })
+
+  it('stops reconnecting on unmount', async () => {
+    vi.useFakeTimers()
+    const { unmount } = renderProbe()
+    act(() => latest().emit('state', state))
+    await closeLatest()
+    unmount()
+    await advance(60000)
+    expect(FakeEventSource.forUrl(EVENTS)).toHaveLength(1)
   })
 })

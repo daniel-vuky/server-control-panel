@@ -1,11 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project, Workspace } from '../api/types.gen'
-import { LiveProvider } from '../app/live'
-import { ToastProvider } from '../components/Toast'
 import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
+import { renderApp } from '../test/renderApp'
 import DashboardPage from './DashboardPage'
 
 const projects: Project[] = [
@@ -102,18 +101,12 @@ function Where() {
 }
 
 const renderPage = () =>
-  render(
-    <MemoryRouter>
-      <ToastProvider>
-        <LiveProvider>
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="*" element={<Where />} />
-          </Routes>
-        </LiveProvider>
-      </ToastProvider>
-    </MemoryRouter>,
-  )
+  renderApp('/', {
+    routes: [
+      { path: '/', element: <DashboardPage /> },
+      { path: '*', element: <Where /> },
+    ],
+  })
 
 beforeEach(() => {
   FakeEventSource.instances = []
