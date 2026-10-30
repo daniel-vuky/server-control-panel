@@ -130,6 +130,16 @@ describe('Toast', () => {
     expect(texts[3]).toContain('e5')
   })
 
+  it('four errors then a success shows the success and drops the oldest error', () => {
+    setup()
+    for (const n of ['e1', 'e2', 'e3', 'e4']) act(() => api.error(n))
+    act(() => api.success('ok'))
+    expect(screen.getByRole('status')).toHaveTextContent('ok')
+    const errs = screen.getAllByRole('alert').map((e) => e.textContent)
+    expect(errs).toHaveLength(3)
+    expect(errs.join()).not.toContain('e1')
+  })
+
   it('useToast throws outside a provider', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(() => render(<Trigger message="x" />)).toThrow(/ToastProvider/)

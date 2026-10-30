@@ -1,6 +1,33 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import ActionMenu from './ActionMenu'
+import ConfirmDialog from './ConfirmDialog'
+
+function MenuWithDialog() {
+  const [confirm, setConfirm] = useState(false)
+  return (
+    <>
+      <ActionMenu
+        name="shop"
+        actions={['restart']}
+        onStart={() => {}}
+        onRestart={() => setConfirm(true)}
+      />
+      {confirm && (
+        <ConfirmDialog
+          title="Restart shop?"
+          body="x"
+          command="docker compose restart"
+          confirmLabel="Restart"
+          tone="primary"
+          onConfirm={() => setConfirm(false)}
+          onCancel={() => setConfirm(false)}
+        />
+      )}
+    </>
+  )
+}
 
 function setup(actions: string[]) {
   const onStart = vi.fn()
@@ -99,5 +126,23 @@ describe('ActionMenu', () => {
     open(trigger)
     open(trigger)
     expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('activating an item returns focus to the button', () => {
+    const { trigger } = setup(['start', 'restart'])
+    open(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
+    expect(trigger).toHaveFocus()
+  })
+
+  it('a dialog opened from an item hands focus back to the button after Escape', () => {
+    render(<MenuWithDialog />)
+    const trigger = screen.getByRole('button', { name: 'More actions for shop' })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(trigger).toHaveFocus()
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
 type Props = {
   name: string
@@ -23,23 +23,20 @@ export default function ActionMenu({ name, actions, onStart, onRestart }: Props)
     { key: 'restart', label: 'Restart', run: onRestart },
   ]
 
-  const close = (restoreFocus: boolean) => {
+  const close = useCallback((restoreFocus: boolean) => {
     setOpen(false)
     if (restoreFocus) trigger.current?.focus()
-  }
+  }, [])
 
   useEffect(() => {
     if (!open) return
     menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
     const onPointerDown = (event: MouseEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) {
-        setOpen(false)
-        trigger.current?.focus()
-      }
+      if (root.current && !root.current.contains(event.target as Node)) close(true)
     }
     document.addEventListener('mousedown', onPointerDown)
     return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [open])
+  }, [open, close])
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
@@ -99,10 +96,10 @@ export default function ActionMenu({ name, actions, onStart, onRestart }: Props)
                 aria-disabled={allowed ? undefined : true}
                 onClick={() => {
                   if (!allowed) return
-                  setOpen(false)
+                  close(true)
                   item.run()
                 }}
-                className={`h-9 rounded-md border-0 bg-transparent px-2.5 text-left text-text hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-none ${allowed ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                className={`h-9 rounded-md border-0 bg-transparent px-2.5 text-left text-text hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${allowed ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
               >
                 {item.label}
               </button>

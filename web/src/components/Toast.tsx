@@ -28,12 +28,14 @@ type ToastApi = {
 
 const ToastContext = createContext<ToastApi | null>(null)
 
-/** push appends a toast and trims to the cap: the oldest success goes first, an error only when all are errors. */
+/** push appends a toast. At the cap, the oldest existing success goes first, or the oldest error when all are errors; the new toast always shows. */
 function push(list: ToastItem[], next: ToastItem): ToastItem[] {
-  const out = [...list, next]
-  if (out.length <= MAX_TOASTS) return out
-  const victim = out.findIndex((t) => t.kind === 'success')
-  out.splice(victim === -1 ? 0 : victim, 1)
+  const out = [...list]
+  if (out.length >= MAX_TOASTS) {
+    const victim = out.findIndex((t) => t.kind === 'success')
+    out.splice(victim === -1 ? 0 : victim, 1)
+  }
+  out.push(next)
   return out
 }
 
