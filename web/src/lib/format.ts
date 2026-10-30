@@ -8,9 +8,13 @@ export function formatMem(bytes: number | null): string {
   return `${(mb / 1024).toFixed(1)} GB`
 }
 
-/** formatCpu is a CPU percentage rounded to a whole number ("12%"); null is "—". */
-export function formatCpu(percent: number | null): string {
-  return percent === null ? '—' : `${Math.round(percent)}%`
+/**
+ * formatCpu is a CPU percentage rounded to a whole number ("12%"), or to
+ * `digits` decimals ("9.8%"); null is "—".
+ */
+export function formatCpu(percent: number | null, digits = 0): string {
+  if (percent === null) return '—'
+  return digits === 0 ? `${Math.round(percent)}%` : `${percent.toFixed(digits)}%`
 }
 
 /**

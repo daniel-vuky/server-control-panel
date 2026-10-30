@@ -30,7 +30,11 @@ export const appRoutes: AppRoute[] = [
     issues: [4],
     nav: { label: 'Projects', icon: FolderKanban },
   },
-  { path: '/projects/:id', title: 'Project detail', issues: [4, 5] },
+  {
+    path: '/projects/:id',
+    title: 'Project detail',
+    issues: [4, 5, 31, 32, 34, 35, 37, 38],
+  },
   { path: '/onboarding', title: 'Onboarding', issues: [17, 18, 23, 26] },
   { path: '/rescan/:id', title: 'Rescan', issues: [24] },
   {

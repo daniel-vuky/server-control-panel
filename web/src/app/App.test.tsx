@@ -18,7 +18,6 @@ describe('app shell', () => {
   it.each([
     ['/', 'Dashboard'],
     ['/projects', 'Projects'],
-    ['/projects/shop-api', 'Project detail'],
     ['/onboarding', 'Add a workspace'],
     ['/backups', 'Backups'],
     ['/server', 'Server'],
@@ -45,6 +44,13 @@ describe('app shell', () => {
   it('maps /onboarding to the onboarding page, not its placeholder', () => {
     renderAt('/onboarding')
     expect(screen.getByRole('region', { name: 'Add project folder' })).toBeInTheDocument()
+    expect(screen.queryByText(/Coming in/)).toBeNull()
+  })
+
+  it('maps /projects/:id to the project page, not its placeholder', () => {
+    renderAt('/projects/1')
+    // No live state arrives here (no EventSource), so the page waits for it.
+    expect(screen.getByText('Loading project…')).toBeInTheDocument()
     expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 

@@ -28,6 +28,12 @@ describe('formatCpu', () => {
   ])('%s is %s', (p, want) => {
     expect(formatCpu(p)).toBe(want)
   })
+
+  it('keeps the decimals it is asked for', () => {
+    expect(formatCpu(9.84, 1)).toBe('9.8%')
+    expect(formatCpu(20, 1)).toBe('20.0%')
+    expect(formatCpu(null, 1)).toBe('—')
+  })
 })
 
 describe('formatUptime', () => {

@@ -13,7 +13,7 @@ import ProjectSwitch from '../components/ProjectSwitch'
 import StatusBadge from '../components/StatusBadge'
 import { formatCpu, formatMem } from '../lib/format'
 import type { Status } from '../lib/status'
-import { formatLastScan } from '../lib/time'
+import { folderMissing, formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
 import { useProjectActions } from '../lib/useProjectActions'
 import { useRescan } from '../lib/useRescan'
@@ -284,10 +284,7 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntr
                 </span>
                 {p.status === 'notfound' && (
                   <span className="mt-1 block text-[13px] text-muted">
-                    {p.missingSince === ''
-                      ? 'Folder missing since the last scan.'
-                      : `Folder missing since the ${formatLastScan(p.missingSince)} scan.`}{' '}
-                    Not removed automatically.
+                    {folderMissing(p.missingSince)}
                   </span>
                 )}
               </td>

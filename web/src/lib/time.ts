@@ -24,3 +24,12 @@ export function formatLastScan(iso: string, now: Date = new Date()): string {
   if (sameDay(d, now)) return hhmm
   return `${part(day, d, 'day')} ${part(day, d, 'month')} ${hhmm}`
 }
+
+/** folderMissing is the Not found line of a project whose folder a rescan could not find. */
+export function folderMissing(missingSince: string): string {
+  const since =
+    missingSince === ''
+      ? 'Folder missing since the last scan.'
+      : `Folder missing since the ${formatLastScan(missingSince)} scan.`
+  return `${since} Not removed automatically.`
+}
