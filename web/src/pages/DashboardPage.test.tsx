@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Project } from '../api/types.gen'
+import type { Project, Workspace } from '../api/types.gen'
 import { LiveProvider } from '../app/live'
 import { ToastProvider } from '../components/Toast'
+import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
 import DashboardPage from './DashboardPage'
 
@@ -35,15 +36,51 @@ const projects: Project[] = [
   },
 ]
 
-/** serve stubs fetch with one answer per call, the last one repeating. */
+const workspaces: Workspace[] = [
+  {
+    id: 1,
+    name: 'work',
+    path: '/srv/work',
+    depth: 3,
+    lastScanAt: '2026-10-30T09:42:00Z',
+    tracked: 2,
+    ignored: 0,
+  },
+]
+
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
+
+/**
+ * serve stubs fetch by URL. GET /api/projects answers one entry per call, the
+ * last one repeating; GET /api/workspaces answers the list given (one
+ * workspace by default), so that load can never take a queued projects answer.
+ */
 function serve(...answers: Array<[number, unknown]>) {
   let n = 0
-  const fetchStub = vi.fn(async () => {
+  const fetchStub = vi.fn(async (url: string) => {
+    if (url === '/api/workspaces') return json(200, workspaces)
     const [status, body] = answers[Math.min(n++, answers.length - 1)]
-    return new Response(JSON.stringify(body), { status })
+    return json(status, body)
   })
   vi.stubGlobal('fetch', fetchStub)
   return fetchStub
+}
+
+/** gets lists the calls of one GET path. */
+const gets = (stub: ReturnType<typeof vi.fn>, path: string) =>
+  stub.mock.calls.filter(
+    (c) => c[0] === path && (c[1] as RequestInit | undefined)?.method !== 'POST',
+  )
+
+/** Where shows the route it is mounted on, so a test can see where the page navigated. */
+function Where() {
+  const loc = useLocation()
+  return (
+    <div data-testid="where">
+      {loc.pathname}
+      <span data-testid="where-state">{JSON.stringify(loc.state)}</span>
+    </div>
+  )
 }
 
 const renderPage = () =>
@@ -51,7 +88,10 @@ const renderPage = () =>
     <MemoryRouter>
       <ToastProvider>
         <LiveProvider>
-          <DashboardPage />
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="*" element={<Where />} />
+          </Routes>
         </LiveProvider>
       </ToastProvider>
     </MemoryRouter>,
@@ -83,7 +123,7 @@ describe('DashboardPage', () => {
     renderPage()
 
     const shop = await screen.findByRole('row', { name: /shop/ })
-    expect(fetchStub.mock.calls[0]).toEqual(['/api/projects', expect.anything()])
+    expect(gets(fetchStub, '/api/projects')).toHaveLength(1)
     expect(within(shop).getByText('shop')).toBeInTheDocument()
     expect(within(shop).getByText('/srv/work/shop')).toBeInTheDocument()
     expect(within(shop).getByText('Running')).toBeInTheDocument()
@@ -128,7 +168,7 @@ describe('DashboardPage', () => {
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     expect(await screen.findByText('/srv/work/shop')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(fetchStub).toHaveBeenCalledTimes(2)
+    expect(gets(fetchStub, '/api/projects')).toHaveLength(2)
   })
 
   it('treats a non-JSON 2xx as an error', async () => {
@@ -170,8 +210,9 @@ describe('DashboardPage', () => {
 
     /** serveActions answers GET /api/projects with the list and each POST with next(). */
     function serveActions(next: () => Promise<Response> | Response, rows: Project[] = list) {
-      const fetchStub = vi.fn(async (_url: string, init?: RequestInit) => {
+      const fetchStub = vi.fn(async (url: string, init?: RequestInit) => {
         if (init?.method === 'POST') return next()
+        if (url === '/api/workspaces') return json(200, workspaces)
         return new Response(JSON.stringify(rows), { status: 200 })
       })
       vi.stubGlobal('fetch', fetchStub)
@@ -337,8 +378,9 @@ describe('DashboardPage', () => {
     })
 
     it('shows a network failure as an error toast', async () => {
-      const stub = vi.fn(async (_url: string, init?: RequestInit) => {
+      const stub = vi.fn(async (url: string, init?: RequestInit) => {
         if (init?.method === 'POST') throw new TypeError('Failed to fetch')
+        if (url === '/api/workspaces') return json(200, workspaces)
         return new Response(JSON.stringify(list), { status: 200 })
       })
       vi.stubGlobal('fetch', stub)
@@ -467,6 +509,339 @@ describe('DashboardPage', () => {
       const sw = within(row(/shop/)).getByRole('switch', { name: 'Start shop' })
       expect(sw).toBeEnabled()
       expect(sw).not.toHaveAttribute('title')
+    })
+  })
+  describe('workspaces, rescan and stop tracking', () => {
+    type Handler = () => Response | Promise<Response>
+    /** route answers by "METHOD path"; anything else is a 404. */
+    function route(handlers: Record<string, Handler>) {
+      const stub = vi.fn(async (url: string, init?: RequestInit) => {
+        const h = handlers[`${init?.method ?? 'GET'} ${url}`]
+        return h ? h() : json(404, { error: 'not found' })
+      })
+      vi.stubGlobal('fetch', stub)
+      return stub
+    }
+    const posts = (stub: ReturnType<typeof vi.fn>, url?: string) =>
+      stub.mock.calls.filter(
+        (c) => (c[1] as RequestInit | undefined)?.method === 'POST' && (!url || c[0] === url),
+      )
+    const header = () => screen.getByRole('heading', { level: 1 }).parentElement as HTMLElement
+    const row = (name: RegExp) => screen.getByRole('row', { name })
+    const where = () => screen.getByTestId('where').firstChild?.textContent
+
+    describe('first screen', () => {
+      it('goes to onboarding, replacing the entry, when there is no workspace', async () => {
+        route({
+          'GET /api/workspaces': () => json(200, []),
+          'GET /api/projects': () => json(200, []),
+        })
+        renderPage()
+        expect(await screen.findByTestId('where')).toHaveTextContent('/onboarding')
+        expect(screen.queryByRole('heading', { name: 'Dashboard' })).toBeNull()
+      })
+
+      it('stays on the Dashboard with a workspace', async () => {
+        const stub = route({
+          'GET /api/workspaces': () => json(200, workspaces),
+          'GET /api/projects': () => json(200, projects),
+        })
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        expect(screen.queryByTestId('where')).toBeNull()
+        expect(gets(stub, '/api/workspaces')).toHaveLength(1)
+      })
+
+      it('stays on the Dashboard when the workspaces fail to load, with no extra alert', async () => {
+        route({
+          'GET /api/workspaces': () => json(500, { error: 'db locked' }),
+          'GET /api/projects': () => json(200, projects),
+        })
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        expect(screen.queryByTestId('where')).toBeNull()
+        expect(screen.queryByRole('alert')).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Rescan' })).toBeNull()
+        expect(header()).toHaveTextContent('Tracked projects and their status')
+      })
+
+      it('keeps the subtitle and no Rescan button while the workspaces load', async () => {
+        route({
+          'GET /api/workspaces': () => new Promise<Response>(() => {}),
+          'GET /api/projects': () => json(200, projects),
+        })
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        expect(header()).toHaveTextContent('Tracked projects and their status')
+        expect(screen.queryByRole('button', { name: 'Rescan' })).toBeNull()
+      })
+    })
+
+    describe('header', () => {
+      it('names the one workspace and when it was last scanned', async () => {
+        route({
+          'GET /api/workspaces': () => json(200, workspaces),
+          'GET /api/projects': () => json(200, projects),
+        })
+        renderPage()
+        await screen.findByRole('button', { name: 'Rescan' })
+        const when = formatLastScan(workspaces[0].lastScanAt)
+        expect(when).not.toBe('never')
+        expect(header()).toHaveTextContent(`Workspace /srv/work · last scanned ${when}`)
+        expect(screen.getByText('/srv/work')).toHaveClass('font-mono')
+        expect(header()).not.toHaveTextContent('Tracked projects and their status')
+      })
+
+      it('counts several workspaces and uses the latest scan', async () => {
+        const several: Workspace[] = [
+          { ...workspaces[0], id: 1, lastScanAt: '2026-10-29T08:00:00Z' },
+          { ...workspaces[0], id: 2, path: '/srv/more', lastScanAt: '2026-10-30T11:30:00Z' },
+          { ...workspaces[0], id: 3, path: '/srv/old', lastScanAt: '' },
+        ]
+        route({
+          'GET /api/workspaces': () => json(200, several),
+          'GET /api/projects': () => json(200, projects),
+        })
+        renderPage()
+        await screen.findByRole('button', { name: 'Rescan' })
+        expect(header()).toHaveTextContent(
+          `3 workspaces · last scanned ${formatLastScan('2026-10-30T11:30:00Z')}`,
+        )
+      })
+    })
+
+    describe('rescan', () => {
+      const rescanRoutes = (rescan: Handler) => ({
+        'GET /api/workspaces': () => json(200, workspaces),
+        'GET /api/projects': () => json(200, projects),
+        'POST /api/rescans': rescan,
+      })
+
+      it('posts for every workspace, with JSON, then opens the rescan page', async () => {
+        const stub = route(rescanRoutes(() => json(202, { id: 7 })))
+        renderPage()
+        fireEvent.click(await screen.findByRole('button', { name: 'Rescan' }))
+        expect(await screen.findByTestId('where')).toHaveTextContent('/rescan/7')
+        const [url, init] = posts(stub)[0] as [string, RequestInit]
+        expect(url).toBe('/api/rescans')
+        expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' })
+        expect(JSON.parse(init.body as string)).toEqual({ workspaceId: 0 })
+      })
+
+      it('attaches to a running rescan on a 409', async () => {
+        route(
+          rescanRoutes(() =>
+            json(409, {
+              error: 'a scan is running',
+              id: 9,
+              path: 'all workspaces',
+              depth: 0,
+              rescan: true,
+            }),
+          ),
+        )
+        renderPage()
+        fireEvent.click(await screen.findByRole('button', { name: 'Rescan' }))
+        expect(await screen.findByTestId('where')).toHaveTextContent('/rescan/9')
+      })
+
+      it('goes to onboarding with the job id when a first scan runs', async () => {
+        route(
+          rescanRoutes(() =>
+            json(409, {
+              error: 'a scan is running',
+              id: 4,
+              path: '/srv/work',
+              depth: 2,
+              rescan: false,
+            }),
+          ),
+        )
+        renderPage()
+        fireEvent.click(await screen.findByRole('button', { name: 'Rescan' }))
+        await screen.findByTestId('where')
+        expect(where()).toBe('/onboarding')
+        expect(JSON.parse(screen.getByTestId('where-state').textContent ?? '')).toEqual({
+          scanId: 4,
+        })
+      })
+
+      it('shows an error toast and stays when the rescan cannot start', async () => {
+        route(rescanRoutes(() => json(500, { error: 'disk full' })))
+        renderPage()
+        fireEvent.click(await screen.findByRole('button', { name: 'Rescan' }))
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent('Could not start the rescan')
+        expect(alert).toHaveTextContent('disk full')
+        expect(screen.queryByTestId('where')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Rescan' })).toBeEnabled()
+      })
+    })
+
+    describe('a Not found row', () => {
+      const gone: Project = {
+        ...projects[0],
+        id: 6,
+        displayName: 'old-api',
+        path: '/srv/work/old-api',
+        status: 'notfound',
+        actions: ['remove'],
+        databases: [],
+        missingSince: '2026-10-30T09:42:00Z',
+      }
+
+      it('says since when, and locks the switch', async () => {
+        route({
+          'GET /api/workspaces': () => json(200, workspaces),
+          'GET /api/projects': () => json(200, [projects[0], gone]),
+        })
+        renderPage()
+        const r = await screen.findByRole('row', { name: /old-api/ })
+        expect(within(r).getByText('Not found')).toBeInTheDocument()
+        expect(
+          within(r).getByText(
+            `Folder missing since the ${formatLastScan(gone.missingSince)} scan. Not removed automatically.`,
+          ),
+        ).toBeInTheDocument()
+        const sw = within(r).getByRole('switch')
+        expect(sw).toBeDisabled()
+        expect(sw).toHaveAttribute('title', 'Not allowed while Not found')
+        // A found row carries no sentence.
+        expect(within(row(/shop/)).queryByText(/Folder missing/)).toBeNull()
+      })
+    })
+
+    describe('stop tracking and remove from list', () => {
+      const gone: Project = {
+        ...projects[0],
+        id: 6,
+        displayName: 'old-api',
+        path: '/srv/work/old-api',
+        status: 'notfound',
+        actions: ['remove'],
+        databases: [],
+        missingSince: '2026-10-30T09:42:00Z',
+      }
+      const tracked: Project = { ...projects[0], actions: ['stop', 'restart', 'untrack'] }
+      const list = [tracked, projects[1], gone]
+
+      const setup = (untrack: Handler = () => json(200, { removed: true })) =>
+        route({
+          'GET /api/workspaces': () => json(200, workspaces),
+          'GET /api/projects': () => json(200, list),
+          'POST /api/projects/1/untrack': untrack,
+          'POST /api/projects/6/untrack': untrack,
+        })
+      const openMenu = (name: RegExp, label: string) => {
+        fireEvent.click(
+          within(row(name)).getByRole('button', { name: `More actions for ${label}` }),
+        )
+      }
+
+      it('asks first, cancel sends nothing, confirm posts JSON, toasts and hides the row', async () => {
+        const stub = setup()
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+
+        openMenu(/shop/, 'shop')
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
+        const dialog = screen.getByRole('dialog')
+        expect(within(dialog).getByRole('heading')).toHaveTextContent('Stop tracking shop?')
+        expect(dialog).toHaveTextContent(
+          'Removes shop from the panel. Its containers, files and backups on Google Drive are not touched.',
+        )
+        expect(dialog).not.toHaveTextContent('timeout')
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(posts(stub)).toHaveLength(0)
+
+        openMenu(/shop/, 'shop')
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
+        const confirm = within(screen.getByRole('dialog')).getByRole('button', {
+          name: 'Stop tracking',
+        })
+        expect(confirm).toHaveClass('bg-stop')
+        fireEvent.click(confirm)
+
+        expect(await screen.findByTestId('toast-success')).toHaveTextContent(
+          'Stopped tracking shop',
+        )
+        expect(posts(stub)).toHaveLength(1)
+        const [url, init] = posts(stub)[0] as [string, RequestInit]
+        expect(url).toBe('/api/projects/1/untrack')
+        expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' })
+        expect(screen.queryByRole('row', { name: /shop/ })).toBeNull()
+        expect(screen.getByRole('row', { name: /panel/ })).toBeInTheDocument()
+      })
+
+      it('keeps the row gone when the next live state arrives without it', async () => {
+        setup()
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        openMenu(/shop/, 'shop')
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
+        fireEvent.click(
+          within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
+        )
+        await waitFor(() => expect(screen.queryByRole('row', { name: /shop/ })).toBeNull())
+
+        // The hub's next state is the truth: without the project it stays gone.
+        act(() => {
+          FakeEventSource.instances[0].emit('state', { dockerUp: true, projects: [projects[1]] })
+        })
+        expect(screen.queryByRole('row', { name: /shop/ })).toBeNull()
+        expect(screen.getByRole('row', { name: /panel/ })).toBeInTheDocument()
+      })
+
+      it('confirms Remove from list for a Not found row with its own words', async () => {
+        const stub = setup()
+        renderPage()
+        await screen.findByRole('row', { name: /old-api/ })
+
+        openMenu(/old-api/, 'old-api')
+        const item = screen.getByRole('menuitem', { name: 'Remove from list' })
+        expect(item).toHaveClass('text-danger')
+        fireEvent.click(item)
+        const dialog = screen.getByRole('dialog')
+        expect(within(dialog).getByRole('heading')).toHaveTextContent(
+          'Remove old-api from the list?',
+        )
+        expect(dialog).toHaveTextContent(
+          'Its folder is gone. It leaves the panel; nothing on the server is touched.',
+        )
+        expect(posts(stub)).toHaveLength(0)
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Remove from list' }))
+
+        expect(await screen.findByTestId('toast-success')).toHaveTextContent('Removed old-api')
+        expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/6/untrack')
+        expect(screen.queryByRole('row', { name: /old-api/ })).toBeNull()
+      })
+
+      it('shows the server text of a 409 in an error toast and keeps the row', async () => {
+        setup(() => json(409, { error: 'shop is busy with another command', code: 'locked' }))
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        openMenu(/shop/, 'shop')
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
+        fireEvent.click(
+          within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
+        )
+
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent("Couldn't stop tracking shop")
+        expect(alert).toHaveTextContent('shop is busy with another command')
+        expect(screen.queryByTestId('toast-success')).toBeNull()
+        expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+      })
+
+      it('shows no red item for a row whose actions carry neither', async () => {
+        setup()
+        renderPage()
+        await screen.findByRole('row', { name: /panel/ })
+        openMenu(/panel/, 'panel')
+        expect(screen.queryByRole('menuitem', { name: 'Stop tracking' })).toBeNull()
+        expect(screen.queryByRole('menuitem', { name: 'Remove from list' })).toBeNull()
+      })
     })
   })
 })

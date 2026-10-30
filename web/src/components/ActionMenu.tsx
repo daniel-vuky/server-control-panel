@@ -6,6 +6,8 @@ type Props = {
   actions: string[]
   onStart(): void
   onRestart(): void
+  /** onUntrack runs the red item: Stop tracking for `untrack`, Remove from list for `remove`. */
+  onUntrack?(): void
   /** status, self and dockerDown give a disabled item its reason as a title. */
   status?: string
   self?: boolean
@@ -21,6 +23,7 @@ export default function ActionMenu({
   actions,
   onStart,
   onRestart,
+  onUntrack,
   status,
   self,
   dockerDown,
@@ -37,6 +40,13 @@ export default function ActionMenu({
     { key: 'start', label: 'Start', run: onStart },
     { key: 'restart', label: 'Restart', run: onRestart },
   ]
+
+  // The red slot holds the one of untrack or remove the server allows, if any.
+  const danger = actions.includes('untrack')
+    ? 'Stop tracking'
+    : actions.includes('remove')
+      ? 'Remove from list'
+      : null
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false)
@@ -141,6 +151,22 @@ export default function ActionMenu({
               </button>
             )
           })}
+          {danger !== null && (
+            <>
+              <hr className="mx-1 my-1 h-px border-0 bg-border" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  close(true)
+                  onUntrack?.()
+                }}
+                className="h-9 cursor-pointer rounded-md border-0 bg-transparent px-2.5 text-left text-danger hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+              >
+                {danger}
+              </button>
+            </>
+          )}
         </div>
       ) : null}
     </div>

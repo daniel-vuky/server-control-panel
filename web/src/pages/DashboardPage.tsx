@@ -1,8 +1,11 @@
-import { FolderPlus } from 'lucide-react'
+import { FolderPlus, RotateCw } from 'lucide-react'
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
-import { type LifecycleAction, listProjects, runAction } from '../api/projects'
-import type { Project } from '../api/types.gen'
+import { Link, useNavigate } from 'react-router'
+import { ApiError } from '../api/client'
+import { type LifecycleAction, listProjects, runAction, untrackProject } from '../api/projects'
+import { isScanBusy } from '../api/scans'
+import type { Project, Workspace } from '../api/types.gen'
+import { listWorkspaces, startRescan } from '../api/workspaces'
 import { useLive } from '../app/live'
 import ActionMenu from '../components/ActionMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -13,6 +16,7 @@ import ProjectSwitch from '../components/ProjectSwitch'
 import StatusBadge from '../components/StatusBadge'
 import { useToast } from '../components/Toast'
 import { inFlightStatus, type Status } from '../lib/status'
+import { formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
 
 /** PENDING_MS is how long a finished command's status outlives it when no state event arrives. */
@@ -29,7 +33,13 @@ const mono = (name: string): ReactNode => <span className="font-mono">{name}</sp
 /** Pending is what a row shows while a command runs, and until the next state or PENDING_MS after. */
 type Pending = { status: Status; actions: string[] }
 
-type Confirm = { action: 'stop' | 'restart'; id: number; name: string }
+type Confirm = { action: 'stop' | 'restart' | 'untrack' | 'remove'; id: number; name: string }
+
+/** untrackWords is the copy of the two ways a project leaves the list. */
+const UNTRACK = {
+  untrack: { done: 'Stopped tracking', failed: "Couldn't stop tracking" },
+  remove: { done: 'Removed', failed: "Couldn't remove" },
+} as const
 
 /**
  * useProjectActions runs lifecycle commands and keeps the optimistic status of
@@ -142,10 +152,20 @@ export default function DashboardPage() {
   const live = useLive()
   const { pending, run } = useProjectActions()
   const [confirm, setConfirm] = useState<Confirm | null>(null)
+  const { removedIds, untrack } = useUntrack()
+  const navigate = useNavigate()
+  const workspaces = useLoad(listWorkspaces).load
+
+  // No workspace is the first screen: setup. A failed load shows the Dashboard
+  // as it is, so there is no redirect loop.
+  const noWorkspace = workspaces.state === 'ok' && workspaces.data.length === 0
+  useEffect(() => {
+    if (noWorkspace) navigate('/onboarding', { replace: true })
+  }, [noWorkspace, navigate])
 
   const dockerDown = live.dockerUp === false
   const base = live.projects ?? (load.state === 'ok' ? load.data : null)
-  const rows = base?.map((p) => overlay(p, pending[p.id]))
+  const rows = base?.filter((p) => !removedIds.has(p.id)).map((p) => overlay(p, pending[p.id]))
 
   const stop = (p: Project) => setConfirm({ action: 'stop', id: p.id, name: p.displayName })
   const restart = (p: Project) => {
@@ -157,13 +177,16 @@ export default function DashboardPage() {
     }
   }
   const start = (p: Project) => void run(p.id, p.displayName, 'start')
+  const leave = (p: Project) =>
+    setConfirm({
+      action: p.actions.includes('untrack') ? 'untrack' : 'remove',
+      id: p.id,
+      name: p.displayName,
+    })
 
   return (
     <section className="flex max-w-[1040px] flex-col gap-[18px]">
-      <header className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-[13px] text-muted">Tracked projects and their status</p>
-      </header>
+      <Header workspaces={workspaces.state === 'ok' ? workspaces.data : null} />
 
       {rows === undefined && load.state === 'loading' && <Loading />}
       {rows === undefined && load.state === 'error' && (
@@ -179,32 +202,191 @@ export default function DashboardPage() {
             onStart={start}
             onStop={stop}
             onRestart={restart}
+            onUntrack={leave}
           />
         ))}
 
       {confirm && (
         <ConfirmDialog
-          title={
-            <>
-              {confirm.action === 'stop' ? 'Stop' : 'Restart'} {mono(confirm.name)}?
-            </>
-          }
-          body={
-            confirm.action === 'stop'
-              ? 'It will stop serving until you start it again. Its volumes and data are kept.'
-              : 'Its containers will stop and start again; it is unavailable for a moment. Volumes and data are kept.'
-          }
-          command={`docker compose ${confirm.action}`}
-          confirmLabel={confirm.action === 'stop' ? 'Stop' : 'Restart'}
-          tone={confirm.action === 'stop' ? 'danger' : 'primary'}
+          {...confirmCopy(confirm)}
           onCancel={() => setConfirm(null)}
           onConfirm={() => {
             setConfirm(null)
-            void run(confirm.id, confirm.name, confirm.action)
+            if (confirm.action === 'untrack' || confirm.action === 'remove') {
+              void untrack(confirm.id, confirm.name, confirm.action)
+            } else {
+              void run(confirm.id, confirm.name, confirm.action)
+            }
           }}
         />
       )}
     </section>
+  )
+}
+
+const strong = (name: string): ReactNode => <strong className="font-mono">{name}</strong>
+
+/** confirmCopy is the title, body, button and tone of each confirmation. */
+function confirmCopy(c: Confirm) {
+  switch (c.action) {
+    case 'untrack':
+      return {
+        title: <>Stop tracking {strong(c.name)}?</>,
+        body: (
+          <>
+            Removes {strong(c.name)} from the panel. Its containers, files and backups on Google
+            Drive are not touched.
+          </>
+        ),
+        confirmLabel: 'Stop tracking',
+        tone: 'danger' as const,
+      }
+    case 'remove':
+      return {
+        title: <>Remove {strong(c.name)} from the list?</>,
+        body: 'Its folder is gone. It leaves the panel; nothing on the server is touched.',
+        confirmLabel: 'Remove from list',
+        tone: 'danger' as const,
+      }
+    case 'stop':
+      return {
+        title: <>Stop {mono(c.name)}?</>,
+        body: 'It will stop serving until you start it again. Its volumes and data are kept.',
+        command: 'docker compose stop',
+        confirmLabel: 'Stop',
+        tone: 'danger' as const,
+      }
+    case 'restart':
+      return {
+        title: <>Restart {mono(c.name)}?</>,
+        body: 'Its containers will stop and start again; it is unavailable for a moment. Volumes and data are kept.',
+        command: 'docker compose restart',
+        confirmLabel: 'Restart',
+        tone: 'primary' as const,
+      }
+  }
+}
+
+/**
+ * useUntrack stops tracking a project (or removes a Not found one) and keeps
+ * the ids it removed, so their rows go at once. The next live state is the
+ * server's own list again, which no longer has them.
+ */
+function useUntrack() {
+  const toast = useToast()
+  const live = useLive()
+  const [removedIds, setRemovedIds] = useState<ReadonlySet<number>>(new Set())
+
+  useEffect(() => {
+    if (live.projects === null) return
+    setRemovedIds((prev) => (prev.size === 0 ? prev : new Set()))
+  }, [live.projects])
+
+  const untrack = useCallback(
+    async (id: number, name: string, action: 'untrack' | 'remove') => {
+      const verb = UNTRACK[action]
+      try {
+        await untrackProject(id)
+      } catch (err) {
+        const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
+        toast.error(
+          <>
+            {verb.failed} {mono(name)}
+          </>,
+          message,
+        )
+        return
+      }
+      setRemovedIds((prev) => new Set(prev).add(id))
+      toast.success(
+        <>
+          {verb.done} {mono(name)}
+        </>,
+      )
+    },
+    [toast],
+  )
+
+  return { removedIds, untrack }
+}
+
+/** latestScan is the newest lastScanAt of the workspaces, or "" when none was ever scanned. */
+function latestScan(workspaces: Workspace[]): string {
+  let best = ''
+  let bestAt = Number.NEGATIVE_INFINITY
+  for (const w of workspaces) {
+    const at = Date.parse(w.lastScanAt)
+    if (!Number.isNaN(at) && at > bestAt) {
+      best = w.lastScanAt
+      bestAt = at
+    }
+  }
+  return best
+}
+
+/**
+ * Header is the title, the workspace line of design 01 and the Rescan button.
+ * Without the workspaces (loading, failed or none) it keeps the plain subtitle
+ * and no button.
+ */
+function Header({ workspaces }: { workspaces: Workspace[] | null }) {
+  const navigate = useNavigate()
+  const toast = useToast()
+  const [starting, setStarting] = useState(false)
+  const known = workspaces !== null && workspaces.length > 0
+
+  const rescan = async () => {
+    setStarting(true)
+    try {
+      const { id } = await startRescan()
+      navigate(`/rescan/${id}`)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && isScanBusy(err.body)) {
+        // A scan runs: a rescan has its page, a first scan is shown by onboarding.
+        if (err.body.rescan) navigate(`/rescan/${err.body.id}`)
+        else navigate('/onboarding', { state: { scanId: err.body.id } })
+        return
+      }
+      const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
+      toast.error('Could not start the rescan', message)
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  return (
+    <header className="flex flex-wrap items-end justify-between gap-4">
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-[13px] text-muted">
+          {known ? (
+            <>
+              {workspaces.length === 1 ? (
+                <>
+                  Workspace <span className="font-mono text-text-2">{workspaces[0].path}</span>
+                </>
+              ) : (
+                `${workspaces.length} workspaces`
+              )}{' '}
+              · last scanned {formatLastScan(latestScan(workspaces))}
+            </>
+          ) : (
+            'Tracked projects and their status'
+          )}
+        </p>
+      </div>
+      {known && (
+        <button
+          type="button"
+          disabled={starting}
+          onClick={() => void rescan()}
+          className="flex h-9 cursor-pointer items-center gap-2 rounded-[7px] border border-border-strong bg-surface-2 px-3.5 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RotateCw aria-hidden="true" size={16} strokeWidth={1.8} />
+          Rescan
+        </button>
+      )}
+    </header>
   )
 }
 
@@ -252,9 +434,10 @@ type TableProps = {
   onStart(p: Project): void
   onStop(p: Project): void
   onRestart(p: Project): void
+  onUntrack(p: Project): void
 }
 
-function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart }: TableProps) {
+function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntrack }: TableProps) {
   return (
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
       <table className="w-full min-w-[900px] border-collapse text-left">
@@ -293,6 +476,14 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart }: Tabl
                 >
                   {p.path}
                 </span>
+                {p.status === 'notfound' && (
+                  <span className="mt-1 block text-[12.5px] text-muted">
+                    {p.missingSince === ''
+                      ? 'Folder missing since the last scan.'
+                      : `Folder missing since the ${formatLastScan(p.missingSince)} scan.`}{' '}
+                    Not removed automatically.
+                  </span>
+                )}
               </td>
               <td className="px-3 py-3">
                 <StatusBadge status={p.status} />
@@ -321,6 +512,7 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart }: Tabl
                     dockerDown={dockerDown}
                     onStart={() => onStart(p)}
                     onRestart={() => onRestart(p)}
+                    onUntrack={() => onUntrack(p)}
                   />
                 </div>
               </td>

@@ -1,5 +1,6 @@
 import { getJSON, postJSON } from './client'
 import type {
+  ScanBusy,
   ScanJob,
   ScanProgress,
   ScanRequest,
@@ -95,4 +96,16 @@ export function watchScan(
     fallback?.abort()
     source.close()
   }
+}
+
+/** isScanBusy tells a 409 ScanBusy body from any other error body. */
+export function isScanBusy(body: unknown): body is ScanBusy {
+  const b = body as ScanBusy | null
+  return (
+    typeof b === 'object' &&
+    b !== null &&
+    typeof b.id === 'number' &&
+    typeof b.path === 'string' &&
+    typeof b.depth === 'number'
+  )
 }
