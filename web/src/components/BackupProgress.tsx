@@ -185,13 +185,16 @@ function Pill({ state }: { state: string }) {
   )
 }
 
-type Fetched = { id: number; backup: Backup | null; error: string }
+/** Fetched is one GET answer, with the live list it was asked for against. */
+type Fetched = { id: number; backup: Backup | null; error: string; liveAt: Backup[] }
 
 /**
  * useBackupView is backup id as the dialog shows it: from the live state while
  * it is active; otherwise (on opening a backup that is not active, and once
  * each time it leaves the active list) one GET /api/backups/{id}. Until that
- * answers, the last live value stays on screen.
+ * answers, the last live value stays on screen. When the answer is still
+ * active (queued or running) but a later live state lacks it, it is read once
+ * more: one GET per such state, never one per event otherwise.
  */
 function useBackupView(id: number): { backup: Backup | null; error: string } {
   const live = useLive()
@@ -200,21 +203,40 @@ function useBackupView(id: number): { backup: Backup | null; error: string } {
   const last = useRef<Backup | null>(null)
   if (active !== null) last.current = active
   const [fetched, setFetched] = useState<Fetched | null>(null)
+  const [again, setAgain] = useState(0)
+  const liveNow = useRef(live.backups)
+  liveNow.current = live.backups
+  const lastAgain = useRef(again)
 
   useEffect(() => {
     if (inLive) return
     const ctl = new AbortController()
-    setFetched(null)
+    // A departure (or another id) drops the old answer; a re-read keeps it on screen.
+    if (lastAgain.current === again) setFetched(null)
+    lastAgain.current = again
+    const liveAt = liveNow.current
     getBackup(id, ctl.signal).then(
-      (backup) => setFetched({ id, backup, error: '' }),
+      (backup) => setFetched({ id, backup, error: '', liveAt }),
       (err: unknown) => {
         if (ctl.signal.aborted) return
         const error = err instanceof Error && err.message ? err.message : 'Something went wrong.'
-        setFetched({ id, backup: null, error })
+        setFetched({ id, backup: null, error, liveAt })
       },
     )
     return () => ctl.abort()
-  }, [id, inLive])
+  }, [id, inLive, again])
+
+  // The answer said it was still active, and a newer live state no longer has it.
+  const stale =
+    !inLive &&
+    fetched !== null &&
+    fetched.id === id &&
+    fetched.backup !== null &&
+    isActive(fetched.backup) &&
+    fetched.liveAt !== live.backups
+  useEffect(() => {
+    if (stale) setAgain((n) => n + 1)
+  }, [stale])
 
   if (active !== null) return { backup: active, error: '' }
   if (fetched !== null && fetched.id === id) {
@@ -262,10 +284,9 @@ export default function BackupProgress({ id, retrying, onClose, onRetry }: Props
         {b && <Pill state={b.state} />}
       </div>
 
+      {error !== '' && <p className="m-0 text-[13px] text-error-text">{error}</p>}
       {b === null ? (
-        error !== '' ? (
-          <p className="m-0 text-[13px] text-error-text">{error}</p>
-        ) : (
+        error === '' && (
           <p role="status" className="m-0 text-[13px] text-muted">
             Loading backup…
           </p>

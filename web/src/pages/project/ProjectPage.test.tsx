@@ -5,6 +5,7 @@ import { projectRoute } from '../../app/App'
 import { formatLastScan } from '../../lib/time'
 import { FakeEventSource } from '../../test/fakeEventSource'
 import {
+  makeBackup,
   makeContainer,
   makeDatabase,
   makeProject,
@@ -208,6 +209,12 @@ describe('project page', () => {
     it('starts the one database, pending while the POST runs', async () => {
       let answer: (r: Response) => void = () => {}
       const stub = serve(() => new Promise<Response>((res) => (answer = res)))
+      const answerPost = stub.getMockImplementation()
+      stub.mockImplementation(async (url: string, init?: RequestInit) =>
+        url === '/api/backups/7' && init?.method !== 'POST'
+          ? json(200, makeBackup())
+          : (answerPost?.(url, init) ?? json(401, {})),
+      )
       renderProject('/projects/1')
       pushState([makeProject({ databases: [makeDatabase({ backup: allowed })] })], true, {
         drive: drive('connected'),
@@ -219,8 +226,7 @@ describe('project page', () => {
       expect(posts(stub)[0][0]).toBe('/api/projects/1/backups')
       await act(async () => answer(json(202, { id: 7 })))
       expect(button()).toBeEnabled()
-      // The progress dialog opens on the new id (its GET is a 401 here).
-      expect(screen.getByRole('dialog', { name: /^Backup/ })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: 'Backup shop · shop' })).toBeInTheDocument()
     })
 
     it('opens the chooser on ?backup=<key> with that database chosen, and starts nothing', () => {
@@ -231,7 +237,9 @@ describe('project page', () => {
         drive: drive('connected'),
       })
       const chooser = screen.getByRole('dialog', { name: 'Backup shop' })
-      expect(within(chooser).getByRole('radio', { name: 'crm' })).toBeChecked()
+      const crm = within(chooser).getByRole('radio', { name: 'crm' })
+      expect(crm).toBeChecked()
+      expect(crm).toHaveFocus()
       expect(posts(stub)).toHaveLength(0)
       // The parameter is used once: a live update does not reopen it.
       fireEvent.click(within(chooser).getByRole('button', { name: 'Cancel' }))

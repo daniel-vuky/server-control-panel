@@ -97,7 +97,7 @@ describe('stepLabel', () => {
       '1. Dump',
       '2. Compress',
       '3. Upload to Drive',
-      '4. Prune old backups',
+      '4. Remove old copies',
     ])
   })
 })
@@ -136,8 +136,17 @@ describe('backupLine', () => {
     expect(backupLine(backup({ state: 'failed', failedStep: 'dump', error: 'x' }))).toBe(
       'Failed at Dump · x',
     )
-    expect(backupLine(backup({ state: 'refused', error: 'Needs about 1 GB' }))).toBe(
-      'Refused · Needs about 1 GB',
+    expect(
+      backupLine(
+        backup({
+          state: 'refused',
+          error:
+            'Needs about 1.0 GB free, the server has 512 MB left. Free up some disk space and try again.',
+        }),
+      ),
+    ).toBe('Refused · not enough space')
+    expect(backupLine(backup({ state: 'refused', error: 'Start db first' }))).toBe(
+      'Refused · Start db first',
     )
     expect(backupLine(backup({ state: 'interrupted' }))).toBe('Interrupted')
   })

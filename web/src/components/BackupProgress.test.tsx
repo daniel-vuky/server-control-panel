@@ -94,7 +94,7 @@ describe('BackupSteps', () => {
     expect(items[2]).toHaveTextContent('23.6 / 38 MB · 62%')
     expect(within(items[2]).getByTestId('step-bar')).toHaveStyle({ width: '62%' })
     expect(within(items[3]).getByTestId('step-waiting')).toBeInTheDocument()
-    expect(items[3]).toHaveTextContent('4. Prune old backups')
+    expect(items[3]).toHaveTextContent('4. Remove old copies')
   })
 
   it('shows a failed step with its error and hint, and the skipped ones', () => {
@@ -206,6 +206,44 @@ describe('the progress dialog', () => {
     live([])
     await act(async () => {})
     expect(callsTo(stub, '/api/backups/7')).toHaveLength(1)
+  })
+
+  it('fetches again when a fetched backup was still active and a later state lacks it', async () => {
+    let answers = [
+      makeBackup({ state: 'queued', queuePosition: 1 }),
+      makeBackup({ state: 'ok', queuePosition: 0 }),
+    ]
+    const stub = serve({
+      'GET /api/backups/7': () => {
+        const [first, ...rest] = answers
+        if (rest.length > 0) answers = rest
+        return json(200, first)
+      },
+    })
+    setup([])
+    const dialog = screen.getByRole('dialog', { name: /Backup/ })
+    await waitFor(() =>
+      expect(within(dialog).getByTestId('backup-pill')).toHaveTextContent('Waiting'),
+    )
+    expect(callsTo(stub, '/api/backups/7')).toHaveLength(1)
+    live([])
+    await waitFor(() =>
+      expect(within(dialog).getByTestId('backup-pill')).toHaveTextContent('Succeeded'),
+    )
+    expect(callsTo(stub, '/api/backups/7')).toHaveLength(2)
+    // A finished backup is final: later states fetch nothing.
+    live([])
+    await act(async () => {})
+    expect(callsTo(stub, '/api/backups/7')).toHaveLength(2)
+  })
+
+  it('says the final read failed while it still shows the last live value', async () => {
+    serve({ 'GET /api/backups/7': () => json(503, { error: 'The panel is shutting down.' }) })
+    setup([makeBackup({ state: 'running', queuePosition: 0 })])
+    live([])
+    const dialog = screen.getByRole('dialog', { name: 'Backup shop · shop' })
+    expect(await within(dialog).findByText('The panel is shutting down.')).toBeInTheDocument()
+    expect(within(dialog).getByTestId('backup-pill')).toHaveTextContent('Running')
   })
 
   it('fetches a backup that is not active when it opens', async () => {

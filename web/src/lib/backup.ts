@@ -80,10 +80,10 @@ const STEP_LABELS: Record<string, string> = {
   dump: '1. Dump',
   compress: '2. Compress',
   upload: '3. Upload to Drive',
-  prune: '4. Prune old backups',
+  prune: '4. Remove old copies',
 }
 
-/** stepLabel is a step's numbered name in design 09. */
+/** stepLabel is a step's numbered name (the #49 acceptance criteria and the spec). */
 export const stepLabel = (step: string): string => STEP_LABELS[step] ?? step
 
 const STEP_NAMES: Record<string, string> = {
@@ -97,7 +97,7 @@ const STEP_DOING: Record<string, string> = {
   dump: 'Dumping',
   compress: 'Compressing',
   upload: 'Uploading to Drive',
-  prune: 'Pruning old backups',
+  prune: 'Removing old copies',
 }
 
 /** percentOf is the "62%" a running step's detail ends with, or null. */
@@ -105,6 +105,14 @@ export function percentOf(step: BackupStep): number | null {
   const m = /(\d{1,3})%\s*$/.exec(step.detail)
   return m ? Math.min(100, Number(m[1])) : null
 }
+
+/**
+ * DISK_WORDS is how the server's disk_short refusal words begin
+ * (internal/backup/manager.go, "Needs about <need> free, …"). A stored backup
+ * keeps the words, not the code, so the history matches them; change both
+ * together.
+ */
+const DISK_WORDS = 'Needs about '
 
 const STATE_WORDS: Record<string, string> = {
   queued: 'Waiting',
@@ -152,6 +160,7 @@ export function backupLine(b: Backup): string {
       return b.error ? `${head} · ${b.error.slice(0, 80)}` : head
     }
     case 'refused':
+      if (b.error.startsWith(DISK_WORDS)) return 'Refused · not enough space'
       return b.error ? `Refused · ${b.error}` : 'Refused'
     default:
       return stateWord(b.state)

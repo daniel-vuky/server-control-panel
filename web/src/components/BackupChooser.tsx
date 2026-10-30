@@ -1,5 +1,5 @@
 import { CloudUpload } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { Database, Project } from '../api/types.gen'
 import { databaseRule } from '../lib/backup'
 import { formatDatabase } from '../lib/databases'
@@ -33,6 +33,8 @@ export default function BackupChooser({
 }: Props) {
   const titleId = useId()
   const rowId = useId()
+  // Focus starts on the chosen row, so a return from Drive lands on it.
+  const chosenRadio = useRef<HTMLInputElement>(null)
   const rows = project.databases.map((db) => ({ db, rule: databaseRule(db, driveState) }))
   const [chosen, setChosen] = useState<string | null>(() => {
     const wanted = rows.find((r) => r.db.key === initialKey && r.rule.enabled)
@@ -42,7 +44,7 @@ export default function BackupChooser({
   const n = project.databases.length
 
   return (
-    <Dialog labelledBy={titleId} onClose={onCancel}>
+    <Dialog labelledBy={titleId} onClose={onCancel} initialFocus={chosenRadio}>
       <h2 id={titleId} className="m-0 text-[17px] font-semibold">
         Backup <span className="font-mono">{project.displayName}</span>
       </h2>
@@ -64,6 +66,7 @@ export default function BackupChooser({
               } ${rule.enabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
             >
               <input
+                ref={checked ? chosenRadio : undefined}
                 type="radio"
                 name={`${rowId}-db`}
                 value={db.key}
