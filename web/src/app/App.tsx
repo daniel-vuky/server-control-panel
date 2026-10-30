@@ -1,10 +1,15 @@
 import type { ReactNode } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router'
+import { createBrowserRouter, type RouteObject, RouterProvider } from 'react-router'
 import { ToastProvider } from '../components/Toast'
 import DashboardPage from '../pages/DashboardPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import OnboardingPage from '../pages/onboarding/OnboardingPage'
 import PlaceholderPage from '../pages/PlaceholderPage'
+import ProjectDatabase from '../pages/project/ProjectDatabase'
+import ProjectLogs from '../pages/project/ProjectLogs'
+import ProjectOverview from '../pages/project/ProjectOverview'
+import ProjectPage from '../pages/project/ProjectPage'
+import ProjectSettings from '../pages/project/ProjectSettings'
 import RescanPage from '../pages/RescanPage'
 import SettingsPage from '../pages/SettingsPage'
 import AppShell from './AppShell'
@@ -18,30 +23,44 @@ const pages: Record<string, ReactNode> = {
   '/settings': <SettingsPage />,
 }
 
-/** The route tree without a router, so tests can wrap it in a MemoryRouter. */
-export function AppRoutes() {
-  return (
-    <ToastProvider>
-      <Routes>
-        <Route element={<AppShell />}>
-          {appRoutes.map((route) => (
-            <Route
-              key={route.path}
-              path={route.path}
-              element={pages[route.path] ?? <PlaceholderPage route={route} />}
-            />
-          ))}
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
-    </ToastProvider>
-  )
-}
+/** projectRoute is the detail page, one child route per tab (Overview is the index). */
+export const projectRoute = {
+  path: '/projects/:id',
+  element: <ProjectPage />,
+  children: [
+    { index: true, element: <ProjectOverview /> },
+    { path: 'logs', element: <ProjectLogs /> },
+    { path: 'database', element: <ProjectDatabase /> },
+    { path: 'settings', element: <ProjectSettings /> },
+  ],
+} satisfies RouteObject
+
+/**
+ * The route tree: the shell, every page and Page not found. The browser uses it
+ * in a data router (so a page can block navigation); tests use it in a memory one.
+ */
+export const routeObjects: RouteObject[] = [
+  {
+    element: (
+      <ToastProvider>
+        <AppShell />
+      </ToastProvider>
+    ),
+    children: [
+      ...appRoutes.map((route) =>
+        route.path === projectRoute.path
+          ? projectRoute
+          : { path: route.path, element: pages[route.path] ?? <PlaceholderPage route={route} /> },
+      ),
+      { path: '*', element: <NotFoundPage /> },
+    ],
+  },
+]
+
+let browserRouter: ReturnType<typeof createBrowserRouter> | undefined
 
 export default function App() {
-  return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
-  )
+  // Created on first render, not on import, so importing routeObjects has no side effect.
+  browserRouter ??= createBrowserRouter(routeObjects)
+  return <RouterProvider router={browserRouter} />
 }

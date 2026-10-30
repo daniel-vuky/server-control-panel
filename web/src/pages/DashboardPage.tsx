@@ -1,157 +1,62 @@
 import { FolderPlus, RotateCw } from 'lucide-react'
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { type LifecycleAction, listProjects, runAction, untrackProject } from '../api/projects'
+import { listProjects } from '../api/projects'
 import type { Project, Workspace } from '../api/types.gen'
 import { listWorkspaces } from '../api/workspaces'
 import { useLive } from '../app/live'
 import ActionMenu from '../components/ActionMenu'
-import ConfirmDialog from '../components/ConfirmDialog'
 import DatabaseCell from '../components/DatabaseCell'
 import LoadError from '../components/LoadError'
 import MonitorOnlyTag from '../components/MonitorOnlyTag'
 import ProjectSwitch from '../components/ProjectSwitch'
 import StatusBadge from '../components/StatusBadge'
-import { useToast } from '../components/Toast'
-import { inFlightStatus, type Status } from '../lib/status'
-import { formatLastScan } from '../lib/time'
+import { formatCpu, formatMem } from '../lib/format'
+import type { Status } from '../lib/status'
+import { folderMissing, formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
+import { useProjectActions } from '../lib/useProjectActions'
 import { useRescan } from '../lib/useRescan'
 
-/** PENDING_MS is how long a finished command's status outlives it when no state event arrives. */
-const PENDING_MS = 5000
-
-const VERB: Record<LifecycleAction, { done: string; failed: string }> = {
-  start: { done: 'Started', failed: "Couldn't start" },
-  stop: { done: 'Stopped', failed: "Couldn't stop" },
-  restart: { done: 'Restarted', failed: "Couldn't restart" },
-}
-
-const mono = (name: string): ReactNode => <span className="font-mono">{name}</span>
-
-/** Pending is what a row shows while a command runs, and until the next state or PENDING_MS after. */
-type Pending = { status: Status; actions: string[] }
-
-type Confirm = { action: 'stop' | 'restart' | 'untrack' | 'remove'; id: number; name: string }
-
-/** UNTRACK is the toast copy of the two ways a project leaves the list. */
-const UNTRACK = {
-  untrack: { done: 'Stopped tracking', failed: "Couldn't stop tracking" },
-  remove: { done: 'Removed', failed: "Couldn't remove" },
-} as const
+const SCROLL_KEY = 'dashboard.scrollY'
 
 /**
- * useProjectActions runs lifecycle commands and keeps the optimistic status of
- * each project until the next live state or five seconds, whichever is first.
+ * useScrollMemory saves the page scroll when the Dashboard is left and puts it
+ * back once the rows are there to scroll through. Storage can throw (private
+ * windows), and then the page just opens at the top.
  */
-function useProjectActions() {
-  const toast = useToast()
-  const live = useLive()
-  const [pending, setPending] = useState<Record<number, Pending>>({})
-  const inflight = useRef(new Set<number>())
-  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
-  const mounted = useRef(true)
-
-  useEffect(() => {
-    mounted.current = true
-    const held = timers.current
-    return () => {
-      mounted.current = false
-      for (const t of held.values()) clearTimeout(t)
-      held.clear()
+function useScrollMemory(ready: boolean) {
+  // A visit that ends before the rows came has nothing worth saving.
+  const shown = useRef(false)
+  useLayoutEffect(() => {
+    if (!ready) return
+    shown.current = true
+    try {
+      const saved = Number(sessionStorage.getItem(SCROLL_KEY))
+      if (saved > 0) window.scrollTo(0, saved)
+    } catch {
+      // No storage: nothing to restore.
     }
-  }, [])
+  }, [ready])
 
-  const forget = useCallback((id: number) => {
-    const t = timers.current.get(id)
-    if (t !== undefined) clearTimeout(t)
-    timers.current.delete(id)
-  }, [])
-
-  // A new state event is the truth again. Only a settled row holds a timer,
-  // so a command still running keeps its in-flight status.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new state event re-runs this.
-  useEffect(() => {
-    if (live.projects === null) return
-    const settled = [...timers.current.keys()]
-    if (settled.length === 0) return
-    for (const id of settled) forget(id)
-    setPending((prev) => {
-      if (!settled.some((id) => id in prev)) return prev
-      const next = { ...prev }
-      for (const id of settled) delete next[id]
-      return next
-    })
-  }, [live.projects])
-
-  const run = useCallback(
-    async (id: number, name: string, action: LifecycleAction) => {
-      const verb = VERB[action]
-      forget(id)
-      inflight.current.add(id)
-      // While a command runs nothing else may start, so the row has no actions.
-      setPending((p) => ({ ...p, [id]: { status: inFlightStatus(action), actions: [] } }))
-
-      let settled: Pending | null = null
+  useEffect(
+    () => () => {
+      if (!shown.current) return
       try {
-        const result = await runAction(id, action)
-        settled = { status: result.status as Status, actions: result.actions }
-        if (result.outcome === 'ok') {
-          toast.success(
-            <>
-              {verb.done} {mono(name)}
-            </>,
-          )
-        } else {
-          toast.error(
-            <>
-              {verb.failed} {mono(name)}
-            </>,
-            result.message,
-          )
-        }
-      } catch (err) {
-        const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
-        toast.error(
-          <>
-            {verb.failed} {mono(name)}
-          </>,
-          message,
-        )
-      } finally {
-        inflight.current.delete(id)
+        sessionStorage.setItem(SCROLL_KEY, String(window.scrollY))
+      } catch {
+        // No storage: the next visit opens at the top.
       }
-
-      // After the page is gone there is no row to settle and no timer to start.
-      if (!mounted.current) return
-      if (settled === null) {
-        setPending(({ [id]: _gone, ...rest }) => rest)
-        return
-      }
-      const done = settled
-      setPending((p) => ({ ...p, [id]: done }))
-      timers.current.set(
-        id,
-        setTimeout(() => {
-          timers.current.delete(id)
-          if (!mounted.current || inflight.current.has(id)) return
-          setPending(({ [id]: _gone, ...rest }) => rest)
-        }, PENDING_MS),
-      )
     },
-    [forget, toast],
+    [],
   )
-
-  return { pending, run }
 }
 
 /** DashboardPage is /: the tracked projects as a table (cards come with E3-F08). */
 export default function DashboardPage() {
   const { load, retry } = useLoad(listProjects)
   const live = useLive()
-  const { pending, run } = useProjectActions()
-  const [confirm, setConfirm] = useState<Confirm | null>(null)
-  const { removedIds, untrack } = useUntrack()
+  const actions = useProjectActions()
   const navigate = useNavigate()
   const workspaces = useLoad(listWorkspaces).load
 
@@ -164,24 +69,9 @@ export default function DashboardPage() {
 
   const dockerDown = live.dockerUp === false
   const base = live.projects ?? (load.state === 'ok' ? load.data : null)
-  const rows = base?.filter((p) => !removedIds.has(p.id)).map((p) => overlay(p, pending[p.id]))
+  const rows = base?.filter((p) => !actions.removedIds.has(p.id)).map(actions.overlay)
 
-  const stop = (p: Project) => setConfirm({ action: 'stop', id: p.id, name: p.displayName })
-  const restart = (p: Project) => {
-    // Only a project that is up asks first; from error it just starts again.
-    if (p.status === 'running' || p.status === 'partial') {
-      setConfirm({ action: 'restart', id: p.id, name: p.displayName })
-    } else {
-      void run(p.id, p.displayName, 'restart')
-    }
-  }
-  const start = (p: Project) => void run(p.id, p.displayName, 'start')
-  const leave = (p: Project) =>
-    setConfirm({
-      action: p.actions.includes('untrack') ? 'untrack' : 'remove',
-      id: p.id,
-      name: p.displayName,
-    })
+  useScrollMemory(rows !== undefined && rows.length > 0)
 
   return (
     <section className="flex max-w-[1040px] flex-col gap-[18px]">
@@ -198,128 +88,16 @@ export default function DashboardPage() {
           <ProjectTable
             projects={rows}
             dockerDown={dockerDown}
-            onStart={start}
-            onStop={stop}
-            onRestart={restart}
-            onUntrack={leave}
+            onStart={actions.start}
+            onStop={actions.stop}
+            onRestart={actions.restart}
+            onUntrack={actions.leave}
           />
         ))}
 
-      {confirm && (
-        <ConfirmDialog
-          {...confirmCopy(confirm)}
-          onCancel={() => setConfirm(null)}
-          onConfirm={() => {
-            setConfirm(null)
-            if (confirm.action === 'untrack' || confirm.action === 'remove') {
-              void untrack(confirm.id, confirm.name, confirm.action)
-            } else {
-              void run(confirm.id, confirm.name, confirm.action)
-            }
-          }}
-        />
-      )}
+      {actions.dialogs}
     </section>
   )
-}
-
-const strong = (name: string): ReactNode => <strong className="font-mono">{name}</strong>
-
-/** confirmCopy is the title, body, button and tone of each confirmation. */
-function confirmCopy(c: Confirm) {
-  switch (c.action) {
-    case 'untrack':
-      return {
-        title: <>Stop tracking {strong(c.name)}?</>,
-        body: (
-          <>
-            Removes {strong(c.name)} from the panel. Its containers, files and backups on Google
-            Drive are not touched.
-          </>
-        ),
-        confirmLabel: 'Stop tracking',
-        tone: 'danger' as const,
-      }
-    case 'remove':
-      return {
-        title: <>Remove {strong(c.name)} from the list?</>,
-        body: 'Its folder is gone. It leaves the panel; nothing on the server is touched.',
-        confirmLabel: 'Remove from list',
-        tone: 'danger' as const,
-      }
-    case 'stop':
-      return {
-        title: <>Stop {mono(c.name)}?</>,
-        body: 'It will stop serving until you start it again. Its volumes and data are kept.',
-        command: 'docker compose stop',
-        confirmLabel: 'Stop',
-        tone: 'danger' as const,
-      }
-    case 'restart':
-      return {
-        title: <>Restart {mono(c.name)}?</>,
-        body: 'Its containers will stop and start again; it is unavailable for a moment. Volumes and data are kept.',
-        command: 'docker compose restart',
-        confirmLabel: 'Restart',
-        tone: 'primary' as const,
-      }
-  }
-}
-
-/**
- * useUntrack stops tracking a project (or removes a Not found one) and keeps
- * the ids it removed, so their rows go at once. The next live state is the
- * server's own list again, which no longer has them.
- */
-function useUntrack() {
-  const toast = useToast()
-  const live = useLive()
-  const [removedIds, setRemovedIds] = useState<ReadonlySet<number>>(new Set())
-  // Ids whose request is out, so a second confirm cannot post it again.
-  const inflight = useRef(new Set<number>())
-
-  useEffect(() => {
-    if (live.projects === null) return
-    // A project held for a store write comes back with no actions: it is
-    // still on its way out, so only a gone or actionable one clears.
-    const held = new Set(live.projects.filter((p) => p.actions.length === 0).map((p) => p.id))
-    setRemovedIds((prev) => {
-      if (prev.size === 0) return prev
-      const next = new Set([...prev].filter((id) => held.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [live.projects])
-
-  const untrack = useCallback(
-    async (id: number, name: string, action: 'untrack' | 'remove') => {
-      const verb = UNTRACK[action]
-      if (inflight.current.has(id)) return
-      inflight.current.add(id)
-      try {
-        await untrackProject(id)
-      } catch (err) {
-        const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
-        toast.error(
-          <>
-            {verb.failed} {mono(name)}
-          </>,
-          message,
-        )
-        return
-      } finally {
-        inflight.current.delete(id)
-      }
-      setRemovedIds((prev) => new Set(prev).add(id))
-      toast.success(
-        <>
-          {verb.done} {mono(name)}
-        </>,
-      )
-    },
-    [toast],
-  )
-
-  return { removedIds, untrack }
 }
 
 /** latestScan is the newest lastScanAt of the workspaces, or "" when none was ever scanned. */
@@ -381,11 +159,6 @@ function Header({ workspaces }: { workspaces: Workspace[] | null }) {
   )
 }
 
-/** overlay shows the status a command set optimistically, with the actions the server sent for it. */
-function overlay(p: Project, pending: Pending | undefined): Project {
-  return pending === undefined ? p : { ...p, status: pending.status, actions: pending.actions }
-}
-
 function Loading() {
   return (
     <div role="status" className="flex flex-col gap-2">
@@ -428,10 +201,41 @@ type TableProps = {
   onUntrack(p: Project): void
 }
 
+/** RAM_RANGE is the full RAM bar of design 01: 4 GB. */
+const RAM_RANGE = 4 * 1024 * 1024 * 1024
+
+/** Meter is a live value with the thin bar of design 01; with no value there is no bar. */
+function Meter({
+  label,
+  fraction,
+  color,
+  testId,
+}: {
+  label: string
+  fraction: number | null
+  color: string
+  testId: string
+}) {
+  return (
+    <span className="flex w-[84px] flex-col gap-1.5">
+      <span className="font-mono text-[13px] tabular-nums">{label}</span>
+      {fraction !== null && (
+        <span aria-hidden="true" className="flex h-[3px] rounded-[2px] bg-border">
+          <span
+            data-testid={testId}
+            className="rounded-[2px]"
+            style={{ width: `${Math.min(Math.max(fraction, 0), 1) * 100}%`, background: color }}
+          />
+        </span>
+      )}
+    </span>
+  )
+}
+
 function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntrack }: TableProps) {
   return (
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
-      <table className="w-full min-w-[900px] border-collapse text-left">
+      <table className="w-full min-w-[1000px] border-collapse text-left">
         <thead>
           <tr className="border-b border-border text-xs tracking-wider text-muted uppercase">
             <th scope="col" className="px-4 py-2.5 font-normal">
@@ -442,6 +246,12 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntr
             </th>
             <th scope="col" className="px-3 py-2.5 font-normal">
               Status
+            </th>
+            <th scope="col" className="px-3 py-2.5 font-normal">
+              CPU
+            </th>
+            <th scope="col" className="px-3 py-2.5 font-normal">
+              RAM
             </th>
             <th scope="col" className="px-3 py-2.5 font-normal">
               Database
@@ -456,7 +266,12 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntr
             <tr key={p.id} className="border-b border-border align-top last:border-b-0">
               <td className="px-4 py-3">
                 <span className="flex items-center gap-2">
-                  <span className="font-mono font-semibold">{p.displayName}</span>
+                  <Link
+                    to={`/projects/${p.id}`}
+                    className="font-mono font-semibold text-text no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  >
+                    {p.displayName}
+                  </Link>
                   {p.self && <MonitorOnlyTag />}
                 </span>
               </td>
@@ -469,15 +284,28 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntr
                 </span>
                 {p.status === 'notfound' && (
                   <span className="mt-1 block text-[13px] text-muted">
-                    {p.missingSince === ''
-                      ? 'Folder missing since the last scan.'
-                      : `Folder missing since the ${formatLastScan(p.missingSince)} scan.`}{' '}
-                    Not removed automatically.
+                    {folderMissing(p.missingSince)}
                   </span>
                 )}
               </td>
               <td className="px-3 py-3">
                 <StatusBadge status={p.status} />
+              </td>
+              <td className="px-3 py-3">
+                <Meter
+                  label={formatCpu(p.cpuPercent)}
+                  fraction={p.cpuPercent === null ? null : p.cpuPercent / 100}
+                  color="#5AA7FF"
+                  testId="cpu-bar"
+                />
+              </td>
+              <td className="px-3 py-3">
+                <Meter
+                  label={formatMem(p.memBytes)}
+                  fraction={p.memBytes === null ? null : p.memBytes / RAM_RANGE}
+                  color="#F0913A"
+                  testId="ram-bar"
+                />
               </td>
               <td className="px-3 py-3 text-[13px]">
                 <span className="flex flex-col">

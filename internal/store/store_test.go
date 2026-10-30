@@ -41,8 +41,8 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open on a missing directory: %v", err)
 	}
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 3 {
-		t.Fatalf("schema_migrations has %d rows, want 3", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 4 {
+		t.Fatalf("schema_migrations has %d rows, want 4", n)
 	}
 	var applied string
 	if err := s.db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&applied); err != nil {
@@ -60,8 +60,8 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 3 {
-		t.Fatalf("after reopen schema_migrations has %d rows, want 3", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 4 {
+		t.Fatalf("after reopen schema_migrations has %d rows, want 4", n)
 	}
 	for _, table := range []string{"workspaces", "projects", "databases", "jobs", "activity"} {
 		if n := count(t, s.db, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table); n != 1 {
@@ -488,5 +488,19 @@ func TestTrackedProjectLookup(t *testing.T) {
 	}
 	if _, err := s.TrackedProject(ctx, 99999); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown project: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestTrackedComposeValues(t *testing.T) {
+	v, override, ok := Tracked{Path: "/w/shop", ComposeFiles: []string{"compose.yaml"}}.ComposeValues()
+	if !ok || override || len(v) != 2 || v["dir"] != "/w/shop" || v["file"] != "/w/shop/compose.yaml" {
+		t.Fatalf("main only: %v %v %v", v, override, ok)
+	}
+	v, override, ok = Tracked{Path: "/w/shop", ComposeFiles: []string{"compose.yaml", "compose.override.yaml"}}.ComposeValues()
+	if !ok || !override || len(v) != 3 || v["override"] != "/w/shop/compose.override.yaml" {
+		t.Fatalf("with override: %v %v %v", v, override, ok)
+	}
+	if _, _, ok := (Tracked{Path: "/w/shop"}).ComposeValues(); ok {
+		t.Fatal("no compose file must not be ok")
 	}
 }

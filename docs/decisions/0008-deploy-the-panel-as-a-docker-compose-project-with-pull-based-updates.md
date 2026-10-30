@@ -77,3 +77,9 @@ The implementation of #75 refined the decision:
 - **Uninstall.** `uninstall.sh` stops the project, removes the panel images and the compose files, and keeps `panel.env` and `data/`. `--purge` removes the whole install directory.
 - **Rollback is manual.** A release that fails its health check is not rolled back automatically. The owner pins the previous `sha-` tag in `.env` (`docs/deploy.md`).
 - **Layout.** The deploy files live in `deploy/`, and `install.sh` downloads them from there.
+
+## Note (2026-10-30)
+
+The project detail flow (#31 to #38) refined the decision:
+
+- **Memory limit.** `mem_limit` is `384m`, not `200m` (decision 3), because the panel may run up to 3 live log follows at once, each a `docker compose logs --follow` of about 50 MB (#37, [ADR 10](0010-stream-logs-through-one-shared-follow-process.md)).

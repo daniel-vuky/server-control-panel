@@ -2,6 +2,8 @@ package scan
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,7 +108,14 @@ func configJSON(name string, services map[string]string) string {
 
 // containerLine is one docker.containers line in runner.ContainerColumns order.
 func containerLine(proj, service, state, status, image string) string {
-	return strings.Join([]string{proj, service, state, status, image, "False"}, "\t") + "\n"
+	id := containerID(proj, service)
+	return strings.Join([]string{proj, service, state, status, image, "False", id, proj + "-" + service + "-1", "img", ""}, "\t") + "\n"
+}
+
+// containerID is a stable 64-hex id per (project, service), as Docker gives.
+func containerID(proj, service string) string {
+	sum := sha256.Sum256([]byte(proj + "/" + service))
+	return hex.EncodeToString(sum[:])
 }
 
 func newTestManager(t *testing.T, cmd Commander) (*Manager, *store.Store) {

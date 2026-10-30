@@ -17,6 +17,7 @@ import (
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/config"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
+	"github.com/daniel-vuky/server-control-panel/internal/logs"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -76,6 +77,9 @@ func run(log *slog.Logger) int {
 	// and refreshes reach /api/events at once.
 	scans.SetGuard(guard)
 	scans.SetOnChange(hub.Refresh)
+	// Log streams read the containers through the hub, so a stream's
+	// container list is never older than a tick.
+	logStreams := logs.New(docker, hub.Containers, time.Now)
 
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
@@ -94,6 +98,7 @@ func run(log *slog.Logger) int {
 			Docker:   docker,
 			Control:  ctl,
 			Hub:      hub,
+			Logs:     logStreams,
 		}),
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 		ReadHeaderTimeout: 10 * time.Second,

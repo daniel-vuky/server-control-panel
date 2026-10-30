@@ -16,6 +16,7 @@ import (
 
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
+	"github.com/daniel-vuky/server-control-panel/internal/logs"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -39,7 +40,10 @@ func webStub() http.Handler {
 // with one nginx service by default), docker.containers with canned lines,
 // docker.ping with pingErr, and the lifecycle commands with lifecycleErr. A
 // lifecycle command that succeeds replaces the container lines with after,
-// when set. It logs every action it is asked to run.
+// when set. The compose.logs.tail* backlog commands answer backlog, and each
+// Stream (the compose.logs follow) delivers the lines sent on follow until
+// follow is closed (it then exits 0) or its context ends. It logs every action
+// it is asked to run.
 type fakeDocker struct {
 	mu            sync.Mutex
 	configs       map[string]string
@@ -55,6 +59,28 @@ type fakeDocker struct {
 	once  sync.Once
 	lgate chan struct{} // when set, the lifecycle commands wait for it to close
 	lonce sync.Once
+
+	backlog         string
+	follow          chan string        // the follow's lines; closed, the follow exits 0
+	streamStarted   chan runner.Values // one value per Stream call
+	streamCancelled chan struct{}      // one value per Stream that ended on its ctx
+}
+
+func newFakeDocker() *fakeDocker {
+	return &fakeDocker{
+		configs:         map[string]string{},
+		follow:          make(chan string),
+		streamStarted:   make(chan runner.Values, 16),
+		streamCancelled: make(chan struct{}, 16),
+	}
+}
+
+func isLogsTail(a runner.Action) bool {
+	switch a {
+	case runner.ComposeLogsTail, runner.ComposeLogsTailOverride, runner.ComposeLogsTailService, runner.ComposeLogsTailServiceOverride:
+		return true
+	}
+	return false
 }
 
 func isLifecycle(a runner.Action) bool {
@@ -86,6 +112,10 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 			cfg = configJSON(scan.NormalizeProjectName(filepath.Base(v["dir"])), map[string]service{"app": {Image: "nginx"}})
 		}
 		return runner.Result{Stdout: []byte(cfg)}, nil
+	case isLogsTail(a):
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return runner.Result{Stdout: []byte(f.backlog)}, nil
 	case a == runner.DockerPing:
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -106,6 +136,27 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 		return runner.Result{}, nil
 	}
 	return runner.Result{}, fmt.Errorf("fake: unexpected %s %s", s, a)
+}
+
+// Stream is the compose.logs follow: see fakeDocker.
+func (f *fakeDocker) Stream(ctx context.Context, _ runner.Stack, a runner.Action, v runner.Values, _ []string, onLine func(string)) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, a)
+	follow := f.follow
+	f.mu.Unlock()
+	f.streamStarted <- v
+	for {
+		select {
+		case line, ok := <-follow:
+			if !ok {
+				return nil
+			}
+			onLine(line)
+		case <-ctx.Done():
+			f.streamCancelled <- struct{}{}
+			return ctx.Err()
+		}
+	}
 }
 
 // hold makes docker.containers wait until release is called; release also
@@ -199,7 +250,7 @@ func newTestDeps(t *testing.T) Deps {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	docker := &fakeDocker{configs: map[string]string{}}
+	docker := newFakeDocker()
 	ctl, hub := control.New(st, docker, log)
 	// Runs before the store closes: a command a test left running stores its
 	// outcome first.
@@ -223,6 +274,7 @@ func newTestDeps(t *testing.T) Deps {
 		Docker:   docker,
 		Control:  ctl,
 		Hub:      hub,
+		Logs:     logs.New(docker, hub.Containers, time.Now),
 	}
 }
 
@@ -321,6 +373,7 @@ func TestNewRouterPanicsOnMissingDeps(t *testing.T) {
 		{"nil Docker", func(d *Deps) { d.Docker = nil }},
 		{"nil Control", func(d *Deps) { d.Control = nil }},
 		{"nil Hub", func(d *Deps) { d.Hub = nil }},
+		{"nil Logs", func(d *Deps) { d.Logs = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -353,6 +406,8 @@ func TestNewEndpointsNeedIdentity(t *testing.T) {
 		{http.MethodPost, "/api/rescans"},
 		{http.MethodPost, "/api/workspaces/1/remove"},
 		{http.MethodPost, "/api/projects/1/untrack"},
+		{http.MethodPost, "/api/projects/1/settings"},
+		{http.MethodGet, "/api/projects/1/logs"},
 	} {
 		if rec := do(h, tc.method, tc.path); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", tc.method, tc.path, rec.Code)

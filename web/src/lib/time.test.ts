@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatLastScan } from './time'
+import { folderMissing, formatLastScan } from './time'
 
 describe('formatLastScan', () => {
   const now = new Date(2026, 9, 29, 15, 0) // 29 Oct 2026, local time
@@ -23,5 +23,15 @@ describe('formatLastScan', () => {
   it('shows "never" for an empty or invalid time', () => {
     expect(formatLastScan('', now)).toBe('never')
     expect(formatLastScan('not a date', now)).toBe('never')
+  })
+})
+
+describe('folderMissing', () => {
+  it('names the scan that found the folder gone, or the last scan', () => {
+    const at = '2026-10-30T09:42:00Z'
+    expect(folderMissing(at)).toBe(
+      `Folder missing since the ${formatLastScan(at)} scan. Not removed automatically.`,
+    )
+    expect(folderMissing('')).toBe('Folder missing since the last scan. Not removed automatically.')
   })
 })

@@ -18,7 +18,7 @@ func nextState(t *testing.T, r *sseReader) LiveState {
 		if !ok {
 			t.Fatal("stream ended before a state event")
 		}
-		if ev.kind == ":" {
+		if ev.kind == "ping" {
 			continue
 		}
 		if ev.kind != "state" {
@@ -138,8 +138,8 @@ func TestEventsHeartbeat(t *testing.T) {
 		t.Fatalf("first event = %+v", ev)
 	}
 	for range 2 {
-		if ev, _ := r.next(); ev != (sseEvent{kind: ":", data: "ping"}) {
-			t.Fatalf("event = %+v, want a ping comment", ev)
+		if ev, _ := r.next(); ev != (sseEvent{kind: "ping", data: "{}"}) {
+			t.Fatalf("event = %+v, want a ping event", ev)
 		}
 	}
 }

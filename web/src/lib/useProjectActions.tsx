@@ -1,0 +1,300 @@
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { type LifecycleAction, runAction, untrackProject } from '../api/projects'
+import type { Project } from '../api/types.gen'
+import { useLive } from '../app/live'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { useToast } from '../components/Toast'
+import { inFlightStatus, type Status } from './status'
+
+/** PENDING_MS is how long a finished command's status outlives it when no state event arrives. */
+const PENDING_MS = 5000
+
+const VERB: Record<LifecycleAction, { done: string; failed: string }> = {
+  start: { done: 'Started', failed: "Couldn't start" },
+  stop: { done: 'Stopped', failed: "Couldn't stop" },
+  restart: { done: 'Restarted', failed: "Couldn't restart" },
+}
+
+const mono = (name: string): ReactNode => <span className="font-mono">{name}</span>
+
+/** Pending is what a row shows while a command runs, and until the next state or PENDING_MS after. */
+type Pending = { status: Status; actions: string[] }
+
+type Confirm = {
+  action: 'stop' | 'restart' | 'untrack' | 'remove'
+  id: number
+  name: string
+  /** command is what a Stop runs: the project's own stop template. */
+  command?: string
+}
+
+/** UNTRACK is the toast copy of the two ways a project leaves the list. */
+const UNTRACK = {
+  untrack: { done: 'Stopped tracking', failed: "Couldn't stop tracking" },
+  remove: { done: 'Removed', failed: "Couldn't remove" },
+} as const
+
+/**
+ * usePending runs lifecycle commands and keeps the optimistic status of each
+ * project until the next live state or five seconds, whichever is first.
+ */
+function usePending() {
+  const toast = useToast()
+  const live = useLive()
+  const [pending, setPending] = useState<Record<number, Pending>>({})
+  const inflight = useRef(new Set<number>())
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    const held = timers.current
+    return () => {
+      mounted.current = false
+      for (const t of held.values()) clearTimeout(t)
+      held.clear()
+    }
+  }, [])
+
+  const forget = useCallback((id: number) => {
+    const t = timers.current.get(id)
+    if (t !== undefined) clearTimeout(t)
+    timers.current.delete(id)
+  }, [])
+
+  // A new state event is the truth again. Only a settled row holds a timer,
+  // so a command still running keeps its in-flight status.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new state event re-runs this.
+  useEffect(() => {
+    if (live.projects === null) return
+    const settled = [...timers.current.keys()]
+    if (settled.length === 0) return
+    for (const id of settled) forget(id)
+    setPending((prev) => {
+      if (!settled.some((id) => id in prev)) return prev
+      const next = { ...prev }
+      for (const id of settled) delete next[id]
+      return next
+    })
+  }, [live.projects])
+
+  const run = useCallback(
+    async (id: number, name: string, action: LifecycleAction) => {
+      const verb = VERB[action]
+      forget(id)
+      inflight.current.add(id)
+      // While a command runs nothing else may start, so the row has no actions.
+      setPending((p) => ({ ...p, [id]: { status: inFlightStatus(action), actions: [] } }))
+
+      let settled: Pending | null = null
+      try {
+        const result = await runAction(id, action)
+        settled = { status: result.status as Status, actions: result.actions }
+        if (result.outcome === 'ok') {
+          toast.success(
+            <>
+              {verb.done} {mono(name)}
+            </>,
+          )
+        } else {
+          toast.error(
+            <>
+              {verb.failed} {mono(name)}
+            </>,
+            result.message,
+          )
+        }
+      } catch (err) {
+        const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
+        toast.error(
+          <>
+            {verb.failed} {mono(name)}
+          </>,
+          message,
+        )
+      } finally {
+        inflight.current.delete(id)
+      }
+
+      // After the page is gone there is no row to settle and no timer to start.
+      if (!mounted.current) return
+      if (settled === null) {
+        setPending(({ [id]: _gone, ...rest }) => rest)
+        return
+      }
+      const done = settled
+      setPending((p) => ({ ...p, [id]: done }))
+      timers.current.set(
+        id,
+        setTimeout(() => {
+          timers.current.delete(id)
+          if (!mounted.current || inflight.current.has(id)) return
+          setPending(({ [id]: _gone, ...rest }) => rest)
+        }, PENDING_MS),
+      )
+    },
+    [forget, toast],
+  )
+
+  return { pending, run }
+}
+
+const strong = (name: string): ReactNode => <strong className="font-mono">{name}</strong>
+
+/** confirmCopy is the title, body, button and tone of each confirmation. */
+function confirmCopy(c: Confirm) {
+  switch (c.action) {
+    case 'untrack':
+      return {
+        title: <>Stop tracking {strong(c.name)}?</>,
+        body: (
+          <>
+            Removes {strong(c.name)} from the panel. Its containers, files and backups on Google
+            Drive are not touched.
+          </>
+        ),
+        confirmLabel: 'Stop tracking',
+        tone: 'danger' as const,
+      }
+    case 'remove':
+      return {
+        title: <>Remove {strong(c.name)} from the list?</>,
+        body: 'Its folder is gone. It leaves the panel; nothing on the server is touched.',
+        confirmLabel: 'Remove from list',
+        tone: 'danger' as const,
+      }
+    case 'stop':
+      return {
+        title: <>Stop {mono(c.name)}?</>,
+        body: 'It will stop serving until you start it again. Its volumes and data are kept.',
+        command: c.command ?? 'docker compose stop',
+        confirmLabel: 'Stop',
+        tone: 'danger' as const,
+      }
+    case 'restart':
+      return {
+        title: <>Restart {mono(c.name)}?</>,
+        body: 'Its containers will stop and start again; it is unavailable for a moment. Volumes and data are kept.',
+        command: 'docker compose restart',
+        confirmLabel: 'Restart',
+        tone: 'primary' as const,
+      }
+  }
+}
+
+/**
+ * useUntrack stops tracking a project (or removes a Not found one) and keeps
+ * the ids it removed, so their rows go at once. The next live state is the
+ * server's own list again, which no longer has them.
+ */
+function useUntrack() {
+  const toast = useToast()
+  const live = useLive()
+  const [removedIds, setRemovedIds] = useState<ReadonlySet<number>>(new Set())
+  // Ids whose request is out, so a second confirm cannot post it again.
+  const inflight = useRef(new Set<number>())
+
+  useEffect(() => {
+    if (live.projects === null) return
+    // A project held for a store write comes back with no actions: it is
+    // still on its way out, so only a gone or actionable one clears.
+    const held = new Set(live.projects.filter((p) => p.actions.length === 0).map((p) => p.id))
+    setRemovedIds((prev) => {
+      if (prev.size === 0) return prev
+      const next = new Set([...prev].filter((id) => held.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [live.projects])
+
+  const untrack = useCallback(
+    async (id: number, name: string, action: 'untrack' | 'remove') => {
+      const verb = UNTRACK[action]
+      if (inflight.current.has(id)) return
+      inflight.current.add(id)
+      try {
+        await untrackProject(id)
+      } catch (err) {
+        const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
+        toast.error(
+          <>
+            {verb.failed} {mono(name)}
+          </>,
+          message,
+        )
+        return
+      } finally {
+        inflight.current.delete(id)
+      }
+      setRemovedIds((prev) => new Set(prev).add(id))
+      toast.success(
+        <>
+          {verb.done} {mono(name)}
+        </>,
+      )
+    },
+    [toast],
+  )
+
+  return { removedIds, untrack }
+}
+
+/** overlay shows the status a command set optimistically, with the actions the server sent for it. */
+function overlayPending(p: Project, pending: Pending | undefined): Project {
+  return pending === undefined ? p : { ...p, status: pending.status, actions: pending.actions }
+}
+
+/** stopCommand is the command a Stop shows and runs for the project's own template. */
+const stopCommand = (p: Project) =>
+  p.stopTemplate === 'down' ? 'docker compose down' : 'docker compose stop'
+
+/**
+ * useProjectActions is the row action flow of the Dashboard, shared with the
+ * detail header: the confirm rules (Stop, and Restart of a project that is up),
+ * the in-between status, toasts, and untrack or remove. Render `dialogs` once.
+ *
+ * start, stop, restart and leave take the project as the server last sent it;
+ * overlay puts the in-between status on top of it, and removedIds are the
+ * projects whose row should already be gone.
+ */
+export function useProjectActions() {
+  const { pending, run } = usePending()
+  const { removedIds, untrack } = useUntrack()
+  const [confirm, setConfirm] = useState<Confirm | null>(null)
+
+  const overlay = useCallback((p: Project): Project => overlayPending(p, pending[p.id]), [pending])
+
+  const stop = (p: Project) =>
+    setConfirm({ action: 'stop', id: p.id, name: p.displayName, command: stopCommand(p) })
+  const restart = (p: Project) => {
+    // Only a project that is up asks first; from error it just starts again.
+    if (p.status === 'running' || p.status === 'partial') {
+      setConfirm({ action: 'restart', id: p.id, name: p.displayName })
+    } else {
+      void run(p.id, p.displayName, 'restart')
+    }
+  }
+  const start = (p: Project) => void run(p.id, p.displayName, 'start')
+  const leave = (p: Project) =>
+    setConfirm({
+      action: p.actions.includes('untrack') ? 'untrack' : 'remove',
+      id: p.id,
+      name: p.displayName,
+    })
+
+  const dialogs = confirm && (
+    <ConfirmDialog
+      {...confirmCopy(confirm)}
+      onCancel={() => setConfirm(null)}
+      onConfirm={() => {
+        setConfirm(null)
+        if (confirm.action === 'untrack' || confirm.action === 'remove') {
+          void untrack(confirm.id, confirm.name, confirm.action)
+        } else {
+          void run(confirm.id, confirm.name, confirm.action)
+        }
+      }}
+    />
+  )
+
+  return { overlay, removedIds, start, stop, restart, leave, dialogs }
+}

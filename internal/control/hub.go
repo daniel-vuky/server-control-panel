@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,21 +23,38 @@ var (
 	tickInterval = 5 * time.Second
 	// recentMax is how old the last tick may be for a new subscriber's state.
 	recentMax = 10 * time.Second
+	// metricsInterval is the least time between the starts of two metrics
+	// reads while someone subscribes.
+	metricsInterval = 10 * time.Second
+	// metricsMaxAge is how long failed metrics reads keep the last values.
+	metricsMaxAge = 30 * time.Second
 )
 
-// maxTickReads is how many container reads one tick makes, in all, while lock
-// changes keep making its answer stale.
-const maxTickReads = 3
+const (
+	// maxTickReads is how many container reads one tick makes, in all, while
+	// lock changes keep making its answer stale.
+	maxTickReads = 3
+	// maxInspectIDs is the most container ids the runner takes in one
+	// docker.inspect call.
+	maxInspectIDs = 1000
+)
 
 // errNoRead stands for a container list the hub could not read.
 var errNoRead = errors.New("control: the container list could not be read")
 
-// ProjectView is a tracked project with its effective status and the actions
-// it allows.
+// ProjectView is a tracked project with its effective status, the actions it
+// allows, its containers and its totals. Components is empty (never nil) when
+// Docker could not be read. CPUPercent and MemBytes are nil when no running
+// container has a value; UpSince is nil unless the status is Running or
+// Partial and a running container's start time is known.
 type ProjectView struct {
 	store.Tracked
-	Status  project.Status
-	Actions []project.Action
+	Status     project.Status
+	Actions    []project.Action
+	Components []project.Component
+	CPUPercent *float64
+	MemBytes   *int64
+	UpSince    *time.Time
 }
 
 // State is one snapshot of the tracked projects. Subscribers share it, so they
@@ -52,8 +70,13 @@ type State struct {
 // containers could not be read (readErr), else its status from cs. A project
 // held for a store write keeps that computed status and allows no action.
 // lock has Controller.Lock's shape and may be nil.
+//
+// When cs was read, each view also lists the project's containers with the
+// inspect and usage data in insp and use (keyed by container id; either may
+// be nil) and sums them; otherwise it has no component and no metrics.
 func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp bool,
-	lock func(int64) (status project.Status, held bool, ok bool)) []ProjectView {
+	lock func(int64) (status project.Status, held bool, ok bool),
+	insp map[string]project.Inspect, use map[string]project.Usage) []ProjectView {
 	out := make([]ProjectView, 0, len(ts))
 	for _, t := range ts {
 		s, held, locked := lookup(lock, t.ID)
@@ -70,7 +93,15 @@ func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp b
 		if held {
 			actions = []project.Action{}
 		}
-		out = append(out, ProjectView{Tracked: t, Status: status, Actions: actions})
+		v := ProjectView{Tracked: t, Status: status, Actions: actions, Components: []project.Component{}}
+		if dockerUp && readErr == nil {
+			v.Components = project.Components(cs, t.ComposeProject, t.Services, insp, use)
+			v.CPUPercent, v.MemBytes, v.UpSince = project.Totals(v.Components)
+			if status != project.StatusRunning && status != project.StatusPartial {
+				v.UpSince = nil
+			}
+		}
+		out = append(out, v)
 	}
 	return out
 }
@@ -96,7 +127,14 @@ type tickRun struct {
 // Hub reads Docker once for every subscriber and broadcasts the snapshots
 // (ADR 0003). While at least one subscriber is connected its loop ticks every
 // tickInterval; with none it does no work. Ticks never overlap: Check during a
-// tick waits for that tick's result.
+// tick waits for that tick's result. Each tick reads docker.containers, then
+// docker.inspect for the containers of tracked, present projects.
+//
+// Metrics (docker.stats, which takes a second or two) are read by a second
+// loop that runs alongside the tick loop: never inside a tick, never two at
+// once, at most every metricsInterval. Inspect and metrics data are kept in
+// maps keyed by container id, so a lock release's re-read (docker.containers
+// only) does not blank them.
 //
 // Lock order: the hub calls the Controller's Lock and Generation while it
 // holds mu (hub.mu → ctl.mu); it never runs Docker or reads the store with mu
@@ -122,9 +160,25 @@ type Hub struct {
 	cs       []project.Container
 	csOK     bool // cs is a successful read
 	dockerUp bool
-	at       time.Time // when cs (or Docker down) was last seen
+	// dockerSeen: a tick has checked Docker, so dockerUp is known.
+	dockerSeen bool
+	at         time.Time // when cs (or Docker down) was last seen
 
 	lastSent []byte // the JSON of the last state broadcast
+
+	// cacheGen is the Controller generation the cache last matched (a tick
+	// or a lock change published it). A successful WithLocks write releases
+	// its locks without telling the hub, and the cached projects then still
+	// hold the rows it dropped: the metrics merge does not publish until a
+	// tick or a lock change has caught up.
+	cacheGen uint64
+
+	// Container details and metrics by container id.
+	insp         map[string]project.Inspect
+	use          map[string]project.Usage
+	useAt        time.Time // when use was last read
+	metricsBusy  bool      // a docker.stats read is running
+	metricsStart time.Time // when the last docker.stats read began
 }
 
 func newHub(st *store.Store, cmd scan.Commander, ctl *Controller, log *slog.Logger) *Hub {
@@ -133,9 +187,9 @@ func newHub(st *store.Store, cmd scan.Commander, ctl *Controller, log *slog.Logg
 
 // Subscribe returns the current state and a channel of later ones. The
 // channel holds the latest state not yet received; it is never closed. The
-// first subscriber starts the loop and the last cancel stops it. The current
-// state comes from the last tick when it is at most recentMax old, otherwise
-// from one fresh tick.
+// first subscriber starts the tick and metrics loops and the last cancel stops
+// them. The current state comes from the last tick when it is at most
+// recentMax old, otherwise from one fresh tick.
 func (h *Hub) Subscribe() (current State, updates <-chan State, cancel func()) {
 	ch := make(chan State, 1)
 	h.mu.Lock()
@@ -143,8 +197,9 @@ func (h *Hub) Subscribe() (current State, updates <-chan State, cancel func()) {
 	if h.stopLoop == nil {
 		ctx, stop := context.WithCancel(context.Background())
 		h.stopLoop = stop
-		h.loops.Add(1)
+		h.loops.Add(2)
 		go h.loop(ctx)
+		go h.metricsLoop(ctx)
 	}
 	fresh := h.ready && time.Since(h.at) <= recentMax
 	h.mu.Unlock()
@@ -180,6 +235,19 @@ func (h *Hub) Subscribe() (current State, updates <-chan State, cancel func()) {
 // starting a second read. When ctx ends first it returns the cached state.
 func (h *Hub) Check(ctx context.Context) State {
 	return h.shared(ctx)
+}
+
+// Containers reads Docker as Check does (sharing a tick in progress) and
+// returns the container list it holds then. ok is false when Docker is down or
+// the list could not be read; cs is then nil. Callers must not modify cs.
+func (h *Hub) Containers(ctx context.Context) (cs []project.Container, ok bool) {
+	h.Check(ctx)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.csOK || !h.dockerUp {
+		return nil, false
+	}
+	return h.cs, true
 }
 
 // Refresh makes the next published state reflect the store, without waiting;
@@ -296,6 +364,7 @@ func (h *Hub) runTick(ctx context.Context, run *tickRun) {
 func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) {
 	h.mu.Lock()
 	tsGen := h.tsGen
+	cachedTS := h.ts // whose containers to inspect when the store cannot be read
 	h.mu.Unlock()
 	gen := h.ctl.Generation()
 	ts, tsErr := h.st.TrackedProjects(ctx)
@@ -314,6 +383,7 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 	for reads := 1; ; reads++ {
 		var cs []project.Container
 		var readErr error
+		var insp map[string]project.Inspect
 		if up {
 			cs, readErr = scan.ReadContainers(ctx, h.cmd)
 			if ctx.Err() != nil {
@@ -321,6 +391,15 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 			}
 			if readErr != nil {
 				h.log.Warn("hub: cannot read containers", "err", readErr)
+			} else {
+				tracked := ts
+				if tsErr != nil {
+					tracked = cachedTS
+				}
+				insp = h.inspect(ctx, cs, tracked)
+				if ctx.Err() != nil {
+					return State{}, false, false
+				}
 			}
 		}
 
@@ -343,10 +422,22 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 		if tsErr == nil || h.ready {
 			h.ready = true
 		}
-		h.dockerUp = up
+		h.dockerUp, h.dockerSeen = up, true
 		if !stale {
 			h.cs, h.csOK, h.at = cs, up && readErr == nil, time.Now()
+			if h.csOK {
+				if len(insp) > 0 {
+					h.insp = insp
+				}
+				listed := make(map[string]bool, len(cs))
+				for _, c := range cs {
+					listed[c.ID] = true
+				}
+				keepListed(h.insp, listed)
+				keepListed(h.use, listed)
+			}
 		}
+		h.cacheGen = h.ctl.Generation()
 		s = h.publishLocked()
 		if h.running == run {
 			h.running = nil
@@ -354,6 +445,160 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 		h.mu.Unlock()
 		return s, true, false
 	}
+}
+
+// inspect runs docker.inspect for the containers of the tracked, present
+// projects in ts and returns the lines that parsed, or nil when there is no
+// such container or no line parsed. The output of a failed run is still read:
+// a container removed between docker ps and docker inspect makes it print the
+// others' lines and exit 1, which is normal during a down or a recreate.
+func (h *Hub) inspect(ctx context.Context, cs []project.Container, ts []store.Tracked) map[string]project.Inspect {
+	present := map[string]bool{}
+	for _, t := range ts {
+		if t.MissingSince == nil {
+			present[t.ComposeProject] = true
+		}
+	}
+	var ids []string
+	for _, c := range cs {
+		if present[c.Project] && !c.OneOff && isContainerID(c.ID) {
+			ids = append(ids, c.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) > maxInspectIDs {
+		ids = ids[:maxInspectIDs] // the rest keep their docker ps data
+	}
+	res, err := h.cmd.Run(ctx, runner.StackDocker, runner.DockerInspect, runner.Values{"ids": strings.Join(ids, " ")}, nil)
+	in := project.ParseInspect(res.Stdout)
+	if err != nil && ctx.Err() == nil {
+		if len(in) == 0 {
+			h.log.Warn("hub: cannot inspect containers", "err", err)
+		} else {
+			h.log.Debug("hub: docker inspect missed some containers", "err", err)
+		}
+	}
+	if len(in) == 0 {
+		return nil
+	}
+	return in
+}
+
+// isContainerID reports whether id is a full container id: 64 lowercase hex
+// digits, the only form the runner's ids slot takes.
+func isContainerID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	for _, r := range id {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// keepListed drops the entries of m whose container id is not in listed.
+func keepListed[V any](m map[string]V, listed map[string]bool) {
+	for id := range m {
+		if !listed[id] {
+			delete(m, id)
+		}
+	}
+}
+
+// metricsLoop reads metrics until ctx ends, waiting between reads as
+// readMetrics says. Like loop it never uses a Ticker.
+func (h *Hub) metricsLoop(ctx context.Context) {
+	defer h.loops.Done()
+	for {
+		wait := h.readMetrics(ctx)
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// readMetrics runs one docker.stats read, unless one is running (a loop that
+// ended may have left it), the last one began less than metricsInterval ago
+// or the last tick found Docker down, and returns how long to wait before the
+// next try: what is left of metricsInterval since this read began, so reads
+// begin metricsInterval apart however long each takes. It never holds h.mu
+// during the read. A successful read replaces the metrics; a failed or skipped
+// one (its context ending included) keeps them until they are metricsMaxAge
+// old, then clears them. Either way the state is published when it changed. A
+// panic is logged and recovered, as in a tick.
+func (h *Hub) readMetrics(ctx context.Context) (wait time.Duration) {
+	h.mu.Lock()
+	if h.metricsBusy {
+		h.mu.Unlock()
+		return metricsInterval
+	}
+	if since := time.Since(h.metricsStart); !h.metricsStart.IsZero() && since < metricsInterval {
+		h.mu.Unlock()
+		return metricsInterval - since
+	}
+	if h.dockerSeen && !h.dockerUp {
+		// docker stats would only fail; the values still age out.
+		if h.expireMetricsLocked(time.Now()) && h.ready && h.cacheGen == h.ctl.Generation() {
+			h.publishLocked()
+		}
+		h.mu.Unlock()
+		return metricsInterval
+	}
+	start := time.Now()
+	h.metricsBusy, h.metricsStart = true, start
+	h.mu.Unlock()
+
+	var (
+		use map[string]project.Usage
+		ok  bool
+	)
+	defer func() {
+		if r := recover(); r != nil {
+			h.log.Error("hub metrics read panicked", "panic", r, "stack", string(debug.Stack()))
+			use, ok = nil, false
+		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.metricsBusy = false
+		now := time.Now()
+		if ok {
+			h.use, h.useAt = use, now
+		} else {
+			_ = h.expireMetricsLocked(now)
+		}
+		if h.ready && h.cacheGen == h.ctl.Generation() {
+			h.publishLocked()
+		}
+		wait = max(0, metricsInterval-now.Sub(start))
+	}()
+	res, err := h.cmd.Run(ctx, runner.StackDocker, runner.DockerStats, nil, nil)
+	switch {
+	case ctx.Err() != nil:
+		// The last subscriber left during the read: it counts as failed.
+	case err != nil:
+		h.log.Debug("hub: cannot read metrics", "err", err)
+	case res.Truncated:
+		h.log.Warn("hub: the metrics output is too large to read")
+	default:
+		use, ok = project.ParseStats(res.Stdout), true
+	}
+	return // the deferred func sets wait
+}
+
+// expireMetricsLocked clears the metrics once they are metricsMaxAge old and
+// reports whether it did. Call it with h.mu held.
+func (h *Hub) expireMetricsLocked(now time.Time) bool {
+	if h.use == nil || now.Sub(h.useAt) <= metricsMaxAge {
+		return false
+	}
+	h.use = nil
+	return true
 }
 
 // recent returns the cached container list when it is at most maxAge old.
@@ -383,8 +628,10 @@ func (h *Hub) lockChanged(fresh []project.Container) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if fresh != nil {
+		// The inspect and metrics maps stay: the re-read has no such data.
 		h.cs, h.csOK, h.dockerUp, h.at = fresh, true, true, time.Now()
 	}
+	h.cacheGen = h.ctl.Generation()
 	if h.ready {
 		h.publishLocked()
 	}
@@ -404,7 +651,7 @@ func (h *Hub) buildLocked() State {
 	if !h.csOK {
 		readErr = errNoRead
 	}
-	return State{DockerUp: h.dockerUp, Projects: Views(h.ts, h.cs, readErr, h.dockerUp, h.ctl.Lock)}
+	return State{DockerUp: h.dockerUp, Projects: Views(h.ts, h.cs, readErr, h.dockerUp, h.ctl.Lock, h.insp, h.use)}
 }
 
 // publishLocked builds the state and sends it to every subscriber when its

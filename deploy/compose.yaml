@@ -21,7 +21,7 @@ services:
     # stops a setuid binary from gaining any back.
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 200m
+    mem_limit: 384m
     cpus: 0.5
     restart: unless-stopped
     logging:

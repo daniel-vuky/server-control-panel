@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Workspace } from '../api/types.gen'
-import { ToastProvider } from '../components/Toast'
 import { formatLastScan } from '../lib/time'
+import { renderApp } from '../test/renderApp'
 import SettingsPage from './SettingsPage'
 
 const scanned = new Date(2026, 0, 5, 9, 42)
@@ -73,16 +73,12 @@ function Where() {
 }
 
 const renderPage = () =>
-  render(
-    <MemoryRouter initialEntries={['/settings']}>
-      <ToastProvider>
-        <Routes>
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Where />} />
-        </Routes>
-      </ToastProvider>
-    </MemoryRouter>,
-  )
+  renderApp('/settings', {
+    routes: [
+      { path: '/settings', element: <SettingsPage /> },
+      { path: '*', element: <Where /> },
+    ],
+  })
 
 afterEach(() => vi.unstubAllGlobals())
 

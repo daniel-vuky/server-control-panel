@@ -6,15 +6,25 @@
 #   FAKE_EXIT    exit code
 #   FAKE_SLEEP   seconds to sleep instead of exiting
 #   FAKE_BYTES   number of x characters written to stdout
+#   FAKE_QUIET   when 1, do not print the ARG: and ENV: lines
+#   FAKE_STDOUT  a line written to stdout
+#   FAKE_LONGLINE  number of x characters written to stdout as one line, followed by the line "after"
 #   FAKE_GRANDCHILD  when 1, start a background sleep 30 (pid in $HOME/grandchild) and wait for it
 touch "$HOME/started"
 [ -f "$HOME/fake.env" ] && . "$HOME/fake.env"
-for a in "$@"; do
-	printf 'ARG:%s\n' "$a"
-done
-env | while IFS= read -r line; do
-	printf 'ENV:%s\n' "$line"
-done
+if [ "$FAKE_QUIET" != 1 ]; then
+	for a in "$@"; do
+		printf 'ARG:%s\n' "$a"
+	done
+	env | while IFS= read -r line; do
+		printf 'ENV:%s\n' "$line"
+	done
+fi
+[ -n "$FAKE_STDOUT" ] && printf '%s\n' "$FAKE_STDOUT"
+if [ -n "$FAKE_LONGLINE" ]; then
+	head -c "$FAKE_LONGLINE" /dev/zero | tr '\0' 'x'
+	printf '\nafter\n'
+fi
 [ -n "$FAKE_STDERR" ] && printf '%s\n' "$FAKE_STDERR" >&2
 if [ -n "$FAKE_BYTES" ]; then
 	head -c "$FAKE_BYTES" /dev/zero | tr '\0' 'x'

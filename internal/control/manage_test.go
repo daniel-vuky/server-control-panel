@@ -87,7 +87,7 @@ func TestViewsMissingIsNotFound(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vs := Views(ts, cs, tt.readErr, tt.dockerUp, lock)
+			vs := Views(ts, cs, tt.readErr, tt.dockerUp, lock, nil, nil)
 			for i, v := range vs {
 				if v.Status != tt.want[i].status || !slices.Equal(v.Actions, tt.want[i].actions) || v.Actions == nil {
 					t.Errorf("view %s = %s %v, want %s %v", v.DisplayName, v.Status, v.Actions, tt.want[i].status, tt.want[i].actions)
@@ -111,7 +111,7 @@ func TestViewsHeldHasNoActions(t *testing.T) {
 		}
 		return "", false, false
 	}
-	vs := Views(ts, cs, nil, true, lock)
+	vs := Views(ts, cs, nil, true, lock, nil, nil)
 	want := []struct {
 		status  project.Status
 		actions []project.Action

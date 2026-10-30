@@ -1,3 +1,5 @@
+import type { FieldError } from './types.gen'
+
 /** ApiError is thrown for a non-2xx answer. Body is the parsed JSON body, or null. */
 export class ApiError extends Error {
   status: number
@@ -50,4 +52,14 @@ export function postJSON<T>(url: string, body: unknown, signal?: AbortSignal): P
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+}
+
+/** isFieldError reports a 422 body that names the form field it is about. */
+export function isFieldError(body: unknown): body is FieldError {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    typeof (body as FieldError).error === 'string' &&
+    typeof (body as FieldError).field === 'string'
+  )
 }

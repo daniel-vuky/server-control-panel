@@ -1,8 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { ApiError } from '../../api/client'
+import { ApiError, isFieldError } from '../../api/client'
 import { getScan, isScanBusy, startScan, trackScan, watchScan } from '../../api/scans'
-import type { FieldError, ScanJob, ScanProgress, ScanResult, TrackItem } from '../../api/types.gen'
+import type { ScanJob, ScanProgress, ScanResult, TrackItem } from '../../api/types.gen'
 import { useToast } from '../../components/Toast'
 import ScanFailed from './ScanFailed'
 import ScanProgressView from './ScanProgressView'
@@ -25,15 +25,6 @@ type Phase =
 const STEPS = ['Workspace', 'Scan results'] as const
 
 const NOT_FINISHED = 'The scan did not finish.'
-
-function isFieldError(body: unknown): body is FieldError {
-  return (
-    typeof body === 'object' &&
-    body !== null &&
-    typeof (body as FieldError).error === 'string' &&
-    typeof (body as FieldError).field === 'string'
-  )
-}
 
 /** handedOffScan is the scan id the Dashboard or the rescan page passed in the router state. */
 function handedOffScan(state: unknown): number | null {

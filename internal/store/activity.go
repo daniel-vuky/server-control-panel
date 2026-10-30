@@ -27,6 +27,7 @@ const (
 	ActWorkspaceRemove = "workspace.remove"
 	ActProjectUntrack  = "project.untrack"
 	ActProjectRemove   = "project.remove"
+	ActProjectSettings = "project.settings"
 )
 
 // How it ended.

@@ -57,6 +57,15 @@ Added on 2026-10-30 with the workspace management flow (#11, #19, #24, #25), num
 17. Remove from list deletes the record of a project a rescan could not find, while Stop tracking on a present project remembers it as ignored (E2-F06-US03).
 18. An ignored project can be tracked again from the rescan results, through Show ignored (E2-F06-US01).
 
+Added on 2026-10-30 with the project detail flow (#31, #32, #34, #35, #37, #38), numbering on from the list above:
+
+19. A project can stop with `up -d / down` instead of `up -d / stop`: `down` removes its containers and networks and keeps its volumes, and the project then reads Stopped (E3-F11-US05, E4-F12-US02).
+20. Alert thresholds (CPU %, RAM MB, per project) are stored before alerts exist; the form says alerts are not sent yet, and the alerts flow will read them (E3-F11-US05, E7-F22-US02).
+21. The log view opens with the 500 most recent lines and holds up to 2,000, dropping the oldest first; Download saves the lines held (E3-F11-US04).
+22. At most 3 live log streams run at once, panel-wide; a fourth is refused with a message (E3-F11-US04).
+23. An expired Cloudflare Access session is detected, and the connection badge offers Reload, because retrying cannot sign in again (E3-F09-US02).
+24. A failed-components panel on Overview links, with View logs, to that container's most recent error in the logs (E3-F11-US02, E3-F11-US04).
+
 <a id="open-questions"></a>
 ## Decisions (2026-10-28)
 

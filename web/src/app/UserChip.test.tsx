@@ -1,15 +1,7 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { AppRoutes } from './App'
+import { renderApp } from '../test/renderApp'
 import { initials } from './UserChip'
-
-const renderApp = () =>
-  render(
-    <MemoryRouter initialEntries={['/']}>
-      <AppRoutes />
-    </MemoryRouter>,
-  )
 
 const stubFetch = (impl: () => Promise<Response>) => {
   vi.stubGlobal('fetch', vi.fn(impl))

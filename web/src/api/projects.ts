@@ -1,5 +1,11 @@
 import { ApiError, getJSON, postJSON } from './client'
-import type { ActionResult, DockerCheck, Project, UntrackResponse } from './types.gen'
+import type {
+  ActionResult,
+  DockerCheck,
+  Project,
+  SettingsRequest,
+  UntrackResponse,
+} from './types.gen'
 
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   const projects = await getJSON<Project[]>('/api/projects', signal)
@@ -24,4 +30,12 @@ export function checkDocker(): Promise<DockerCheck> {
 /** untrackProject stops tracking a project, or removes a Not found one from the list. */
 export function untrackProject(id: number): Promise<UntrackResponse> {
   return postJSON<UntrackResponse>(`/api/projects/${id}/untrack`, {})
+}
+
+/**
+ * saveSettings replaces a project's five settings and resolves with the
+ * project as stored. A 422 carries a FieldError naming the field.
+ */
+export function saveSettings(id: number, body: SettingsRequest): Promise<Project> {
+  return postJSON<Project>(`/api/projects/${id}/settings`, body)
 }
