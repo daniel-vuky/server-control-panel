@@ -154,6 +154,7 @@ type job struct {
 	plan       plan
 	activityID int64
 	published  time.Time // the last publish of this job, for the throttle
+	tmpMade    bool      // the temporary file was created; only the worker uses it
 }
 
 // plan is how a backup runs: the resolved service and the commands.
@@ -365,7 +366,8 @@ func (m *Manager) waiters(projectID int64, key string) int {
 //  7. the disk has room for the dump (disk_short).
 //
 // Checks 1-3 are input errors and write nothing. A refusal at 4, 6 or 7 is
-// stored as a refused row and a refused backup.run activity.
+// stored as a refused row and a refused backup.run activity. When ctx ends
+// during checks 6-7, Enqueue returns ctx.Err() and records nothing.
 func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor string) (int64, error) {
 	if m.isClosed() {
 		return 0, ErrClosed
@@ -397,6 +399,12 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 	p, r := m.plan(ctx, t, db)
 	if r == nil {
 		r = m.checkDisk(ctx, p)
+	}
+	if ctx.Err() != nil {
+		// The caller left during the slow checks: a cancelled container or size
+		// read says nothing about the database, so nothing is recorded.
+		err = ctx.Err()
+		return 0, err
 	}
 	row.DBService = p.service
 	if r != nil {
@@ -646,18 +654,29 @@ func (m *Manager) refuse(ctx context.Context, row store.Backup, r *Refusal) *Ref
 
 // reserve is check 5. It returns the reservation to hold, or nil and the
 // outcome to answer: already_running for an active backup, or the outcome of
-// the Enqueue that held the reservation (ctx.Err() if ctx ends first).
+// the Enqueue that held the reservation (ctx.Err() if ctx ends first). A holder
+// whose own caller left reached no outcome, so its waiters try again.
 func (m *Manager) reserve(ctx context.Context, key dbRef, dbName string) (*reservation, error) {
-	m.mu.Lock()
-	if id, ok := m.activeID(key); ok {
-		m.mu.Unlock()
-		return nil, alreadyRunning(id, dbName)
-	}
-	if r, ok := m.reserved[key]; ok {
+	for {
+		m.mu.Lock()
+		if id, ok := m.activeID(key); ok {
+			m.mu.Unlock()
+			return nil, alreadyRunning(id, dbName)
+		}
+		r, ok := m.reserved[key]
+		if !ok {
+			r = &reservation{done: make(chan struct{})}
+			m.reserved[key] = r
+			m.mu.Unlock()
+			return r, nil
+		}
 		r.waiters++
 		m.mu.Unlock()
 		select {
 		case <-r.done:
+			if errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
+				continue
+			}
 			return nil, r.outcome(dbName)
 		case <-ctx.Done():
 			m.mu.Lock()
@@ -666,10 +685,6 @@ func (m *Manager) reserve(ctx context.Context, key dbRef, dbName string) (*reser
 			return nil, ctx.Err()
 		}
 	}
-	r := &reservation{done: make(chan struct{})}
-	m.reserved[key] = r
-	m.mu.Unlock()
-	return r, nil
 }
 
 // activeID is the queued or running backup of key; mu is held.
@@ -766,10 +781,17 @@ func (m *Manager) drain() {
 	m.fire()
 }
 
-// work is the one worker: it runs the queue in order until ctx ends.
+// work is the one worker: it runs the queue in order until ctx ends. However
+// it ends (Close, or the Start context), the Manager is then closed: later
+// Enqueues get ErrClosed instead of queueing jobs nobody runs.
 func (m *Manager) work(ctx context.Context) {
 	defer m.wg.Done()
-	defer m.drain()
+	defer func() {
+		m.mu.Lock()
+		m.closed = true
+		m.mu.Unlock()
+		m.drain()
+	}()
 	for {
 		if ctx.Err() != nil {
 			return

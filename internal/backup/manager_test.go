@@ -1284,3 +1284,143 @@ func TestActiveIsACopy(t *testing.T) {
 		t.Error("Enqueue did not publish")
 	}
 }
+
+func TestWorkerPanicRecovered(t *testing.T) {
+	e := newEnv(t)
+	e.r.dump = func(_ context.Context, c call, w io.Writer) ([]byte, error) {
+		if c.v["service"] == "db" {
+			_, _ = w.Write([]byte("-- partial\n"))
+			panic("boom with " + devPass)
+		}
+		_, err := w.Write(defaultDump(c))
+		return nil, err
+	}
+	first := e.enqueue(t, keyPG)
+	second := e.enqueue(t, keyMongo)
+
+	b := e.waitDone(t, first)
+	if b.State != "failed" || b.FailedStep != "dump" || b.Error != msgInternal || b.Hint != "" || b.FinishedAt == nil {
+		t.Fatalf("row = %+v", b)
+	}
+	if got := stepStates(b); got != "dump=failed compress=skipped upload=skipped prune=skipped" {
+		t.Errorf("steps = %s", got)
+	}
+	if b.Steps[3].Detail != "temp file deleted" {
+		t.Errorf("prune detail = %q", b.Steps[3].Detail)
+	}
+	if strings.Contains(b.Error, "boom") {
+		t.Errorf("the panic reached the row: %q", b.Error)
+	}
+	if b2 := e.waitDone(t, second); b2.State != "ok" {
+		t.Errorf("the next backup = %s %s, want ok", b2.State, b2.Error)
+	}
+	if left := tempFiles(t, e.dataDir); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+	acts := e.activity(t)
+	if len(acts) != 2 {
+		t.Fatalf("activity = %+v", acts)
+	}
+	for _, a := range acts {
+		if a.Result == store.ResultRunning || a.FinishedAt == nil || strings.Contains(a.Reason, "boom") {
+			t.Errorf("activity = %+v", a)
+		}
+	}
+	if acts[1].Result != store.ResultFailed || acts[1].Reason != "Dump: "+msgInternal {
+		t.Errorf("the panicked backup's activity = %+v", acts[1])
+	}
+}
+
+func TestEnqueueCancelledDuringChecksRecordsNothing(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	var once sync.Once
+	e.r.sizeHook = func(context.Context, call) { once.Do(cancel) }
+	// The cancelled size read would fall back to 500 MiB; this disk has less.
+	e.free.Store(1)
+	if _, err := e.m.Enqueue(ctx, e.shop, keyPG, actor); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	rows, _, _ := e.st.ProjectBackups(context.Background(), e.shop.ID, 0, 10)
+	if len(rows) != 0 || len(e.activity(t)) != 0 {
+		t.Errorf("a cancelled Enqueue recorded rows %+v, activity %+v", rows, e.activity(t))
+	}
+	e.free.Store(100 * gib)
+	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); err != nil {
+		t.Errorf("the reservation was not released: %v", err)
+	}
+}
+
+func TestWaiterRetriesAfterCancelledHolder(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	holderCtx, cancelHolder := context.WithCancel(context.Background())
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	e.r.sizeHook = func(context.Context, call) {
+		once.Do(func() {
+			close(entered)
+			<-release
+			cancelHolder()
+		})
+	}
+	holder := make(chan error, 1)
+	go func() { _, err := e.m.Enqueue(holderCtx, e.shop, keyPG, actor); holder <- err }()
+	<-entered
+	type result struct {
+		id  int64
+		err error
+	}
+	waiter := make(chan result, 1)
+	go func() {
+		id, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+		waiter <- result{id, err}
+	}()
+	waitFor(t, "the waiter", func() bool { return e.m.waiters(e.shop.ID, keyPG) == 1 })
+	close(release)
+	if err := <-holder; !errors.Is(err, context.Canceled) {
+		t.Errorf("holder = %v, want context.Canceled", err)
+	}
+	if r := <-waiter; r.err != nil || r.id == 0 {
+		t.Errorf("waiter = %+v, want its own backup queued", r)
+	}
+}
+
+func TestStartContextCancelClosesManager(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	e.m.Start(ctx)
+	cancel()
+	wctx, wcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer wcancel()
+	if err := e.m.Wait(wctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); !errors.Is(err, ErrClosed) {
+		t.Errorf("Enqueue after the worker stopped: %v, want ErrClosed", err)
+	}
+}
+
+func TestPruneDetailWithoutTempFile(t *testing.T) {
+	e := newEnv(t)
+	ready := make(chan struct{})
+	var n atomic.Int32
+	e.r.sizeHook = func(context.Context, call) {
+		if n.Add(1) == 2 { // the worker's re-check
+			<-ready
+		}
+	}
+	id := e.enqueue(t, keyPG)
+	// A folder where the temporary file goes: opening it fails, even as root.
+	if err := os.MkdirAll(filepath.Join(e.dataDir, "tmp", fmt.Sprintf("backup-%d.gz", id)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	close(ready)
+	b := e.waitDone(t, id)
+	if b.State != "failed" || b.FailedStep != "dump" || !strings.HasPrefix(b.Error, "Could not create the temporary file: ") {
+		t.Fatalf("row = %q %q %q", b.State, b.FailedStep, b.Error)
+	}
+	if b.Steps[3].State != "skipped" || b.Steps[3].Detail != "" {
+		t.Errorf("prune = %+v, want skipped with no temp file claim", b.Steps[3])
+	}
+}

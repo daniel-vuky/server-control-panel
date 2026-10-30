@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -22,10 +23,33 @@ import (
 // stepWords are the step names in an activity reason: "Dump: <error>".
 var stepWords = map[string]string{StepDump: "Dump", StepCompress: "Compress", StepUpload: "Upload", StepPrune: "Prune"}
 
+// msgInternal is the error of a backup ended by a panic; the panic itself goes
+// only to the log.
+const msgInternal = "The backup stopped on an internal error. Try again."
+
 // run takes one backup through its re-checks and steps. It always ends the
-// job: the row is final, the temporary file gone, the activity finished, and
-// the job off the active list.
+// job, a panic included: the temporary file is removed, the row is final, the
+// activity finished and the job off the active list, and the worker goes on.
 func (m *Manager) run(ctx context.Context, j *job) {
+	tmp := filepath.Join(m.tmpDir(), "backup-"+strconv.FormatInt(j.b.ID, 10)+".gz")
+	defer func() {
+		p := recover()
+		if p != nil {
+			// The panic value may quote anything; it is masked like stderr.
+			m.log.Error("backup: the worker panicked", "backup", j.b.ID,
+				"panic", runner.Mask(fmt.Sprint(p), j.plan.secrets), "stack", string(debug.Stack()))
+		}
+		if j.tmpMade {
+			if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				m.log.Warn("backup: cannot remove the temporary file", "backup", j.b.ID, "err", err)
+			}
+		}
+		if p != nil {
+			m.failInternal(j)
+		}
+		m.finish(j)
+	}()
+
 	// Things change while a backup waits: checks 4, 6 and 7 again.
 	r := m.checkDrive()
 	if r == nil {
@@ -40,7 +64,6 @@ func (m *Manager) run(ctx context.Context, j *job) {
 	}
 	if ctx.Err() != nil {
 		m.interrupt(j, -1)
-		m.finish(j, "")
 		return
 	}
 	if r != nil {
@@ -60,14 +83,37 @@ func (m *Manager) run(ctx context.Context, j *job) {
 		b.FileName = FileName(b.ProjectName, b.DBName, b.DBType, *b.StartedAt)
 	})
 
-	tmp := filepath.Join(m.tmpDir(), "backup-"+strconv.FormatInt(j.b.ID, 10)+".gz")
 	if m.dump(ctx, j, tmp) {
 		m.upload(ctx, j, tmp)
 	}
-	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		m.log.Warn("backup: cannot remove the temporary file", "backup", j.b.ID, "err", err)
-	}
-	m.finish(j, tmp)
+}
+
+// failInternal ends a job a panic stopped: failed at its running step (else
+// the first one not done) with msgInternal. A job already final keeps its state.
+func (m *Manager) failInternal(j *job) {
+	m.update(j, false, func(b *store.Backup) {
+		if b.State != StateRunning {
+			return
+		}
+		i := -1
+		for k, st := range b.Steps {
+			if st.State == stepRunning {
+				i = k
+				break
+			}
+		}
+		for k := 0; i < 0 && k < len(b.Steps); k++ {
+			if b.Steps[k].State != stepDone {
+				i = k
+			}
+		}
+		b.State, b.Error, b.Hint = StateFailed, msgInternal, ""
+		if i >= 0 {
+			b.FailedStep = b.Steps[i].Step
+			b.Steps[i].State = stepFailed
+		}
+		skipAfter(b, i)
+	})
 }
 
 // refuseQueued ends a job refused by its re-check: one finished refused
@@ -82,17 +128,18 @@ func (m *Manager) refuseQueued(j *job, r *Refusal) {
 		m.log.Error("backup: record the refusal", "backup", j.b.ID, "err", err)
 	}
 	cancel()
-	m.finish(j, "")
 }
 
 // update changes the job's row under the lock, then stores it when persist is
 // set, and publishes.
 func (m *Manager) update(j *job, persist bool, fn func(b *store.Backup)) {
-	m.mu.Lock()
-	fn(&j.b)
-	j.published = time.Now()
-	b := copyBackup(j.b)
-	m.mu.Unlock()
+	b := func() store.Backup {
+		m.mu.Lock()
+		defer m.mu.Unlock() // fn may panic; the worker recovers, so mu must not stay held
+		fn(&j.b)
+		j.published = time.Now()
+		return copyBackup(j.b)
+	}()
 	if persist {
 		m.persist(b)
 	}
@@ -111,13 +158,16 @@ func (m *Manager) setStep(j *job, i int, state, detail string) {
 // last publish is publishEvery old, and never stored.
 func (m *Manager) progress(j *job, i int, detail string) {
 	now := time.Now()
-	m.mu.Lock()
-	j.b.Steps[i].Detail = detail
-	due := now.Sub(j.published) >= m.publishEvery
-	if due {
-		j.published = now
-	}
-	m.mu.Unlock()
+	due := func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		j.b.Steps[i].Detail = detail
+		due := now.Sub(j.published) >= m.publishEvery
+		if due {
+			j.published = now
+		}
+		return due
+	}()
 	if due {
 		m.fire()
 	}
@@ -155,8 +205,8 @@ func skipAfter(b *store.Backup, i int) {
 
 // finish sets the Prune step (always skipped: no retention yet), the end time
 // and the duration, stores the row, finishes the activity and takes the job off
-// the active list. tmp is "" when no temporary file was made.
-func (m *Manager) finish(j *job, tmp string) {
+// the active list. Prune says "temp file deleted" only when the file was made.
+func (m *Manager) finish(j *job) {
 	now := m.now()
 	m.mu.Lock()
 	b := &j.b
@@ -166,7 +216,7 @@ func (m *Manager) finish(j *job, tmp string) {
 	prune := &b.Steps[iPrune]
 	if b.State == StateOK {
 		prune.State, prune.Detail = stepSkipped, wordsRetention
-	} else if tmp != "" {
+	} else if j.tmpMade {
 		prune.State, prune.Detail = stepSkipped, wordsTempDeleted
 	}
 	b.FinishedAt = &now
@@ -177,20 +227,29 @@ func (m *Manager) finish(j *job, tmp string) {
 	m.mu.Unlock()
 
 	m.persist(final)
-	if j.activityID != 0 {
-		result, reason := store.ResultOK, ""
-		switch final.State {
-		case StateFailed:
-			result, reason = store.ResultFailed, stepWords[final.FailedStep]+": "+final.Error
-		case StateInterrupted:
-			result, reason = store.ResultInterrupted, final.Error
+	result, reason := store.ResultOK, ""
+	switch final.State {
+	case StateFailed:
+		result, reason = store.ResultFailed, final.Error
+		if w := stepWords[final.FailedStep]; w != "" {
+			reason = w + ": " + final.Error
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), storeWait)
+	case StateInterrupted:
+		result, reason = store.ResultInterrupted, final.Error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), storeWait)
+	switch {
+	case j.activityID != 0:
 		if err := m.st.FinishActivity(ctx, j.activityID, result, reason); err != nil {
 			m.log.Error("backup: record the end", "backup", final.ID, "err", err)
 		}
-		cancel()
+	case final.State == StateFailed:
+		// Failed before the activity started (a panic in the re-check).
+		if err := m.st.RecordActivity(ctx, activityOf(final), result, reason); err != nil {
+			m.log.Error("backup: record the end", "backup", final.ID, "err", err)
+		}
 	}
+	cancel()
 	m.log.Info("backup finished", "backup", final.ID, "project", final.ProjectID, "state", final.State,
 		"step", final.FailedStep, "duration", time.Duration(final.DurationMS)*time.Millisecond)
 
@@ -232,6 +291,8 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 		m.fail(j, iDump, "Could not create the temporary file: "+pathReason(err), "")
 		return false
 	}
+	j.tmpMade = true
+	defer func() { _ = f.Close() }() // a second Close after the checked one is harmless
 	compressed := &counter{w: f}
 	gz, err := gzip.NewWriterLevel(compressed, gzip.BestSpeed)
 	if err != nil { // only for a bad level
@@ -245,6 +306,7 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 	stop := m.ticker(func() {
 		m.progress(j, iDump, p.tool+" · "+formatDuration(m.now().Sub(start))+" · "+formatBytes(raw.n.Load())+" read")
 	})
+	defer stop() // stops the ticker even when RunTo panics
 	stderr, err := m.r.RunTo(ctx, runner.StackCompose, p.dump, p.values, p.secrets, raw)
 	stop()
 	if err == nil {
@@ -317,7 +379,7 @@ func pathReason(err error) string {
 }
 
 // ticker calls fn every publishEvery until the returned stop is called; stop
-// waits for a running fn.
+// waits for a running fn and may be called more than once.
 func (m *Manager) ticker(fn func()) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
@@ -335,8 +397,9 @@ func (m *Manager) ticker(fn func()) (stop func()) {
 			}
 		}
 	}()
+	var once sync.Once
 	return func() {
-		close(done)
+		once.Do(func() { close(done) })
 		wg.Wait()
 	}
 }
