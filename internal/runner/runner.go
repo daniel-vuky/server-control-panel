@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -193,8 +194,8 @@ func (r *Runner) Stream(ctx context.Context, s Stack, a Action, v Values, secret
 	cmd := r.command(ctx, bin, args, env)
 
 	var mu sync.Mutex
-	deliver := func(line string) {
-		line = Mask(line, secrets)
+	deliver := func(line string, cut bool) {
+		line = finishLine(line, cut, secrets)
 		mu.Lock()
 		defer mu.Unlock()
 		onLine(line)
@@ -222,10 +223,48 @@ func (r *Runner) Stream(ctx context.Context, s Stack, a Action, v Values, secret
 	return fmt.Errorf("docker %s: %s", a, Mask(runErr.Error(), secrets))
 }
 
-// lineWriter splits what is written into lines and hands each to emit. It keeps
-// at most maxLine bytes of a line and drops the rest of that line.
+// finishLine masks a line. A line that was cut at maxLine first loses what the
+// cut may have broken: an incomplete last rune, then any tail that is a proper
+// prefix of a secret, because Mask cannot see a secret the cut split in two.
+func finishLine(line string, cut bool, secrets []string) string {
+	if cut {
+		line = trimCut(line, secrets)
+	}
+	return Mask(line, secrets)
+}
+
+func trimCut(line string, secrets []string) string {
+	for i := len(line) - 1; i >= 0 && i >= len(line)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(line[i]) {
+			if !utf8.FullRuneInString(line[i:]) {
+				line = line[:i]
+			}
+			break
+		}
+	}
+	for trimmed := true; trimmed; {
+		trimmed = false
+		for _, secret := range secrets {
+			if len(secret) < minSecret {
+				continue
+			}
+			for k := min(len(secret)-1, len(line)); k > 0; k-- {
+				if strings.HasSuffix(line, secret[:k]) {
+					line = line[:len(line)-k]
+					trimmed = true
+					break
+				}
+			}
+		}
+	}
+	return line
+}
+
+// lineWriter splits what is written into lines and hands each to emit, with
+// cut set when the line was longer than maxLine. It keeps at most maxLine
+// bytes of a line and drops the rest of that line.
 type lineWriter struct {
-	emit    func(string)
+	emit    func(line string, cut bool)
 	buf     []byte
 	dropped bool
 }
@@ -261,7 +300,7 @@ func (w *lineWriter) flush() {
 
 // emitLine emits the line in progress, empty or not, and starts a new line.
 func (w *lineWriter) emitLine() {
-	w.emit(strings.TrimSuffix(string(w.buf), "\r"))
+	w.emit(strings.TrimSuffix(string(w.buf), "\r"), w.dropped)
 	w.buf, w.dropped = w.buf[:0], false
 }
 

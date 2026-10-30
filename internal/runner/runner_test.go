@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const hostile = "/w/my app; rm -rf $(id) && x|y"
@@ -583,5 +584,106 @@ func TestRunTailAndInspectRun(t *testing.T) {
 	args := lines(res.Stdout, "ARG:")
 	if len(args) != 5 || args[3] != id1 || args[4] != id2 {
 		t.Fatalf("argv = %q", args)
+	}
+}
+
+type emitted struct {
+	line string
+	cut  bool
+}
+
+// writeLines feeds chunks to a lineWriter, flushes it, and returns what it
+// emitted both raw and as Stream delivers it (finishLine with secrets).
+func writeLines(secrets []string, chunks ...string) (raw []emitted, final []string) {
+	w := &lineWriter{emit: func(line string, cut bool) {
+		raw = append(raw, emitted{line, cut})
+		final = append(final, finishLine(line, cut, secrets))
+	}}
+	for _, c := range chunks {
+		_, _ = w.Write([]byte(c))
+	}
+	w.flush()
+	return raw, final
+}
+
+func TestLineWriterCutNeverLeaksSecretPrefix(t *testing.T) {
+	const secret = "hunter22xyz"
+	line := strings.Repeat("x", maxLine-5) + secret + " tail"
+	_, final := writeLines([]string{secret}, line+"\nnext\n")
+	want := strings.Repeat("x", maxLine-5)
+	if len(final) != 2 || final[0] != want || final[1] != "next" {
+		t.Fatalf("final = %d lines, first has %d bytes, ends %q", len(final), len(final[0]), final[0][len(final[0])-6:])
+	}
+	// A secret that ends exactly at the cut is masked whole.
+	_, final = writeLines([]string{secret}, strings.Repeat("x", maxLine-len(secret))+secret+"more\n")
+	if want := strings.Repeat("x", maxLine-len(secret)) + "••••"; final[0] != want {
+		t.Fatalf("final = %q", final[0][len(final[0])-12:])
+	}
+	// A prefix is also trimmed when the secret was split in several pieces.
+	_, final = writeLines([]string{"ab-secret-1", "secret-2"}, strings.Repeat("x", maxLine-2)+"se"+"cret-2 and more\n")
+	if final[0] != strings.Repeat("x", maxLine-2) {
+		t.Fatalf("final tail = %q", final[0][len(final[0])-4:])
+	}
+}
+
+func TestLineWriterCutNeverSplitsARune(t *testing.T) {
+	for name, tc := range map[string]struct{ rune, want string }{
+		"2-byte rune": {"é", strings.Repeat("x", maxLine-1)},
+		"3-byte rune": {"€", strings.Repeat("x", maxLine-1)},
+		"4-byte rune": {"😀", strings.Repeat("x", maxLine-1)},
+	} {
+		_, final := writeLines(nil, strings.Repeat("x", maxLine-1)+tc.rune+"tail\n")
+		if !utf8.ValidString(final[0]) || final[0] != tc.want {
+			t.Errorf("%s: len %d, valid %v", name, len(final[0]), utf8.ValidString(final[0]))
+		}
+	}
+	// A rune that ends exactly at the cut is kept.
+	_, final := writeLines(nil, strings.Repeat("x", maxLine-2)+"é"+"tail\n")
+	if final[0] != strings.Repeat("x", maxLine-2)+"é" {
+		t.Errorf("complete rune at the cut was trimmed: len %d", len(final[0]))
+	}
+}
+
+func TestLineWriterByteAtATime(t *testing.T) {
+	in := strings.Repeat("y", maxLine+100) + "\nok\n"
+	chunks := make([]string, len(in))
+	for i := range in {
+		chunks[i] = in[i : i+1]
+	}
+	raw, _ := writeLines(nil, chunks...)
+	if len(raw) != 2 || raw[0] != (emitted{strings.Repeat("y", maxLine), true}) || raw[1] != (emitted{"ok", false}) {
+		t.Fatalf("raw = %d lines, first %d bytes cut=%v", len(raw), len(raw[0].line), raw[0].cut)
+	}
+	// A line of exactly maxLine bytes is not cut.
+	raw, _ = writeLines(nil, strings.Repeat("y", maxLine)+"\n")
+	if len(raw) != 1 || raw[0].cut || len(raw[0].line) != maxLine {
+		t.Fatalf("exact line: %d lines, cut=%v", len(raw), raw[0].cut)
+	}
+}
+
+func TestLineWriterLineEnds(t *testing.T) {
+	for name, tc := range map[string]struct {
+		chunks []string
+		want   []string
+	}{
+		"CRLF":                  {[]string{"a\r\n"}, []string{"a"}},
+		"CRLF split":            {[]string{"a\r", "\n"}, []string{"a"}},
+		"blank lines":           {[]string{"\n\n"}, []string{"", ""}},
+		"trailing text":         {[]string{"a\nb"}, []string{"a", "b"}},
+		"trailing text chunked": {[]string{"a\nb", "c"}, []string{"a", "bc"}},
+		"nothing":               {nil, nil},
+		"ends with newline":     {[]string{"a\n"}, []string{"a"}},
+	} {
+		raw, _ := writeLines(nil, tc.chunks...)
+		var got []string
+		for _, e := range raw {
+			got = append(got, e.line)
+			if e.cut {
+				t.Errorf("%s: unexpected cut", name)
+			}
+		}
+		if !equal(got, tc.want) {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
 	}
 }
