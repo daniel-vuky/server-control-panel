@@ -109,6 +109,7 @@ const renderPage = () =>
   })
 
 beforeEach(() => {
+  sessionStorage.clear()
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
 })
@@ -152,9 +153,83 @@ describe('DashboardPage', () => {
       'Display name',
       'Path',
       'Status',
+      'CPU',
+      'RAM',
       'Database',
       'Start / Stop',
     ])
+  })
+
+  it('links the name to the detail page', async () => {
+    serve([200, projects])
+    renderPage()
+    const shop = await screen.findByRole('row', { name: /shop/ })
+    expect(within(shop).getByRole('link', { name: 'shop' })).toHaveAttribute('href', '/projects/1')
+    expect(
+      within(screen.getByRole('row', { name: /panel/ })).getByRole('link', { name: 'panel' }),
+    ).toHaveAttribute('href', '/projects/2')
+  })
+
+  it('shows CPU and RAM with bars, and dashes with no bar when null', async () => {
+    const live: Project[] = [
+      { ...projects[0], cpuPercent: 12.4, memBytes: 640 * 1024 * 1024 },
+      projects[1],
+    ]
+    serve([200, live])
+    renderPage()
+    const shop = await screen.findByRole('row', { name: /shop/ })
+    expect(within(shop).getByText('12%')).toBeInTheDocument()
+    expect(within(shop).getByText('640 MB')).toBeInTheDocument()
+    expect(within(shop).getByTestId('cpu-bar')).toHaveStyle({ width: '12.4%' })
+    // 640 MB of the 4 GB range is 15.625 %.
+    expect(within(shop).getByTestId('ram-bar')).toHaveStyle({ width: '15.625%' })
+
+    const panel = screen.getByRole('row', { name: /panel/ })
+    expect(within(panel).getAllByText('—')).toHaveLength(2)
+    expect(within(panel).queryByTestId('cpu-bar')).toBeNull()
+    expect(within(panel).queryByTestId('ram-bar')).toBeNull()
+  })
+
+  it('updates CPU and RAM from a live state without remounting the row', async () => {
+    serve([200, projects])
+    renderPage()
+    const shop = await screen.findByRole('row', { name: /shop/ })
+    expect(within(shop).queryByText('12%')).toBeNull()
+    act(() => {
+      const es = FakeEventSource.latest('/api/events')
+      if (!es) throw new Error('no event source')
+      es.open()
+      es.emit('state', {
+        dockerUp: true,
+        projects: [{ ...projects[0], cpuPercent: 12, memBytes: 640 * 1024 * 1024 }, projects[1]],
+      })
+    })
+    expect(screen.getByRole('row', { name: /shop/ })).toBe(shop)
+    expect(within(shop).getByText('12%')).toBeInTheDocument()
+  })
+
+  it('shows docker compose down in the stop dialog for a down template', async () => {
+    serve([200, [{ ...projects[0], stopTemplate: 'down' }]])
+    renderPage()
+    const shop = await screen.findByRole('row', { name: /shop/ })
+    fireEvent.click(within(shop).getByRole('switch', { name: 'Stop shop' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('$ docker compose down · timeout 60s')
+  })
+
+  it('restores the scroll position it saved on leaving', async () => {
+    serve([200, projects])
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    Object.defineProperty(window, 'scrollY', { value: 340, configurable: true })
+    const first = renderPage()
+    await screen.findByRole('row', { name: /shop/ })
+    first.unmount()
+    expect(sessionStorage.getItem('dashboard.scrollY')).toBe('340')
+
+    renderPage()
+    await screen.findByRole('row', { name: /shop/ })
+    expect(scrollTo).toHaveBeenCalledWith(0, 340)
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
   })
 
   it('shows the empty state with an Add workspace link to onboarding', async () => {
