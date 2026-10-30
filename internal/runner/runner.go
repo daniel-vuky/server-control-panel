@@ -21,6 +21,10 @@ const (
 	defaultBin     = "docker"
 	defaultTimeout = 15 * time.Second
 	defaultPath    = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	// LifecycleTimeout is the deadline of a compose up, stop or restart.
+	LifecycleTimeout = 60 * time.Second
+	// PingTimeout is the deadline of docker.ping.
+	PingTimeout = 5 * time.Second
 	// outputCap is the most bytes kept of each of stdout and stderr.
 	outputCap = 4 << 20
 	// waitDelay bounds how long Run waits for the output pipes after a kill.
@@ -38,6 +42,20 @@ var (
 	// ErrBadValue means a value is missing, extra, empty, or not an absolute clean path.
 	ErrBadValue = errors.New("runner: bad value")
 )
+
+// timeoutFor is the deadline of action a: the lifecycle or ping value for
+// those actions, else fallback (the Runner's Timeout, or 15 s). It is a
+// variable only so that tests in this package can shorten it.
+var timeoutFor = func(a Action, fallback time.Duration) time.Duration {
+	switch a {
+	case ComposeUp, ComposeUpOverride, ComposeStop, ComposeStopOverride,
+		ComposeRestart, ComposeRestartOverride:
+		return LifecycleTimeout
+	case DockerPing:
+		return PingTimeout
+	}
+	return fallback
+}
 
 // TimeoutError means the command ran past its deadline and was killed.
 type TimeoutError struct{ After time.Duration }
@@ -96,11 +114,13 @@ func (r *Runner) Run(ctx context.Context, s Stack, a Action, v Values, secrets [
 		timeout = defaultTimeout
 	}
 
+	timeout = timeoutFor(a, timeout)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	//nolint:gosec // G204: the program is configuration and args come from the registry, one element per value, with no shell.
 	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Env = env
+	setProcessGroup(cmd)
 	cmd.WaitDelay = waitDelay
 	var stdout, stderr capWriter
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

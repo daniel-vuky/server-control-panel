@@ -6,6 +6,7 @@
 #   FAKE_EXIT    exit code
 #   FAKE_SLEEP   seconds to sleep instead of exiting
 #   FAKE_BYTES   number of x characters written to stdout
+#   FAKE_GRANDCHILD  when 1, start a background sleep 30 (pid in $HOME/grandchild) and wait for it
 touch "$HOME/started"
 [ -f "$HOME/fake.env" ] && . "$HOME/fake.env"
 for a in "$@"; do
@@ -17,6 +18,11 @@ done
 [ -n "$FAKE_STDERR" ] && printf '%s\n' "$FAKE_STDERR" >&2
 if [ -n "$FAKE_BYTES" ]; then
 	head -c "$FAKE_BYTES" /dev/zero | tr '\0' 'x'
+fi
+if [ "$FAKE_GRANDCHILD" = 1 ]; then
+	sleep 30 &
+	echo $! >"$HOME/grandchild"
+	wait
 fi
 [ -n "$FAKE_SLEEP" ] && exec sleep "$FAKE_SLEEP"
 exit "${FAKE_EXIT:-0}"
