@@ -375,7 +375,8 @@ func (h *Hub) recent(maxAge time.Duration) (cs []project.Container, dockerUp boo
 }
 
 // lockChanged is called by the Controller after a lock take (fresh nil) or a
-// release (fresh is the re-read list, nil when it failed). It neither reads
+// release (fresh is the re-read list, nil when it failed), except after a
+// successful WithLocks write, whose caller calls Refresh instead. It neither reads
 // the store nor runs Docker, and must not panic: the Controller calls it from
 // its release path.
 func (h *Hub) lockChanged(fresh []project.Container) {

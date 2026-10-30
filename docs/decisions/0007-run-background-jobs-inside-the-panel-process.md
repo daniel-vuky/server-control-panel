@@ -64,4 +64,4 @@ Rescans of tracked workspaces (#24) run as `scan` jobs: the same table, the same
 
 - **One scan at a time.** A rescan is refused with 409 while any scan runs, and the 409 body tells the client whether the running job is a rescan.
 - **`WhileIdle`.** Removing a workspace must not race a scan of it. The scan manager's `WhileIdle(fn)` runs `fn` only while no scan runs, and a scan cannot start until `fn` returns.
-- **Result.** The rescan stores its result on the job like a scan; the store applies it (`ApplyRescan`) when it finishes, and `scan.track` on the rescan job adds the New rows the owner picked. The activity record uses `workspace.rescan`.
+- **Result.** The rescan stores its result on the job like a scan; the scan manager applies it (`store.ApplyRescan`) inside the job, before the job is stored as done, and then calls `OnChange`; and `scan.track` on the rescan job adds the New rows the owner picked. The activity record uses `workspace.rescan`.

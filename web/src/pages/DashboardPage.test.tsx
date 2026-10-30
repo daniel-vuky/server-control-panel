@@ -804,6 +804,36 @@ describe('DashboardPage', () => {
         expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
       })
 
+      it('keeps the row hidden when a live state still holds the project with no actions', async () => {
+        setup()
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        openMenu(/shop/, 'shop')
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
+        fireEvent.click(
+          within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
+        )
+        await waitFor(() => expect(screen.queryByRole('row', { name: /shop/ })).toBeNull())
+
+        // The store write is still out: the hub shows the project held, with no actions.
+        act(() => {
+          FakeEventSource.instances[0].emit('state', {
+            dockerUp: true,
+            projects: [{ ...projects[0], actions: [] }, projects[1]],
+          })
+        })
+        expect(screen.queryByRole('row', { name: /shop/ })).toBeNull()
+
+        // Once it is gone from the state, it stays gone; back with actions, it returns.
+        act(() => {
+          FakeEventSource.instances[0].emit('state', {
+            dockerUp: true,
+            projects: [projects[0], projects[1]],
+          })
+        })
+        expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+      })
+
       it('sends one request however often it is confirmed while it is out', async () => {
         let release: (r: Response) => void = () => {}
         const stub = setup(() => new Promise<Response>((res) => (release = res)))

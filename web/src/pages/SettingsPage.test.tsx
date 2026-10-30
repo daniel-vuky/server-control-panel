@@ -119,8 +119,10 @@ describe('SettingsPage', () => {
       'href',
       '/onboarding',
     )
-    expect(within(card).getAllByRole('button', { name: 'Rescan' })).toHaveLength(2)
-    expect(within(card).getAllByRole('button', { name: 'Remove' })).toHaveLength(2)
+    for (const path of ['/home/deploy/projects', '/srv/solo']) {
+      expect(within(card).getByRole('button', { name: `Rescan ${path}` })).toBeInTheDocument()
+      expect(within(card).getByRole('button', { name: `Remove ${path}` })).toBeInTheDocument()
+    }
   })
 
   it('shows the empty state, still with Add workspace', async () => {
@@ -178,7 +180,7 @@ describe('SettingsPage', () => {
       })
       renderPage()
       const row = (await screen.findByText('/srv/solo')).closest('li') as HTMLElement
-      fireEvent.click(within(row).getByRole('button', { name: 'Rescan' }))
+      fireEvent.click(within(row).getByRole('button', { name: 'Rescan /srv/solo' }))
       expect(await screen.findByTestId('where')).toHaveTextContent('/rescan/7')
       const [url, init] = posts(stub)[0] as [string, RequestInit]
       expect(url).toBe('/api/rescans')
@@ -194,7 +196,7 @@ describe('SettingsPage', () => {
       })
       renderPage()
       await screen.findByText('/srv/solo')
-      fireEvent.click(screen.getAllByRole('button', { name: 'Rescan' })[0])
+      fireEvent.click(screen.getByRole('button', { name: 'Rescan /home/deploy/projects' }))
       expect(await screen.findByTestId('where')).toHaveTextContent('/rescan/9')
     })
 
@@ -206,7 +208,7 @@ describe('SettingsPage', () => {
       })
       renderPage()
       await screen.findByText('/srv/solo')
-      fireEvent.click(screen.getAllByRole('button', { name: 'Rescan' })[0])
+      fireEvent.click(screen.getByRole('button', { name: 'Rescan /home/deploy/projects' }))
       await screen.findByTestId('where')
       expect(screen.getByTestId('where')).toHaveTextContent('/onboarding')
       expect(JSON.parse(screen.getByTestId('where-state').textContent ?? '')).toEqual({
@@ -221,7 +223,7 @@ describe('SettingsPage', () => {
       })
       renderPage()
       await screen.findByText('/srv/solo')
-      fireEvent.click(screen.getAllByRole('button', { name: 'Rescan' })[0])
+      fireEvent.click(screen.getByRole('button', { name: 'Rescan /home/deploy/projects' }))
       const alert = await screen.findByRole('alert')
       expect(alert).toHaveTextContent('Could not start the rescan')
       expect(alert).toHaveTextContent('disk full')
@@ -232,7 +234,7 @@ describe('SettingsPage', () => {
   describe('Remove', () => {
     const open = async () => {
       const row = (await screen.findByText('/home/deploy/projects')).closest('li') as HTMLElement
-      fireEvent.click(within(row).getByRole('button', { name: 'Remove' }))
+      fireEvent.click(within(row).getByRole('button', { name: 'Remove /home/deploy/projects' }))
       return screen.findByRole('dialog')
     }
 
@@ -256,7 +258,7 @@ describe('SettingsPage', () => {
       route({ 'GET /api/workspaces': () => json(200, workspaces) })
       renderPage()
       const row = (await screen.findByText('/srv/solo')).closest('li') as HTMLElement
-      fireEvent.click(within(row).getByRole('button', { name: 'Remove' }))
+      fireEvent.click(within(row).getByRole('button', { name: 'Remove /srv/solo' }))
       expect(await screen.findByRole('dialog')).toHaveTextContent('Its 1 tracked project leave')
     })
 

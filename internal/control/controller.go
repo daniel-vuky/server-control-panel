@@ -73,7 +73,8 @@ type observer interface {
 	// down.
 	recent(maxAge time.Duration) (cs []project.Container, dockerUp bool, ok bool)
 	// lockChanged is called after a lock is taken (fresh nil) or released
-	// (fresh is the re-read container list, or nil when it failed).
+	// (fresh is the re-read container list, or nil when it failed), except
+	// after a successful WithLocks write: its caller refreshes the hub.
 	lockChanged(fresh []project.Container)
 }
 

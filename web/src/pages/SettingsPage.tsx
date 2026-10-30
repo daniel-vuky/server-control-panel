@@ -139,6 +139,7 @@ function WorkspaceRow({ workspace: w, onRemove }: { workspace: Workspace; onRemo
         <button
           type="button"
           disabled={starting}
+          aria-label={`Rescan ${w.path}`}
           onClick={() => void rescan(w.id)}
           className={`${rowButton} border-border-strong text-text`}
         >
@@ -146,6 +147,7 @@ function WorkspaceRow({ workspace: w, onRemove }: { workspace: Workspace; onRemo
         </button>
         <button
           type="button"
+          aria-label={`Remove ${w.path}`}
           onClick={onRemove}
           className={`${rowButton} border-[#6B262C] text-[#FF8C8F]`}
         >

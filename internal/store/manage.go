@@ -341,8 +341,8 @@ func (s *Store) AddProjects(ctx context.Context, jobID int64, items []AddItem) (
 				state = "tracked"
 			}
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE projects SET workspace_id = ?, compose_files = ?, compose_project = ?, display_name = ?, state = ?, self = ?, details = ?, missing_since = NULL WHERE id = ?`,
-				it.WorkspaceID, files, it.ComposeProject, it.DisplayName, state, it.Self, details, id); err != nil {
+				`UPDATE projects SET compose_files = ?, compose_project = ?, display_name = ?, state = ?, self = ?, details = ?, missing_since = NULL WHERE id = ?`,
+				files, it.ComposeProject, it.DisplayName, state, it.Self, details, id); err != nil {
 				return 0, fmt.Errorf("store: add project %s: %w", it.Path, err)
 			}
 			var dbs []project.Database

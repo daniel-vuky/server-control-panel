@@ -280,7 +280,14 @@ function useUntrack() {
 
   useEffect(() => {
     if (live.projects === null) return
-    setRemovedIds((prev) => (prev.size === 0 ? prev : new Set()))
+    // A project held for a store write comes back with no actions: it is
+    // still on its way out, so only a gone or actionable one clears.
+    const held = new Set(live.projects.filter((p) => p.actions.length === 0).map((p) => p.id))
+    setRemovedIds((prev) => {
+      if (prev.size === 0) return prev
+      const next = new Set([...prev].filter((id) => held.has(id)))
+      return next.size === prev.size ? prev : next
+    })
   }, [live.projects])
 
   const untrack = useCallback(

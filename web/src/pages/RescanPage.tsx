@@ -18,7 +18,7 @@ type Phase =
   | { kind: 'failed'; error: string; workspaceId: number }
   // The job is handled elsewhere: a toast and back, or onboarding.
   | { kind: 'leaving' }
-  // The id in the address is not a job number: nothing to retry.
+  // The id is not a job number, or no such job exists: nothing to retry.
   | { kind: 'invalid' }
 
 const NOT_FINISHED = 'The rescan did not finish.'
@@ -33,6 +33,8 @@ const emptyProgress: ScanProgress = {
 
 const message = (err: unknown) =>
   err instanceof Error && err.message ? err.message : 'Something went wrong. Try again.'
+
+const isNotFound = (err: unknown) => err instanceof ApiError && err.status === 404
 
 /** retryScope is the workspace to rescan again: the job's only one, else all (0). */
 const retryScope = (job: ScanJob | null) =>
@@ -78,8 +80,10 @@ function Rescan({ id }: { id: number }) {
       .then((job) => {
         if (!ctrl.signal.aborted && !job.rescan) toOnboarding()
       })
-      .catch(() => {
-        // The watch reports a job that cannot be read.
+      .catch((err) => {
+        // An unknown job has nothing to retry; any other failure is for the
+        // watch to report.
+        if (!ctrl.signal.aborted && isNotFound(err)) setPhase({ kind: 'invalid' })
       })
 
     const settle = (job: ScanJob) => {
@@ -116,8 +120,9 @@ function Rescan({ id }: { id: number }) {
             if (!ctrl.signal.aborted) settle(job)
           })
           .catch((err) => {
-            if (!ctrl.signal.aborted)
-              setPhase({ kind: 'failed', error: message(err), workspaceId: 0 })
+            if (ctrl.signal.aborted) return
+            if (isNotFound(err)) setPhase({ kind: 'invalid' })
+            else setPhase({ kind: 'failed', error: message(err), workspaceId: 0 })
           })
       },
     })

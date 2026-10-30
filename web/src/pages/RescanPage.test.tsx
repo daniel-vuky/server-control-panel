@@ -221,6 +221,19 @@ describe('rescan page, progress', () => {
   })
 })
 
+describe('rescan page, unknown job', () => {
+  it('shows the not-found box, without Retry or a new rescan, when the job does not exist', async () => {
+    api((c) =>
+      c.method === 'GET' && c.url === '/api/scans/999' ? [404, { error: 'not found' }] : undefined,
+    )
+    renderAt(['/', '/rescan/999'])
+    expect(await screen.findByText('This rescan was not found.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Back to Dashboard' })).toBeInTheDocument()
+    expect(posts('/api/rescans')).toHaveLength(0)
+  })
+})
+
 describe('rescan page, results', () => {
   it('shows the summary line', async () => {
     await toResults()

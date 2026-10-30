@@ -428,10 +428,22 @@ func TestAddProjectsRetrackIgnored(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 	wsID, _, blogID := seedApps(t, s)
+	other, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "other", Path: "/srv/other", Depth: 1, LastScanAt: scanTime}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	job := rescanJob(t, s)
-	n, err := s.AddProjects(ctx, job, []AddItem{newItem(wsID, "/srv/apps/blog", true)})
+	// The item names another workspace: the stored one is kept.
+	n, err := s.AddProjects(ctx, job, []AddItem{newItem(other, "/srv/apps/blog", true)})
 	if err != nil || n != 1 {
 		t.Fatalf("AddProjects = %d, %v", n, err)
+	}
+	var kept int64
+	if err := s.db.QueryRow(`SELECT workspace_id FROM projects WHERE id = ?`, blogID).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept != wsID {
+		t.Fatalf("workspace_id = %d, want the stored %d", kept, wsID)
 	}
 	if c := count(t, s.db, `SELECT count(*) FROM projects WHERE path = '/srv/apps/blog'`); c != 1 {
 		t.Fatalf("%d rows for blog", c)
