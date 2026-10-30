@@ -72,7 +72,7 @@ Added on 2026-10-31 with the manual backup flow (#45, #46, #15, #48, #49, #50, #
 26. A backup the panel refuses (Drive expired, no space, database not running) is kept in the history as Refused, with its reason, and can be retried (E5-F15-US03, E5-F15-US04, E5-F17-US01).
 27. SQLite databases are not backed up yet: the app sees a path inside its own container, so copying it from the host is not reliable. Back up now says so (E5-F15-US01).
 28. A dump has no total time limit. It fails after 5 minutes without a byte of output, with a safety ceiling of 6 hours (E5-F15-US01, E5-F15-US03).
-29. The disk rule is best effort: the backup needs free space of at least 50 % of the database's data size plus 100 MB. A dump that still outgrows the disk fails at the Dump step and its temporary file is removed (E5-F15-US04).
+29. The disk rule is best effort: the backup needs free space of at least 50 % of the database's data size plus 100 MiB. A dump that still outgrows the disk fails at the Dump step and its temporary file is removed (E5-F15-US04).
 30. Remove old copies is shown as skipped ("No retention set yet") until retention exists, so every copy is kept (E5-F15-US02, E5-F16-US02).
 31. A backup is downloaded through the panel, so any Operator on the Access list can fetch it without access to the Drive account; Open in Drive is offered next to it (E5-F17-US01).
 32. The Google Cloud app must be published to Production. The `drive.file` scope needs no review, but a token issued while the app is in Testing expires after 7 days, and the panel then asks to reconnect (E5-F14-US01, E5-F14-US03).
