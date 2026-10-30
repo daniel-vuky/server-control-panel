@@ -41,8 +41,8 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open on a missing directory: %v", err)
 	}
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 1 {
-		t.Fatalf("schema_migrations has %d rows, want 1", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 2 {
+		t.Fatalf("schema_migrations has %d rows, want 2", n)
 	}
 	var applied string
 	if err := s.db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&applied); err != nil {
@@ -60,10 +60,10 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 1 {
-		t.Fatalf("after reopen schema_migrations has %d rows, want 1", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 2 {
+		t.Fatalf("after reopen schema_migrations has %d rows, want 2", n)
 	}
-	for _, table := range []string{"workspaces", "projects", "databases", "jobs"} {
+	for _, table := range []string{"workspaces", "projects", "databases", "jobs", "activity"} {
 		if n := count(t, s.db, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table); n != 1 {
 			t.Fatalf("table %s missing", table)
 		}
@@ -444,5 +444,49 @@ func TestDeleteWorkspaceCascades(t *testing.T) {
 		if n := count(t, s.db, `SELECT count(*) FROM `+table); n != 0 {
 			t.Fatalf("%d rows left in %s", n, table)
 		}
+	}
+}
+
+func TestTrackedProjectLookup(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	if _, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "apps", Path: "/srv/apps", Depth: 2, LastScanAt: scanTime}, sampleProjects()); err != nil {
+		t.Fatal(err)
+	}
+	var shopID, blogID int64
+	if err := s.db.QueryRow(`SELECT id FROM projects WHERE path = '/srv/apps/shop'`).Scan(&shopID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT id FROM projects WHERE path = '/srv/apps/blog'`).Scan(&blogID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.TrackedProject(ctx, shopID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != shopID || got.Path != "/srv/apps/shop" || got.DisplayName != "Shop" || got.ComposeProject != "shop" || !got.Self {
+		t.Fatalf("TrackedProject = %+v", got)
+	}
+	if strings.Join(got.ComposeFiles, ",") != "compose.yaml,compose.override.yaml" {
+		t.Fatalf("ComposeFiles = %v", got.ComposeFiles)
+	}
+	if strings.Join(got.Services, ",") != "web,db" || len(got.Databases) != 1 || got.Databases[0].Name != "shop" {
+		t.Fatalf("services/databases = %v / %+v", got.Services, got.Databases)
+	}
+
+	all, err := s.TrackedProjects(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("TrackedProjects = %+v, %v", all, err)
+	}
+	if strings.Join(all[0].ComposeFiles, ",") != "compose.yaml,compose.override.yaml" {
+		t.Fatalf("TrackedProjects ComposeFiles = %v", all[0].ComposeFiles)
+	}
+
+	if _, err := s.TrackedProject(ctx, blogID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ignored project: err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.TrackedProject(ctx, 99999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown project: err = %v, want ErrNotFound", err)
 	}
 }

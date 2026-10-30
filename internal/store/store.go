@@ -35,8 +35,8 @@ type Store struct {
 }
 
 // Open opens the database at path, creating its directory (mode 0700) when
-// missing, applies pending migrations, and marks jobs left running by a
-// previous process as interrupted.
+// missing, applies pending migrations, and marks jobs and activity left running by
+// a previous process as interrupted.
 //
 // The pragmas are in the DSN so that every pooled connection has them; a
 // PRAGMA statement would only affect one. _txlock=immediate takes the write
@@ -62,6 +62,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.interruptRunningJobs(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.interruptRunningActivity(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
