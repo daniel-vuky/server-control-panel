@@ -8,6 +8,7 @@ import (
 
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
+	"github.com/daniel-vuky/server-control-panel/internal/logs"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -26,6 +27,7 @@ type Deps struct {
 
 	Control *control.Controller // runs the lifecycle commands
 	Hub     *control.Hub        // the live state behind GET /api/events
+	Logs    *logs.Manager       // the shared log streams behind GET /api/projects/{id}/logs
 }
 
 // server holds what the handlers share.
@@ -51,6 +53,7 @@ func NewRouter(d Deps) http.Handler {
 		{"Docker", d.Docker == nil},
 		{"Control", d.Control == nil},
 		{"Hub", d.Hub == nil},
+		{"Logs", d.Logs == nil},
 	} {
 		if dep.nil {
 			panic("api.NewRouter: Deps." + dep.name + " is nil")
@@ -72,9 +75,11 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /api/workspaces", protect(http.HandlerFunc(s.listWorkspaces)))
 	mux.Handle("POST /api/workspaces/{id}/remove", protect(requireJSON(http.HandlerFunc(s.removeWorkspace))))
 	mux.Handle("GET /api/projects", protect(http.HandlerFunc(s.listProjects)))
-	// The literal untrack route wins over {action}, which keeps 404 for
-	// untrack and remove as actions.
+	// The literal untrack and settings routes win over {action}, which keeps
+	// 404 for untrack, remove and settings as actions.
 	mux.Handle("POST /api/projects/{id}/untrack", protect(requireJSON(http.HandlerFunc(s.untrackProject))))
+	mux.Handle("POST /api/projects/{id}/settings", protect(requireJSON(http.HandlerFunc(s.projectSettings))))
+	mux.Handle("GET /api/projects/{id}/logs", protect(http.HandlerFunc(s.projectLogs)))
 	mux.Handle("POST /api/projects/{id}/{action}", protect(requireJSON(http.HandlerFunc(s.projectAction))))
 	mux.Handle("GET /api/events", protect(http.HandlerFunc(s.events)))
 	mux.Handle("POST /api/docker/check", protect(requireJSON(http.HandlerFunc(s.dockerCheck))))

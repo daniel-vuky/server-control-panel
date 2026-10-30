@@ -24,6 +24,10 @@ export interface HealthResponse {
 
 
 //////////
+// source: logs.go
+
+
+//////////
 // source: manage.go
 
 
@@ -39,6 +43,10 @@ export interface MeResponse {
 
 //////////
 // source: scans.go
+
+
+//////////
+// source: settings.go
 
 
 //////////
@@ -216,14 +224,26 @@ export interface Workspace {
   ignored: number /* int */;
 }
 /**
- * Project is one element of GET /api/projects and of LiveState: a tracked
- * project with its effective status (running, partial, stopped, error,
- * unknown, notfound when a rescan could not find its folder, or starting,
- * stopping or restarting while a command runs on it) and the actions it
- * allows now: start, stop, restart, untrack, or only remove when Not found;
- * [] while a command runs on it or it is held for a removal. untrack needs no
- * Docker, so it is offered even when Docker could not be read. MissingSince is
- * when a rescan first missed its folder (UTC RFC 3339), "" when it is present.
+ * Project is one element of GET /api/projects, of LiveState and the 200 body
+ * of POST /api/projects/{id}/settings: a tracked project with its effective
+ * status (running, partial, stopped, error, unknown, notfound when a rescan
+ * could not find its folder, or starting, stopping or restarting while a
+ * command runs on it) and the actions it allows now: start, stop, restart,
+ * untrack, or only remove when Not found; [] while a command runs on it or it
+ * is held for a removal. untrack needs no Docker, so it is offered even when
+ * Docker could not be read. MissingSince is when a rescan first missed its
+ * folder (UTC RFC 3339), "" when it is present.
+ * The settings: PublicDomain is "" when unset, StopTemplate is stop or down,
+ * and a null alert threshold means the server default. ComposeFiles are the
+ * base names of the compose files, the main one first.
+ * The live part: CPUPercent and MemBytes sum the running containers that
+ * have values (null when none has), UpSince is the start of the
+ * longest-running running container (UTC RFC 3339, "" unless Running or
+ * Partial), and Containers lists the project's containers plus a Not created
+ * row per service without one, sorted by service then name ([] when Docker
+ * could not be read). GET /api/projects reads only docker ps, so there
+ * metrics are null, UpSince is "" and each container has no restart count,
+ * start time or health; the live state fills them in.
  */
 export interface Project {
   id: number /* int64 */;
@@ -235,6 +255,87 @@ export interface Project {
   actions: string[];
   databases: Database[];
   missingSince: string;
+  publicDomain: string;
+  stopTemplate: string;
+  alertCpuPercent: number | null;
+  alertRamMb: number | null;
+  composeFiles: string[];
+  cpuPercent: number | null;
+  memBytes: number | null;
+  upSince: string;
+  containers: Container[];
+}
+/**
+ * Container is one row of Project.Containers. Status is the word for the
+ * table: Running, Restarting, Exited, Dead, Paused, Created or Not created
+ * (a service with no container, whose State is ""). Ports are ready to show,
+ * such as "3000→3000" or "5432 (internal)". CPUPercent (Docker's figure, which
+ * may pass 100 on several cores) and MemBytes are null unless the container
+ * runs and the last read covered it. StartedAt is UTC RFC 3339, "" when it
+ * never started or is not known. ExitReason says why a container that is not
+ * running is not ("" while it runs); Health is the healthcheck's status, ""
+ * without one.
+ */
+export interface Container {
+  name: string;
+  service: string;
+  state: string;
+  status: string;
+  image: string;
+  ports: string[];
+  cpuPercent: number | null;
+  memBytes: number | null;
+  restartCount: number /* int */;
+  startedAt: string;
+  exitReason: string;
+  health: string;
+}
+/**
+ * SettingsRequest is the body of POST /api/projects/{id}/settings. It
+ * replaces all five settings. DisplayName is trimmed, 1 to 80 characters with
+ * no control character; PublicDomain is trimmed and lowercased, "" to clear
+ * it, else a host name of two or more labels; StopTemplate is stop or down
+ * (always stop for the panel's own project); AlertCPUPercent is null or 1 to
+ * 100 and AlertRAMMB null or 1 to 1048576.
+ */
+export interface SettingsRequest {
+  displayName: string;
+  publicDomain: string;
+  stopTemplate: string;
+  alertCpuPercent: number | null;
+  alertRamMb: number | null;
+}
+/**
+ * LogLine is one line of container output. Container is the container's name
+ * and Service its compose service ("" when the line's prefix matched no known
+ * container); Time is when Docker received it (UTC RFC 3339 with fractional
+ * seconds). Text is masked with the project's .env values.
+ */
+export interface LogLine {
+  container: string;
+  service: string;
+  time: string;
+  text: string;
+}
+/**
+ * LogLines is the data of the "lines" event of GET /api/projects/{id}/logs.
+ * The first one is the backlog (the newest lines Docker keeps, possibly
+ * none), each next one the lines that arrived since.
+ */
+export interface LogLines {
+  lines: LogLine[];
+}
+/**
+ * LogEnd is the data of the final "end" event of GET
+ * /api/projects/{id}/logs, after which the server closes the stream. Reason
+ * is exited (nothing runs, or the containers stopped), slow (the viewer fell
+ * behind), error (Message says why, masked), or a refusal sent before
+ * anything ran: unknown_service, not_found, docker_down or
+ * too_many_log_streams. Message is "" for exited and slow.
+ */
+export interface LogEnd {
+  reason: string;
+  message: string;
 }
 /**
  * ActionResult is the 200 body of POST /api/projects/{id}/{action}: how the
