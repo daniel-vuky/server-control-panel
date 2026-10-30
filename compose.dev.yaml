@@ -18,6 +18,8 @@ services:
       dockerfile: Dockerfile.dev
     image: scp-dev
     command: air
+    # Reaps the process trees the runner kills on a timeout (see deploy/compose.yaml).
+    init: true
     ports:
       - "127.0.0.1:5173:5173"
     # YAML cannot merge sequences or add keys to an alias, so api spells out its own lists.

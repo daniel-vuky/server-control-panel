@@ -48,3 +48,12 @@ All background work runs **inside the panel process**.
 
 - A panel restart interrupts running jobs. They are marked rather than resumed.
 - Scheduling only runs while the panel is up.
+
+## Note (2026-10-30)
+
+The project lifecycle flow (#16, #39 to #43) added the `activity` table next to `jobs` (migration 0002).
+
+- **Append-only.** Each row records who did what: actor (the verified email from `auth.FromContext`, or `schedule` for the jobs of this ADR), action (`project.start`, `project.stop`, `project.restart`, `scan.start`, `scan.track`), target, result and a masked reason. The store offers two inserts (a `running` row, or a row recorded already finished, such as a refusal), one guarded update from `running` to the final result and a reader of recent rows, `RecentActivity`. Nothing deletes rows, and `project_id` has no foreign key so a record outlives its project.
+- **Results.** `running`, `ok`, `failed`, `timed_out`, `refused` (locked, not allowed, Docker down) and `interrupted`.
+- **Interrupted rows.** As with jobs (decision 5), a row left `running` by a crash or restart is marked `interrupted` when the store reopens.
+- **Reading it.** The timeline and its read API are #64 and not built yet.

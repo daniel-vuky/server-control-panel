@@ -11,13 +11,19 @@ import (
 // Status is the state of a project as Docker alone can tell it.
 type Status string
 
-// The five statuses.
+// The nine statuses. StatusOf only ever returns the first five; Starting,
+// Stopping and Restarting are set while a lifecycle command runs, and NotFound
+// marks a tracked project whose folder is gone.
 const (
-	StatusRunning Status = "running"
-	StatusPartial Status = "partial"
-	StatusStopped Status = "stopped"
-	StatusError   Status = "error"
-	StatusUnknown Status = "unknown"
+	StatusRunning    Status = "running"
+	StatusPartial    Status = "partial"
+	StatusStopped    Status = "stopped"
+	StatusError      Status = "error"
+	StatusUnknown    Status = "unknown"
+	StatusStarting   Status = "starting"
+	StatusStopping   Status = "stopping"
+	StatusRestarting Status = "restarting"
+	StatusNotFound   Status = "notfound"
 )
 
 // Container is one line of the docker.containers output.
@@ -136,6 +142,20 @@ func StatusOf(cs []Container, project string, expected []string) Status {
 		return StatusPartial
 	}
 	return StatusStopped
+}
+
+// AnyActive reports whether a container of composeProject is running or
+// restarting. One-off containers and other projects' containers are ignored.
+func AnyActive(cs []Container, composeProject string) bool {
+	for _, c := range cs {
+		if c.Project != composeProject || c.OneOff {
+			continue
+		}
+		if c.State == "running" || c.State == "restarting" {
+			return true
+		}
+	}
+	return false
 }
 
 // SelfProject returns the compose project of the panel's own container, or ""

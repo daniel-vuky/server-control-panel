@@ -13,6 +13,41 @@ import (
 // proxies keep an idle stream open. Tests shorten it.
 var sseHeartbeat = 25 * time.Second
 
+// sseWriter writes server-sent events to one response, flushing each.
+type sseWriter struct {
+	w  http.ResponseWriter
+	rc *http.ResponseController
+}
+
+// startSSE sends the 200 and the event-stream headers.
+func startSSE(w http.ResponseWriter) *sseWriter {
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	return &sseWriter{w: w, rc: http.NewResponseController(w)}
+}
+
+// send writes one event with data encoded as JSON.
+func (s *sseWriter) send(event string, data any) error {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, b); err != nil {
+		return err
+	}
+	return s.rc.Flush()
+}
+
+// ping writes the heartbeat comment.
+func (s *sseWriter) ping() error {
+	if _, err := fmt.Fprint(s.w, ": ping\n\n"); err != nil {
+		return err
+	}
+	return s.rc.Flush()
+}
+
 // sseEnd is the data of the final "end" event.
 type sseEnd struct {
 	State string `json:"state"`
@@ -37,29 +72,14 @@ func (s *server) scanEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	rc := http.NewResponseController(w)
-	send := func(event string, data any) error {
-		b, err := json.Marshal(data)
-		if err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b); err != nil {
-			return err
-		}
-		return rc.Flush()
-	}
-
+	sw := startSSE(w)
 	if !live {
-		if send(scan.EventProgress, storedProgress(job)) == nil {
-			_ = send(scan.EventEnd, sseEnd{State: job.State})
+		if sw.send(scan.EventProgress, storedProgress(job)) == nil {
+			_ = sw.send(scan.EventEnd, sseEnd{State: job.State})
 		}
 		return
 	}
-	if send(scan.EventProgress, toProgress(snapshot)) != nil {
+	if sw.send(scan.EventProgress, toProgress(snapshot)) != nil {
 		return
 	}
 	ping := time.NewTicker(sseHeartbeat)
@@ -69,10 +89,7 @@ func (s *server) scanEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
-				return
-			}
-			if rc.Flush() != nil {
+			if sw.ping() != nil {
 				return
 			}
 		case ev, ok := <-events:
@@ -80,10 +97,10 @@ func (s *server) scanEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if ev.Kind == scan.EventEnd {
-				_ = send(scan.EventEnd, sseEnd{State: ev.State})
+				_ = sw.send(scan.EventEnd, sseEnd{State: ev.State})
 				return
 			}
-			if send(scan.EventProgress, toProgress(ev.Progress)) != nil {
+			if sw.send(scan.EventProgress, toProgress(ev.Progress)) != nil {
 				return
 			}
 		}

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -339,4 +341,61 @@ func TestMissingBinary(t *testing.T) {
 	if errors.As(err, &te) || errors.As(err, &ee) {
 		t.Fatalf("a start failure is neither a timeout nor an exit error: %v", err)
 	}
+}
+
+func TestRunKillsProcessGroupOnTimeout(t *testing.T) {
+	old := timeoutFor
+	timeoutFor = func(Action, time.Duration) time.Duration { return 200 * time.Millisecond }
+	t.Cleanup(func() { timeoutFor = old })
+
+	r := newRunner(t, "FAKE_GRANDCHILD=1\n")
+	_, err := r.Run(context.Background(), StackCompose, ComposeStop,
+		Values{"dir": "/w/a", "file": "/w/a/compose.yaml"}, nil)
+	var te *TimeoutError
+	if !errors.As(err, &te) {
+		t.Fatalf("err = %v, want *TimeoutError", err)
+	}
+	if te.After != 200*time.Millisecond {
+		t.Fatalf("After = %v", te.After)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(r.DataDir, "docker", "grandchild"))
+	if err != nil {
+		t.Fatalf("grandchild pid not recorded: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for alive(pid) {
+		if time.Now().After(deadline) {
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Kill()
+			}
+			t.Fatalf("grandchild %d is still alive after the timeout", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// alive reports whether the process pid still runs. A killed process nobody
+// has reaped yet (a zombie, as when the test's PID 1 does not wait for
+// orphans) counts as dead.
+func alive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
+		return false
+	}
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	// The state is the field after the ")" that closes the command name.
+	if i := strings.LastIndexByte(string(stat), ')'); i >= 0 {
+		if fields := strings.Fields(string(stat[i+1:])); len(fields) > 0 && fields[0] == "Z" {
+			return false
+		}
+	}
+	return true
 }

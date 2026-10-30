@@ -42,12 +42,32 @@ type Tracked struct {
 	Path            string
 	ComposeProject  string
 	Self            bool
+	ComposeFiles    []string // base names: the main file, then the override
 	Services        []string
 	Databases       []project.Database
 }
 
 // TrackedProjects lists the tracked projects, oldest first.
 func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
+	return s.tracked(ctx, 0)
+}
+
+// TrackedProject returns one tracked project, or ErrNotFound when the id is
+// unknown or the project is ignored.
+func (s *Store) TrackedProject(ctx context.Context, id int64) (Tracked, error) {
+	ts, err := s.tracked(ctx, id)
+	if err != nil {
+		return Tracked{}, err
+	}
+	if len(ts) == 0 {
+		return Tracked{}, ErrNotFound
+	}
+	return ts[0], nil
+}
+
+// tracked lists the tracked projects with their databases; a non-zero only
+// limits it to that project id.
+func (s *Store) tracked(ctx context.Context, only int64) ([]Tracked, error) {
 	// One transaction, so both reads see the same snapshot: a concurrent
 	// AddWorkspace cannot show up in the second query but not the first.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -57,7 +77,8 @@ func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, workspace_id, display_name, path, compose_project, self, details FROM projects WHERE state = 'tracked' ORDER BY id`)
+		`SELECT id, workspace_id, display_name, path, compose_project, self, compose_files, details FROM projects
+		 WHERE state = 'tracked' AND (? = 0 OR id = ?) ORDER BY id`, only, only)
 	if err != nil {
 		return nil, fmt.Errorf("store: list tracked projects: %w", err)
 	}
@@ -67,10 +88,17 @@ func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
 	for rows.Next() {
 		var (
 			t       Tracked
+			files   string
 			details string
 		)
-		if err := rows.Scan(&t.ID, &t.WorkspaceID, &t.DisplayName, &t.Path, &t.ComposeProject, &t.Self, &details); err != nil {
+		if err := rows.Scan(&t.ID, &t.WorkspaceID, &t.DisplayName, &t.Path, &t.ComposeProject, &t.Self, &files, &details); err != nil {
 			return nil, fmt.Errorf("store: list tracked projects: %w", err)
+		}
+		if err := json.Unmarshal([]byte(files), &t.ComposeFiles); err != nil {
+			return nil, fmt.Errorf("store: project %d compose files: %w", t.ID, err)
+		}
+		if t.ComposeFiles == nil {
+			t.ComposeFiles = []string{}
 		}
 		var d project.Details
 		if err := json.Unmarshal([]byte(details), &d); err != nil {
@@ -91,7 +119,7 @@ func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
 
 	drows, err := tx.QueryContext(ctx,
 		`SELECT d.project_id, d.type, d.name, d.location_kind, d.location, d.sources
-		 FROM databases d JOIN projects p ON p.id = d.project_id WHERE p.state = 'tracked' ORDER BY d.id`)
+		 FROM databases d JOIN projects p ON p.id = d.project_id WHERE p.state = 'tracked' AND (? = 0 OR p.id = ?) ORDER BY d.id`, only, only)
 	if err != nil {
 		return nil, fmt.Errorf("store: list databases: %w", err)
 	}

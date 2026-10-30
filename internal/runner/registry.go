@@ -24,6 +24,14 @@ const (
 	ComposeConfig         Action = "compose.config"
 	ComposeConfigOverride Action = "compose.config.override"
 	DockerContainers      Action = "docker.containers"
+
+	ComposeUp              Action = "compose.up"
+	ComposeUpOverride      Action = "compose.up.override"
+	ComposeStop            Action = "compose.stop"
+	ComposeStopOverride    Action = "compose.stop.override"
+	ComposeRestart         Action = "compose.restart"
+	ComposeRestartOverride Action = "compose.restart.override"
+	DockerPing             Action = "docker.ping"
 )
 
 // Values are the arguments of one call, keyed by placeholder name without
@@ -105,12 +113,29 @@ var registry = map[key][]arg{
 		lit("-f"), []arg{pathArg("override")},
 		lit("config", "--format", "json", "--no-env-resolution"),
 	),
+	{StackCompose, ComposeUp}:              join(composeBase, lit("up", "-d")),
+	{StackCompose, ComposeUpOverride}:      join(composeBaseOverride, lit("up", "-d")),
+	{StackCompose, ComposeStop}:            join(composeBase, lit("stop")),
+	{StackCompose, ComposeStopOverride}:    join(composeBaseOverride, lit("stop")),
+	{StackCompose, ComposeRestart}:         join(composeBase, lit("restart")),
+	{StackCompose, ComposeRestartOverride}: join(composeBaseOverride, lit("restart")),
+	{StackDocker, DockerPing}:              lit("version", "--format", "{{.Server.Version}}"),
 	{StackDocker, DockerContainers}: lit(
 		"ps", "--all", "--no-trunc",
 		"--filter", "label="+labelProject,
 		"--format", containersFormat,
 	),
 }
+
+// composeBase is the start of every compose command on a project folder and its
+// compose file, and composeBaseOverride adds the override file.
+var (
+	composeBase = join(
+		lit("compose", "--project-directory"), []arg{pathArg("dir")},
+		lit("-f"), []arg{pathArg("file")},
+	)
+	composeBaseOverride = join(composeBase, lit("-f"), []arg{pathArg("override")})
+)
 
 // argv checks the call against its template and returns the argument list,
 // without the program. Every error is returned before anything runs, and

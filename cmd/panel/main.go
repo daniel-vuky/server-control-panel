@@ -16,6 +16,7 @@ import (
 	"github.com/daniel-vuky/server-control-panel/internal/api"
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/config"
+	"github.com/daniel-vuky/server-control-panel/internal/control"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -29,10 +30,10 @@ var version = "dev"
 // readTimeout bounds every docker command the panel runs to read state.
 const readTimeout = 15 * time.Second
 
-// scanWait is how long shutdown waits for a running scan to store its outcome
-// before the database closes. A scan still running then is left; the next
-// start marks its job interrupted.
-const scanWait = 5 * time.Second
+// jobWait is how long shutdown waits for a running scan or lifecycle command to
+// store its outcome before the database closes. One still running then is
+// left; the next start marks it interrupted.
+const jobWait = 5 * time.Second
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -69,6 +70,7 @@ func run(log *slog.Logger) int {
 
 	docker := &runner.Runner{Bin: "docker", DataDir: cfg.DataDir, Timeout: readTimeout}
 	scans := scan.NewManager(st, docker, log)
+	ctl, hub := control.New(st, docker, log)
 
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
@@ -85,6 +87,8 @@ func run(log *slog.Logger) int {
 			Store:    st,
 			Scans:    scans,
 			Docker:   docker,
+			Control:  ctl,
+			Hub:      hub,
 		}),
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 		ReadHeaderTimeout: 10 * time.Second,
@@ -123,12 +127,15 @@ func run(log *slog.Logger) int {
 		log.Error("shutdown failed", "error", shutdownErr)
 	}
 
-	// The store closes when run returns; let a running scan store its outcome
-	// first, for a short while.
-	waitCtx, cancelWait := context.WithTimeout(context.Background(), scanWait)
+	// The store closes when run returns; let a running scan or lifecycle
+	// command store its outcome first, for a short while.
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), jobWait)
 	defer cancelWait()
 	if err := scans.Wait(waitCtx); err != nil {
 		log.Warn("a scan is still running; the next start marks it interrupted", "error", err)
+	}
+	if err := ctl.Wait(waitCtx); err != nil {
+		log.Warn("a command is still running; the next start marks it interrupted", "error", err)
 	}
 	if shutdownErr != nil {
 		return 1

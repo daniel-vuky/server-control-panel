@@ -721,3 +721,133 @@ func TestNoSecretInResponses(t *testing.T) {
 		t.Errorf("projects = %s, want the database", bodies["projects"])
 	}
 }
+
+// refusedScans returns the refused scan.start rows, newest first.
+func refusedScans(t *testing.T, d Deps) []store.ActivityRow {
+	t.Helper()
+	var out []store.ActivityRow
+	for _, r := range activity(t, d) {
+		if r.Action == store.ActScanStart && r.Result == store.ResultRefused {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func TestScanRefusalsRecorded(t *testing.T) {
+	d := newTestDeps(t)
+	h := NewRouter(d)
+	ws := filepath.Join(rootOf(d), "ws")
+	mkProject(t, filepath.Join(ws, "app"), "compose.yaml")
+	outside := t.TempDir()
+
+	check := func(t *testing.T, n int, target, reason string) {
+		t.Helper()
+		rows := refusedScans(t, d)
+		if len(rows) != n {
+			t.Fatalf("refused rows = %+v, want %d", rows, n)
+		}
+		r := rows[0]
+		if r.Target != target || r.Reason != reason || r.Actor != "test@example.com" ||
+			r.ActorKind != store.ActorPerson || r.ProjectID != 0 || r.FinishedAt == nil {
+			t.Errorf("row = %+v, want target %q reason %q", r, target, reason)
+		}
+	}
+
+	t.Run("outside_roots", func(t *testing.T) {
+		if rec := doJSON(h, http.MethodPost, "/api/scans", ScanRequest{Path: outside, Depth: 1}); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		check(t, 1, outside, roots.CodeOutsideRoots)
+	})
+	t.Run("invalid_depth", func(t *testing.T) {
+		if rec := doJSON(h, http.MethodPost, "/api/scans", ScanRequest{Path: ws, Depth: 9}); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		check(t, 2, ws, "invalid_depth")
+	})
+	t.Run("long path", func(t *testing.T) {
+		long := "/" + strings.Repeat("a", 10*1024)
+		if rec := doJSON(h, http.MethodPost, "/api/scans", ScanRequest{Path: long, Depth: 1}); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+		}
+		rows := refusedScans(t, d)
+		if len(rows) != 3 || rows[0].Target != long[:256] || rows[0].Reason == "" {
+			t.Errorf("row = %+v, want the path cut to 256 bytes", rows[0])
+		}
+	})
+	t.Run("control characters", func(t *testing.T) {
+		if rec := doJSON(h, http.MethodPost, "/api/scans", ScanRequest{Path: "/x\x00y\x1b[31m\nz", Depth: 1}); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if rows := refusedScans(t, d); len(rows) != 4 || strings.ContainsAny(rows[0].Target, "\x00\x1b\n") {
+			t.Errorf("row = %+v, want control characters removed", rows[0])
+		}
+	})
+	t.Run("busy", func(t *testing.T) {
+		dockerOf(d).hold(t)
+		id := startScan(t, h, ws, 1)
+		if rec := doJSON(h, http.MethodPost, "/api/scans", ScanRequest{Path: rootOf(d), Depth: 1}); rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		check(t, 5, rootOf(d), "busy")
+		dockerOf(d).release()
+		waitScan(t, h, id)
+	})
+	t.Run("already_added", func(t *testing.T) {
+		if _, _, err := d.Store.AddWorkspace(context.Background(),
+			store.NewWorkspace{Name: "ws", Path: ws, Depth: 1, LastScanAt: time.Now()}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if rec := doJSON(h, http.MethodPost, "/api/scans", ScanRequest{Path: ws, Depth: 1}); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		check(t, 6, ws, "already_added")
+	})
+}
+
+func TestTrackRecorded(t *testing.T) {
+	d := newTestDeps(t)
+	h := NewRouter(d)
+	ws := filepath.Join(rootOf(d), "ws")
+	a := filepath.Join(ws, "a")
+	mkProject(t, a, "compose.yaml")
+	id, job := scanDone(t, h, ws, 1)
+
+	tracks := func() []store.ActivityRow {
+		var out []store.ActivityRow
+		for _, r := range activity(t, d) {
+			if r.Action == store.ActScanTrack {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+
+	rec := doJSON(h, http.MethodPost, scanURL(id, "/track"), TrackRequest{Projects: []TrackItem{{Path: a, DisplayName: " ", Track: true}}})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("bad name = %d", rec.Code)
+	}
+	rows := tracks()
+	if len(rows) != 1 || rows[0].Result != store.ResultRefused || rows[0].Reason != decode[FieldError](t, rec).Error ||
+		rows[0].Target != ws || rows[0].Actor != "test@example.com" {
+		t.Errorf("rows = %+v, want one refused track of %s", rows, ws)
+	}
+
+	if rec := doJSON(h, http.MethodPost, scanURL(id, "/track"), trackAll(job)); rec.Code != http.StatusOK {
+		t.Fatalf("track = %d %s", rec.Code, rec.Body.String())
+	}
+	rows = tracks()
+	if len(rows) != 2 || rows[0].Result != store.ResultOK || rows[0].Target != ws || rows[0].FinishedAt == nil {
+		t.Errorf("rows = %+v, want an ok track", rows)
+	}
+
+	if rec := doJSON(h, http.MethodPost, scanURL(id, "/track"), trackAll(job)); rec.Code != http.StatusConflict {
+		t.Fatalf("second track = %d", rec.Code)
+	}
+	rows = tracks()
+	if len(rows) != 3 || rows[0].Result != store.ResultRefused ||
+		rows[0].Reason != "This folder is already a workspace. Rescan it from Settings." {
+		t.Errorf("rows = %+v, want a refused second track", rows)
+	}
+}

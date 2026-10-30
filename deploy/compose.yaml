@@ -9,6 +9,9 @@ services:
   panel:
     image: ${PANEL_IMAGE:-ghcr.io/daniel-vuky/server-control-panel}:${PANEL_TAG:-latest}
     network_mode: host
+    # PID 1 reaps the grandchildren left behind when the panel kills a docker
+    # command that timed out; the panel binary itself never waits on them.
+    init: true
     env_file: panel.env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

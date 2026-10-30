@@ -1,7 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../api/types.gen'
+import { LiveProvider } from '../app/live'
+import { ToastProvider } from '../components/Toast'
+import { FakeEventSource } from '../test/fakeEventSource'
 import DashboardPage from './DashboardPage'
 
 const projects: Project[] = [
@@ -12,6 +15,7 @@ const projects: Project[] = [
     workspaceId: 1,
     self: false,
     status: 'running',
+    actions: ['stop', 'restart'],
     databases: [
       { type: 'postgresql', name: 'shop', locationKind: 'container', location: 'db', sources: [] },
       { type: 'sqlite', name: 'cache', locationKind: 'file', location: './cache.db', sources: [] },
@@ -24,6 +28,7 @@ const projects: Project[] = [
     workspaceId: 1,
     self: true,
     status: 'partial',
+    actions: [],
     databases: [],
   },
 ]
@@ -42,11 +47,23 @@ function serve(...answers: Array<[number, unknown]>) {
 const renderPage = () =>
   render(
     <MemoryRouter>
-      <DashboardPage />
+      <ToastProvider>
+        <LiveProvider>
+          <DashboardPage />
+        </LiveProvider>
+      </ToastProvider>
     </MemoryRouter>,
   )
 
-afterEach(() => vi.unstubAllGlobals())
+beforeEach(() => {
+  FakeEventSource.instances = []
+  vi.stubGlobal('EventSource', FakeEventSource)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 describe('DashboardPage', () => {
   it('shows the heading and a loading state before the answer', () => {
@@ -83,6 +100,7 @@ describe('DashboardPage', () => {
       'Path',
       'Status',
       'Database',
+      'Start / Stop',
     ])
   })
 
@@ -125,5 +143,328 @@ describe('DashboardPage', () => {
     serve([200, { email: 'someone@example.com' }])
     renderPage()
     expect(await screen.findByRole('alert')).toHaveTextContent('Unexpected response')
+  })
+
+  describe('lifecycle controls', () => {
+    const stoppedShop: Project = {
+      ...projects[0],
+      id: 3,
+      displayName: 'blog',
+      path: '/srv/work/blog',
+      status: 'stopped',
+      actions: ['start'],
+      databases: [],
+    }
+    const brokenShop: Project = {
+      ...projects[0],
+      id: 4,
+      displayName: 'broken',
+      path: '/srv/work/broken',
+      status: 'error',
+      actions: ['start', 'restart'],
+      databases: [],
+    }
+    const list = [projects[0], projects[1], stoppedShop, brokenShop]
+
+    /** serveActions answers GET /api/projects with the list and each POST with next(). */
+    function serveActions(next: () => Promise<Response> | Response, rows: Project[] = list) {
+      const fetchStub = vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === 'POST') return next()
+        return new Response(JSON.stringify(rows), { status: 200 })
+      })
+      vi.stubGlobal('fetch', fetchStub)
+      return fetchStub
+    }
+    const posts = (stub: ReturnType<typeof vi.fn>) =>
+      stub.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'POST')
+    const ok = (status: string, outcome = 'ok', message = '', actions: string[] = []) =>
+      new Response(JSON.stringify({ outcome, status, actions, message }), { status: 200 })
+    const row = (name: RegExp) => screen.getByRole('row', { name })
+
+    it('confirms a stop, cancel sends nothing, confirm posts and shows Stopping then the toast', async () => {
+      let release: (r: Response) => void = () => {}
+      const stub = serveActions(() => new Promise<Response>((res) => (release = res)))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByRole('heading')).toHaveTextContent('Stop shop?')
+      expect(dialog).toHaveTextContent(
+        'It will stop serving until you start it again. Its volumes and data are kept.',
+      )
+      expect(dialog).toHaveTextContent('$ docker compose stop · timeout 60s')
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(posts(stub)).toHaveLength(0)
+
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      expect(posts(stub)).toHaveLength(1)
+      const [url, init] = posts(stub)[0] as [string, RequestInit]
+      expect(url).toBe('/api/projects/1/stop')
+      expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' })
+
+      expect(within(row(/shop/)).getByText('Stopping…')).toBeInTheDocument()
+      expect(within(row(/shop/)).getByRole('switch')).toBeDisabled()
+
+      await act(async () => release(ok('stopped')))
+      expect(await screen.findByTestId('toast-success')).toHaveTextContent('Stopped shop')
+      expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument()
+    })
+
+    it('starts a stopped row at once, with no dialog', async () => {
+      const stub = serveActions(() => ok('running'))
+      renderPage()
+      await screen.findByRole('row', { name: /blog/ })
+
+      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      await waitFor(() => expect(posts(stub)).toHaveLength(1))
+      expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/3/start')
+      expect(await screen.findByTestId('toast-success')).toHaveTextContent('Started blog')
+    })
+
+    it('restarts an error row at once and asks first for a running row', async () => {
+      const stub = serveActions(() => ok('running'))
+      renderPage()
+      await screen.findByRole('row', { name: /broken/ })
+
+      fireEvent.click(
+        within(row(/broken/)).getByRole('button', { name: 'More actions for broken' }),
+      )
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      await waitFor(() => expect(posts(stub)).toHaveLength(1))
+      expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/4/restart')
+
+      fireEvent.click(within(row(/shop/)).getByRole('button', { name: 'More actions for shop' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByRole('heading')).toHaveTextContent('Restart shop?')
+      expect(dialog).toHaveTextContent(
+        'Its containers will stop and start again; it is unavailable for a moment. Volumes and data are kept.',
+      )
+      expect(dialog).toHaveTextContent('$ docker compose restart · timeout 60s')
+      expect(posts(stub)).toHaveLength(1)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Restart' }))
+      await waitFor(() => expect(posts(stub)).toHaveLength(2))
+      expect((posts(stub)[1] as [string])[0]).toBe('/api/projects/1/restart')
+    })
+
+    it('asks first before restarting a partial row too', async () => {
+      const partialShop: Project = {
+        ...projects[0],
+        id: 5,
+        displayName: 'notes',
+        path: '/srv/work/notes',
+        status: 'partial',
+        actions: ['start', 'stop', 'restart'],
+        databases: [],
+      }
+      const stub = serveActions(() => ok('running'), [partialShop])
+      renderPage()
+      await screen.findByRole('row', { name: /notes/ })
+      expect(within(row(/notes/)).getByText('Partial')).toBeInTheDocument()
+
+      fireEvent.click(within(row(/notes/)).getByRole('button', { name: 'More actions for notes' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByRole('heading')).toHaveTextContent('Restart notes?')
+      expect(posts(stub)).toHaveLength(0)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Restart' }))
+      await waitFor(() => expect(posts(stub)).toHaveLength(1))
+      expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/5/restart')
+    })
+
+    it('shows a failed result as an alert toast that stays', async () => {
+      serveActions(() => ok('running', 'failed', 'port 80 is in use'))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent("Couldn't stop shop")
+      expect(alert).toHaveTextContent('port 80 is in use')
+      expect(within(row(/shop/)).getByText('Running')).toBeInTheDocument()
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+      })
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+
+    it('keeps an error toast past 10 seconds', async () => {
+      serveActions(() => ok('running', 'timed_out', 'timed out after 60s'))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+      await screen.findByRole('alert')
+      await act(async () => {
+        vi.advanceTimersByTime(10_000)
+      })
+      expect(screen.getByRole('alert')).toHaveTextContent('timed out after 60s')
+    })
+
+    it('shows the server text of a 409 locked refusal', async () => {
+      serveActions(
+        () =>
+          new Response(
+            JSON.stringify({
+              error: 'shop is busy with another command',
+              code: 'locked',
+              status: 'stopping',
+            }),
+            { status: 409 },
+          ),
+      )
+      renderPage()
+      await screen.findByRole('row', { name: /blog/ })
+      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent("Couldn't start blog")
+      expect(alert).toHaveTextContent('shop is busy with another command')
+      // The row goes back to what the server last said.
+      expect(within(row(/blog/)).getByText('Stopped')).toBeInTheDocument()
+    })
+
+    it('shows a network failure as an error toast', async () => {
+      const stub = vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === 'POST') throw new TypeError('Failed to fetch')
+        return new Response(JSON.stringify(list), { status: 200 })
+      })
+      vi.stubGlobal('fetch', stub)
+      renderPage()
+      await screen.findByRole('row', { name: /blog/ })
+      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Failed to fetch')
+    })
+
+    it('follows a state event: stopping updates the row and locks the controls', async () => {
+      serveActions(() => ok('stopped'))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+
+      act(() => {
+        FakeEventSource.instances[0].emit('state', {
+          dockerUp: true,
+          projects: [{ ...projects[0], status: 'stopping', actions: [] }, projects[1]],
+        })
+      })
+      const shop = row(/shop/)
+      expect(within(shop).getByText('Stopping…')).toBeInTheDocument()
+      expect(within(shop).getByRole('switch')).toBeDisabled()
+      fireEvent.click(within(shop).getByRole('button', { name: 'More actions for shop' }))
+      for (const name of ['Start', 'Restart']) {
+        expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'true')
+      }
+    })
+
+    it('locks the controls of the panel itself with the reason Monitor only', async () => {
+      serveActions(() => ok('running'))
+      renderPage()
+      await screen.findByRole('row', { name: /panel/ })
+      const panel = row(/panel/)
+      const sw = within(panel).getByRole('switch')
+      expect(sw).toBeDisabled()
+      expect(sw).toHaveAttribute('title', 'Monitor only')
+      fireEvent.click(within(panel).getByRole('button', { name: 'More actions for panel' }))
+      for (const name of ['Start', 'Restart']) {
+        const item = screen.getByRole('menuitem', { name })
+        expect(item).toHaveAttribute('aria-disabled', 'true')
+        expect(item).toHaveAttribute('title', 'Monitor only')
+      }
+    })
+
+    it('gives Docker down as the reason when the hub says so', async () => {
+      serveActions(() => ok('running'))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+      act(() => {
+        FakeEventSource.instances[0].emit('state', {
+          dockerUp: false,
+          projects: [{ ...projects[0], status: 'unknown', actions: [] }],
+        })
+      })
+      expect(within(row(/shop/)).getByRole('switch')).toHaveAttribute(
+        'title',
+        'Docker is not responding',
+      )
+    })
+
+    it('drops the pending status on the next state event, or after 5 seconds', async () => {
+      serveActions(() => ok('stopped'))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+
+      // Next state event.
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+      expect(await within(row(/shop/)).findByText('Stopped')).toBeInTheDocument()
+      act(() => {
+        FakeEventSource.instances[0].emit('state', {
+          dockerUp: true,
+          projects: [{ ...projects[0], status: 'partial', actions: ['start', 'stop', 'restart'] }],
+        })
+      })
+      expect(within(row(/shop/)).getByText('Partial')).toBeInTheDocument()
+
+      // After 5 s with no event, the row falls back to the list it has.
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+      await waitFor(() => expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument())
+      await act(async () => {
+        vi.advanceTimersByTime(4900)
+      })
+      expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument()
+      await act(async () => {
+        vi.advanceTimersByTime(200)
+      })
+      expect(within(row(/shop/)).getByText('Partial')).toBeInTheDocument()
+    })
+
+    it('does nothing harmful when the answer arrives after the page is gone', async () => {
+      let release: (r: Response) => void = () => {}
+      serveActions(() => new Promise<Response>((res) => (release = res)))
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { unmount } = renderPage()
+      await screen.findByRole('row', { name: /blog/ })
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      unmount()
+      const before = vi.getTimerCount()
+      // A failed result shows an error toast, which holds no timer, so any
+      // timer left is the page's own 5 s expiry.
+      await act(async () => release(ok('stopped', 'failed', 'boom', ['start'])))
+      expect(vi.getTimerCount()).toBe(before)
+      expect(spy).not.toHaveBeenCalled()
+      spy.mockRestore()
+    })
+
+    it('uses the settled status and actions the server sent, and none while running', async () => {
+      let release: (r: Response) => void = () => {}
+      serveActions(() => new Promise<Response>((res) => (release = res)))
+      renderPage()
+      await screen.findByRole('row', { name: /shop/ })
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+      fireEvent.click(within(row(/shop/)).getByRole('button', { name: 'More actions for shop' }))
+      for (const name of ['Start', 'Restart']) {
+        expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'true')
+      }
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+
+      await act(async () => release(ok('stopped', 'ok', '', ['start'])))
+      const sw = within(row(/shop/)).getByRole('switch', { name: 'Start shop' })
+      expect(sw).toBeEnabled()
+      expect(sw).not.toHaveAttribute('title')
+    })
   })
 })

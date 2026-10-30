@@ -21,7 +21,7 @@ export const appRoutes: AppRoute[] = [
   {
     path: '/',
     title: 'Dashboard',
-    issues: [4, 23],
+    issues: [4, 23, 33, 39, 40, 41, 42, 43, 44, 72],
     nav: { label: 'Dashboard', icon: LayoutDashboard },
   },
   {
