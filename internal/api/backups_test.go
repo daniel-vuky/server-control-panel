@@ -568,7 +568,7 @@ func TestLiveStateCarriesBackupsAndDrive(t *testing.T) {
 		t.Errorf("backups = %#v, want []", s.Backups)
 	}
 	db := s.Projects[0].Databases[0]
-	if db.Key != alphaKey || db.Backup == nil || *db.Backup != (BackupRule{Allowed: true}) {
+	if db.Key != alphaKey || db.Backup == nil || *db.Backup != (BackupRule{Allowed: true, Service: "db"}) {
 		t.Errorf("alpha database = %+v", db)
 	}
 
@@ -585,7 +585,7 @@ func TestLiveStateCarriesBackupsAndDrive(t *testing.T) {
 
 	doJSON(h, http.MethodPost, "/api/drive/disconnect", "")
 	s = stateUntil(t, r, "drive disconnected", func(s LiveState) bool { return s.Drive.State == "not_connected" })
-	if b := s.Projects[0].Databases[0].Backup; b == nil || *b != (BackupRule{Reason: "drive_not_connected"}) {
+	if b := s.Projects[0].Databases[0].Backup; b == nil || *b != (BackupRule{Reason: "drive_not_connected", Service: "db"}) {
 		t.Errorf("rule after disconnect = %+v", b)
 	}
 }

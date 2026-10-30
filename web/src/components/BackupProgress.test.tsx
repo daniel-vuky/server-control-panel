@@ -121,6 +121,33 @@ describe('BackupSteps', () => {
     expect(items[3]).toHaveTextContent('Skipped · temp file deleted')
   })
 
+  it('draws a leftover running step as failed and a waiting one as skipped once the backup ended', () => {
+    // An interrupted row stored before the server rewrote its steps.
+    render(
+      <BackupSteps
+        backup={makeBackup({
+          state: 'interrupted',
+          queuePosition: 0,
+          error: 'The panel restarted during this backup',
+          steps: steps(['done', 'running', 'waiting', 'waiting'], ['pg_dump · 2s', 'gzip']),
+        })}
+      />,
+    )
+    const items = screen.getAllByRole('listitem')
+    expect(items.map((li) => li.getAttribute('data-state'))).toEqual([
+      'done',
+      'failed',
+      'skipped',
+      'skipped',
+    ])
+    expect(screen.queryByTestId('step-running')).toBeNull()
+    expect(screen.queryByTestId('step-waiting')).toBeNull()
+    expect(items[1]).not.toHaveAttribute('aria-current')
+    expect(within(items[1]).getByTestId('step-failed')).toBeInTheDocument()
+    expect(items[1]).toHaveTextContent('The panel restarted during this backup')
+    expect(items[2]).toHaveTextContent('Skipped')
+  })
+
   it('is one line in compact form', () => {
     render(
       <BackupSteps
@@ -266,6 +293,28 @@ describe('the progress dialog', () => {
     )
     expect(dialog).toHaveTextContent('The panel restarted during this backup')
     expect(callsTo(stub, '/api/backups/7')).toHaveLength(1)
+  })
+
+  it('shows the error once for an ended backup with a leftover running step', async () => {
+    serve({
+      'GET /api/backups/7': () =>
+        json(
+          200,
+          makeBackup({
+            state: 'interrupted',
+            queuePosition: 0,
+            error: 'The panel restarted during this backup',
+            steps: steps(['running', 'waiting', 'waiting', 'waiting']),
+          }),
+        ),
+    })
+    setup([])
+    const dialog = screen.getByRole('dialog', { name: /Backup/ })
+    await waitFor(() =>
+      expect(within(dialog).getByTestId('backup-pill')).toHaveTextContent('Interrupted'),
+    )
+    expect(within(dialog).queryByTestId('step-running')).toBeNull()
+    expect(within(dialog).getAllByText('The panel restarted during this backup')).toHaveLength(1)
   })
 
   it('shows a refusal with its words above the skipped steps', async () => {

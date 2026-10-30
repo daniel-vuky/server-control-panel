@@ -18,7 +18,7 @@ const connected: DriveStatus = {
   folder: { id: 'f', name: 'server-backups' },
   reason: '',
 }
-const allowed = { allowed: true, reason: '' }
+const allowed = { allowed: true, reason: '', service: '' }
 const HISTORY = '/api/projects/1/backups?limit=50'
 const MB = 1024 * 1024
 
@@ -186,6 +186,22 @@ describe('backup history', () => {
     expect(within(rows[0]).queryByRole('link')).toBeNull()
   })
 
+  it('keeps the actions column whole when the content is narrow', async () => {
+    // jsdom has no layout: this pins the classes that keep the File column from
+    // being clipped at about 800 px (the table no longer needs 880 px; Time and
+    // Triggered by wrap; the actions cell never shrinks).
+    serve(get(HISTORY, () => json(200, { backups: [ok(2)], more: false })))
+    open([shopDb])
+    const table = await history()
+    expect(table.className).not.toMatch(/min-w-\[(8\d\d|9\d\d)px\]/)
+    const [row] = bodyRows(table)
+    const cells = within(row).getAllByRole('cell')
+    expect(cells[0].className).not.toContain('whitespace-nowrap')
+    const actions = cells.at(-1) as HTMLElement
+    expect(actions.className).toContain('whitespace-nowrap')
+    expect(actions.className).toContain('w-px')
+  })
+
   it('shows the Database column when the project has more than one database', async () => {
     serve(
       get(HISTORY, () =>
@@ -319,6 +335,48 @@ describe('backup history', () => {
     state([])
     state([])
     expect(callsTo(stub, HISTORY)).toHaveLength(2)
+  })
+
+  it('reads the list again at once when a refusal wrote a row', async () => {
+    const refusedRow = makeBackup({
+      id: 3,
+      state: 'refused',
+      error: 'Start db first',
+      queuePosition: 0,
+      steps: steps(['skipped', 'skipped', 'skipped', 'skipped']),
+    })
+    let page: Backup[] = []
+    const stub = serve(
+      get(HISTORY, () => json(200, { backups: page, more: false })),
+      post('/api/projects/1/backups', () =>
+        json(409, { error: 'db_not_running', message: 'Start db first', service: 'db' }),
+      ),
+    )
+    open([shopDb])
+    const card = await screen.findByRole('region', { name: 'Backup history' })
+    await within(card).findByText('No backup yet.')
+    expect(callsTo(stub, HISTORY)).toHaveLength(1)
+
+    page = [refusedRow]
+    fireEvent.click(within(card).getByRole('button', { name: 'Back up now' }))
+    await waitFor(() => expect(callsTo(stub, HISTORY)).toHaveLength(2))
+    const [row] = bodyRows(await history())
+    expect(row).toHaveTextContent('Refused · Start db first')
+  })
+
+  it('does not read the list again for a refusal that wrote no row', async () => {
+    const failed = makeBackup({ id: 2, state: 'failed', failedStep: 'upload', queuePosition: 0 })
+    const stub = serve(
+      get(HISTORY, () => json(200, { backups: [failed], more: false })),
+      post('/api/backups/2/retry', () =>
+        json(409, { error: 'not_found', message: 'This project is no longer tracked.' }),
+      ),
+    )
+    open([shopDb])
+    const [row] = bodyRows(await history())
+    fireEvent.click(within(row).getByRole('button', { name: 'Retry' }))
+    await screen.findByText('This project is no longer tracked.')
+    expect(callsTo(stub, HISTORY)).toHaveLength(1)
   })
 
   it('keeps older pages when it reads the list again', async () => {

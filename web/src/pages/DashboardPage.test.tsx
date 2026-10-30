@@ -995,7 +995,9 @@ describe('DashboardPage', () => {
   describe('back up now in the ⋯ menu', () => {
     const one: Project = {
       ...projects[0],
-      databases: [makeDatabase({ name: 'shop', backup: { allowed: true, reason: '' } })],
+      databases: [
+        makeDatabase({ name: 'shop', backup: { allowed: true, reason: '', service: '' } }),
+      ],
     }
     const none: Project = {
       ...projects[0],

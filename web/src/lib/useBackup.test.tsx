@@ -3,13 +3,14 @@ import { useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Backup, DriveStatus, Project } from '../api/types.gen'
 import { FakeEventSource } from '../test/fakeEventSource'
+import { showPage } from '../test/pageshow'
 import { makeBackup, makeDatabase, makeProject, pushState } from '../test/projects'
 import { renderApp } from '../test/renderApp'
 import { useBackup } from './useBackup'
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
 
-const allowed = { allowed: true, reason: '' }
+const allowed = { allowed: true, reason: '', service: '' }
 const shopDb = makeDatabase({ name: 'shop', backup: allowed })
 const SHOP_KEY = 'postgresql:db:shop'
 
@@ -60,6 +61,7 @@ function Harness({ project }: { project: Project }) {
         Open 7
       </button>
       <span data-testid="pending">{b.pendingKey ?? ''}</span>
+      <span data-testid="refusals">{b.refusals}</span>
       {b.dialogs}
     </>
   )
@@ -123,7 +125,7 @@ describe('useBackup', () => {
           type: 'mysql',
           name: 'crm_db',
           location: 'mysql',
-          backup: { allowed: false, reason: 'db_not_running' },
+          backup: { allowed: false, reason: 'db_not_running', service: 'mysql' },
         }),
         makeDatabase({ name: 'shop', backup: allowed }),
         makeDatabase({
@@ -131,7 +133,7 @@ describe('useBackup', () => {
           name: 'cache',
           locationKind: 'file',
           location: './cache.db',
-          backup: { allowed: false, reason: 'not_supported' },
+          backup: { allowed: false, reason: 'not_supported', service: '' },
         }),
       ],
     })
@@ -180,7 +182,9 @@ describe('useBackup', () => {
     )
     setup(
       makeProject({
-        databases: [makeDatabase({ name: 'shop', backup: { allowed: false, reason } })],
+        databases: [
+          makeDatabase({ name: 'shop', backup: { allowed: false, reason, service: '' } }),
+        ],
       }),
       {
         ...connected,
@@ -199,6 +203,10 @@ describe('useBackup', () => {
       returnTo: `/projects/1/database?backup=${encodeURIComponent(SHOP_KEY)}`,
     })
     expect(calls(stub, '/api/projects/1/backups')).toHaveLength(0)
+    // Back from the consent page restores this page from the cache: Connect works again.
+    expect(within(dialog).getByRole('button', { name: 'Connect Google Drive' })).toBeDisabled()
+    showPage(true)
+    expect(within(dialog).getByRole('button', { name: 'Connect Google Drive' })).toBeEnabled()
   })
 
   it('closes the Drive dialog with Later', () => {
@@ -206,7 +214,10 @@ describe('useBackup', () => {
     setup(
       makeProject({
         databases: [
-          makeDatabase({ name: 'shop', backup: { allowed: false, reason: 'drive_not_connected' } }),
+          makeDatabase({
+            name: 'shop',
+            backup: { allowed: false, reason: 'drive_not_connected', service: '' },
+          }),
         ],
       }),
       { ...connected, state: 'not_connected', folder: null },
@@ -218,7 +229,7 @@ describe('useBackup', () => {
 
   it('opens the Drive dialog from the chooser for a Drive reason', () => {
     serve()
-    const drive = { allowed: false, reason: 'drive_expired' }
+    const drive = { allowed: false, reason: 'drive_expired', service: '' }
     setup(
       makeProject({
         databases: [
@@ -317,6 +328,33 @@ describe('useBackup', () => {
     expect(
       await screen.findByRole('dialog', { name: 'Connect Google Drive first' }),
     ).toBeInTheDocument()
+  })
+
+  it.each([
+    ['disk_short', 1],
+    ['db_not_running', 1],
+    ['no_db_name', 1],
+    ['not_supported', 1],
+    ['drive_not_connected', 1],
+    ['drive_expired', 1],
+    ['folder_missing', 1],
+    ['already_running', 0],
+    ['not_found', 0],
+    ['not_retryable', 0],
+  ])('counts a refusal %s that wrote a history row: %i', async (code, want) => {
+    const stub = serve(
+      post('/api/projects/1/backups', () => json(409, { error: code, message: 'words', id: 9 })),
+      get('/api/backups/9', () => json(200, makeBackup({ id: 9 }))),
+    )
+    setup(makeProject({ databases: [shopDb] }))
+    expect(screen.getByTestId('refusals')).toHaveTextContent('0')
+    go()
+    await waitFor(() => expect(calls(stub, '/api/projects/1/backups', 'POST')).toHaveLength(1))
+    // Let the answer settle.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(screen.getByTestId('refusals')).toHaveTextContent(String(want))
   })
 
   it.each([

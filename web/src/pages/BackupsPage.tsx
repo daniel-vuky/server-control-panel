@@ -7,6 +7,7 @@ import { useLive } from '../app/live'
 import { BackupSteps } from '../components/BackupProgress'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
 import { formatClock } from '../lib/time'
+import { usePageRestore } from '../lib/usePageRestore'
 
 const BUTTON =
   'flex h-9 flex-none cursor-pointer items-center rounded-[7px] px-4 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
@@ -63,6 +64,7 @@ export default function BackupsPage() {
 function DriveBanner({ drive }: { drive: DriveStatus }) {
   const [busy, setBusy] = useState(false)
   const [issue, setIssue] = useState<DriveIssue | null>(null)
+  usePageRestore(() => setBusy(false))
 
   if (drive.state === 'connected') return null
   if (drive.state === 'not_configured') {

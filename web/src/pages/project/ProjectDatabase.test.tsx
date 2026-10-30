@@ -18,7 +18,7 @@ const connected: DriveStatus = {
   folder: { id: 'f', name: 'server-backups' },
   reason: '',
 }
-const allowed = { allowed: true, reason: '' }
+const allowed = { allowed: true, reason: '', service: '' }
 const HISTORY = '/api/projects/1/backups?limit=50'
 
 const uploading: BackupStep[] = [
@@ -65,7 +65,7 @@ describe('database and backup tab', () => {
               name: 'cache',
               locationKind: 'file',
               location: './data/cache.db',
-              backup: { allowed: false, reason: 'not_supported' },
+              backup: { allowed: false, reason: 'not_supported', service: '' },
             }),
             makeDatabase({
               type: 'mysql',
@@ -73,7 +73,7 @@ describe('database and backup tab', () => {
               locationKind: 'external',
               location: 'db.example.com',
               sources: ['MYSQL_HOST'],
-              backup: { allowed: false, reason: 'not_supported' },
+              backup: { allowed: false, reason: 'not_supported', service: '' },
             }),
           ],
         }),

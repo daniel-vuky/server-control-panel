@@ -157,7 +157,7 @@ describe('project page', () => {
   })
 
   describe('back up now', () => {
-    const allowed = { allowed: true, reason: '' }
+    const allowed = { allowed: true, reason: '', service: '' }
     const drive = (state: string) => ({
       state,
       email: '',
@@ -178,11 +178,14 @@ describe('project page', () => {
       pushState([
         makeProject({
           databases: [
-            makeDatabase({ location: 'pg', backup: { allowed: false, reason: 'db_not_running' } }),
+            makeDatabase({
+              location: 'pg',
+              backup: { allowed: false, reason: 'db_not_running', service: 'pg' },
+            }),
             makeDatabase({
               name: 'x',
               locationKind: 'host',
-              backup: { allowed: false, reason: 'not_supported' },
+              backup: { allowed: false, reason: 'not_supported', service: '' },
             }),
           ],
         }),
@@ -193,7 +196,9 @@ describe('project page', () => {
 
     it('stays enabled without Drive, unless Drive is not set up on this server', () => {
       const p = makeProject({
-        databases: [makeDatabase({ backup: { allowed: false, reason: 'drive_not_connected' } })],
+        databases: [
+          makeDatabase({ backup: { allowed: false, reason: 'drive_not_connected', service: '' } }),
+        ],
       })
       renderProject('/projects/1')
       pushState([p], true, { drive: drive('not_connected') })

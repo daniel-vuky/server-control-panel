@@ -59,10 +59,11 @@ const EMPTY: State = { rows: [], more: false, loaded: false, error: '' }
 /**
  * useHistory is a project's backup history: the newest page on mount, older
  * pages on demand, and one re-read of the newest page each time a live state
- * shows that active backups of this project finished. Until that answers, a
- * finished backup keeps its last live value.
+ * shows that active backups of this project finished, or the flow's refusals
+ * count says a refused backup was stored. Until that answers, a finished
+ * backup keeps its last live value.
  */
-function useHistory(projectId: number) {
+function useHistory(projectId: number, refusals: number) {
   const live = useLive()
   const [state, setState] = useState<State>(EMPTY)
   const [older, setOlder] = useState({ busy: false, error: '' })
@@ -126,6 +127,14 @@ function useHistory(projectId: number) {
     )
   }
 
+  // A refusal that stored a refused backup: it never was active, so read it now.
+  const lastRefusals = useRef(refusals)
+  useEffect(() => {
+    if (lastRefusals.current === refusals) return
+    lastRefusals.current = refusals
+    readNewest()
+  }, [refusals, readNewest])
+
   // The active backups of this project at the last live state, to see which finished.
   const seen = useRef(new Map<number, Backup>())
   useEffect(() => {
@@ -167,7 +176,7 @@ type Props = {
  */
 export default function BackupHistory({ project, flow }: Props) {
   const titleId = useId()
-  const h = useHistory(project.id)
+  const h = useHistory(project.id, flow.refusals)
   const several = project.databases.length > 1
 
   return (
@@ -201,7 +210,7 @@ export default function BackupHistory({ project, flow }: Props) {
           <div className="overflow-x-auto">
             <table
               aria-labelledby={titleId}
-              className="w-full min-w-[880px] border-collapse text-left"
+              className="w-full min-w-[640px] border-collapse text-left"
             >
               <thead>
                 <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
@@ -267,7 +276,7 @@ function Row({ backup: b, several, flow }: { backup: Backup; several: boolean; f
   const retrying = flow.retryingId === b.id
   return (
     <tr data-id={b.id} className="border-b border-[#1a1e24] last:border-b-0">
-      <td className={`${CELL} whitespace-nowrap`}>{formatWhen(b.createdAt)}</td>
+      <td className={CELL}>{formatWhen(b.createdAt)}</td>
       {several && <td className={`${CELL} break-all text-text-2`}>{b.database.name}</td>}
       <td className={`${CELL} whitespace-nowrap`}>
         {b.state === 'ok' && b.sizeBytes > 0 ? formatBytes(b.sizeBytes) : '—'}
@@ -289,7 +298,8 @@ function Row({ backup: b, several, flow }: { backup: Backup; several: boolean; f
         </button>
       </td>
       <td className={`${CELL} font-sans break-all text-[#c9ced6]`}>{b.startedBy || '—'}</td>
-      <td className={CELL}>
+      {/* w-px: the actions take their whole width; Time and Triggered by wrap instead. */}
+      <td className={`${CELL} w-px whitespace-nowrap`}>
         <span className="flex items-center justify-end gap-3 whitespace-nowrap">
           {b.state === 'ok' && (
             <>

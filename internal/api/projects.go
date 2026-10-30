@@ -82,7 +82,7 @@ func toProjectDatabases(ds []control.DatabaseView) []Database {
 	for _, d := range ds {
 		db := toDatabase(d.Database)
 		db.Key = d.Key
-		db.Backup = &BackupRule{Allowed: d.Backup.Allowed, Reason: d.Backup.Reason}
+		db.Backup = &BackupRule{Allowed: d.Backup.Allowed, Reason: d.Backup.Reason, Service: d.Backup.Service}
 		out = append(out, db)
 	}
 	return out

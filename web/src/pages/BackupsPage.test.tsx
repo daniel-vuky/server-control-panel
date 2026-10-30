@@ -3,6 +3,7 @@ import { useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Backup, BackupStep, DriveStatus } from '../api/types.gen'
 import { FakeEventSource } from '../test/fakeEventSource'
+import { showPage } from '../test/pageshow'
 import { makeBackup, makeProject, pushState } from '../test/projects'
 import { renderApp } from '../test/renderApp'
 import BackupsPage from './BackupsPage'
@@ -83,6 +84,10 @@ describe('BackupsPage', () => {
     const [url, init] = stub.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('/api/drive/connect')
     expect(JSON.parse(String(init.body))).toEqual({ returnTo: '/backups' })
+    // Back from the consent page restores this page from the cache: Connect works again.
+    expect(within(banner).getByRole('button', { name: 'Connect Google Drive' })).toBeDisabled()
+    showPage(true)
+    expect(within(banner).getByRole('button', { name: 'Connect Google Drive' })).toBeEnabled()
   })
 
   it('offers Reconnect Google Drive when the token expired', async () => {

@@ -8,6 +8,7 @@ import {
   isActive,
   isRetryable,
   percentOf,
+  shownSteps,
   stateWord,
   stepLabel,
   waitingLine,
@@ -157,7 +158,7 @@ export function BackupSteps({ backup, compact = false }: { backup: Backup; compa
   }
   return (
     <ol className="m-0 grid list-none grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))] gap-2.5 p-0">
-      {backup.steps.map((s) => (
+      {shownSteps(backup).map((s) => (
         <StepItem key={s.step} step={s} backup={backup} />
       ))}
     </ol>
@@ -265,7 +266,7 @@ export default function BackupProgress({ id, retrying, onClose, onRetry }: Props
   const titleId = useId()
   const close = useRef<HTMLButtonElement>(null)
   const { backup: b, error } = useBackupView(id)
-  const failedStep = b?.steps.some((s) => s.state === 'failed') ?? false
+  const failedStep = b ? shownSteps(b).some((s) => s.state === 'failed') : false
 
   return (
     <Dialog labelledBy={titleId} onClose={onClose} initialFocus={close} width="w-[760px]">

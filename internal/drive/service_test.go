@@ -54,6 +54,10 @@ type recClient struct {
 	refreshes []string
 	hold      chan struct{} // when set, Upload waits on it
 	entered   chan struct{}
+	// afterUpload, when set, runs once an upload has succeeded.
+	afterUpload func()
+	// deleteDeadline is the deadline of the last Delete's context.
+	deleteDeadline time.Time
 }
 
 func (c *recClient) Exchange(ctx context.Context, code, redirect string) (string, error) {
@@ -96,7 +100,23 @@ func (s *recSession) Upload(ctx context.Context, folderID, name string, size int
 		s.c.entered <- struct{}{}
 		<-s.c.hold
 	}
-	return s.Session.Upload(ctx, folderID, name, size, r, progress)
+	id, link, err := s.Session.Upload(ctx, folderID, name, size, r, progress)
+	if err == nil && s.c.afterUpload != nil {
+		s.c.afterUpload()
+	}
+	return id, link, err
+}
+
+// Delete fails on a done context, as an HTTP call does.
+func (s *recSession) Delete(ctx context.Context, fileID string) error {
+	dl, _ := ctx.Deadline()
+	s.c.mu.Lock()
+	s.c.deleteDeadline = dl
+	s.c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Session.Delete(ctx, fileID)
 }
 
 type svcEnv struct {
@@ -434,6 +454,32 @@ func TestTestUploadsAndDeletes(t *testing.T) {
 	entries, _ := filepath.Glob(filepath.Join(e.dir, f.ID, "*"))
 	if len(entries) != 0 {
 		t.Fatalf("the test file was left: %v", entries)
+	}
+}
+
+// The caller leaving after the upload does not strand the test file: the
+// delete runs on its own 30-second context.
+func TestTestDeletesAfterTheCallerLeaves(t *testing.T) {
+	e := newSvcEnv(t)
+	e.connect(t, "a@x")
+	f, err := e.svc.CreateFolder(context.Background(), "server-backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.client.afterUpload = cancel
+	start := time.Now()
+	_ = e.svc.Test(ctx)
+	entries, _ := filepath.Glob(filepath.Join(e.dir, f.ID, "*"))
+	if len(entries) != 0 {
+		t.Fatalf("the test file was left: %v", entries)
+	}
+	e.client.mu.Lock()
+	dl := e.client.deleteDeadline
+	e.client.mu.Unlock()
+	if dl.IsZero() || dl.Before(start.Add(29*time.Second)) || dl.After(time.Now().Add(31*time.Second)) {
+		t.Errorf("delete deadline = %v, want about 30 s from the start", dl)
 	}
 }
 

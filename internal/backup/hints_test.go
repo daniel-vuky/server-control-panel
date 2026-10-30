@@ -46,13 +46,57 @@ func TestHintTable(t *testing.T) {
 			"Check POSTGRES_PASSWORD (and POSTGRES_USER) in the db service's environment (detected from DATABASE_URL, DB_USER, DB_PASSWORD)."},
 		{"service-only source adds nothing", "postgresql", `FATAL:  password authentication failed`, []string{"service db"},
 			"Check POSTGRES_PASSWORD (and POSTGRES_USER) in the db service's environment."},
+		{"database and does not exist on different lines", "postgresql", "pg_dump: error: the database cluster is starting up\npg_dump: error: relation \"x\" does not exist", nil, ""},
 		{"another type's words do not match", "postgresql", `Access denied for user 'root'@'x' (using password: YES)`, nil, ""},
 		{"unknown error", "postgresql", `pg_dump: error: query failed: server closed the connection unexpectedly`, nil, ""},
 		{"a warning is not the error", "mysql", "mysqldump: [Warning] sh: mysqldump: not found\nmysqldump: Error 2013: Lost connection", nil, ""},
 	}
 	for _, tc := range cases {
-		if got := Hint(tc.typ, "shop", "db", tc.stderr, tc.sources); got != tc.want {
+		image := map[string]string{"postgresql": "postgres:17-alpine", "mysql": "mysql:9", "mongodb": "mongo:7"}[tc.typ]
+		if got := Hint(tc.typ, image, "shop", "db", tc.stderr, tc.sources); got != tc.want {
 			t.Errorf("%s: Hint = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestHintMySQLFamilies words the MySQL-type hints from the service's image:
+// MARIADB_* and mariadb-dump for a mariadb image, MYSQL_* for a mysql one, and
+// both families when the image does not tell.
+func TestHintMySQLFamilies(t *testing.T) {
+	cases := []struct{ name, stderr, want, image string }{
+		{"mariadb 1045", `mariadb-dump: Got error: 1045: Access denied for user 'root'@'localhost' (using password: YES) when trying to connect`,
+			"Check MARIADB_ROOT_PASSWORD or MARIADB_USER / MARIADB_PASSWORD in the db service's environment.", "mariadb:11"},
+		{"mariadb 1045, registry path", `Access denied for user 'root'@'localhost' (using password: YES)`,
+			"Check MARIADB_ROOT_PASSWORD or MARIADB_USER / MARIADB_PASSWORD in the db service's environment.", "docker.io/library/mariadb:11.4@sha256:abc"},
+		{"mysql-server 1045", `Access denied for user 'root'@'localhost' (using password: YES)`,
+			"Check MYSQL_ROOT_PASSWORD or MYSQL_USER / MYSQL_PASSWORD in the db service's environment.", "container-registry.oracle.com/mysql/mysql-server:8.0"},
+		{"unknown image 1045", `Access denied for user 'root'@'localhost' (using password: YES)`,
+			"Check MYSQL_ROOT_PASSWORD (or MARIADB_ROOT_PASSWORD) or MYSQL_USER / MYSQL_PASSWORD (or MARIADB_USER / MARIADB_PASSWORD) in the db service's environment.", "registry.local/crm-db:2"},
+		{"mariadb privilege", `mariadb-dump: Couldn't execute 'FLUSH TABLES': Access denied; you need (at least one of) the RELOAD privilege(s) for this operation (1227)`,
+			"The MARIADB_USER account lacks a privilege the dump needs. Set MARIADB_ROOT_PASSWORD on the service, or grant the privilege named above.", "mariadb:11"},
+		{"unknown image privilege", `Access denied; you need (at least one of) the RELOAD privilege(s) for this operation (1227)`,
+			"The MYSQL_USER (or MARIADB_USER) account lacks a privilege the dump needs. Set MYSQL_ROOT_PASSWORD (or MARIADB_ROOT_PASSWORD) on the service, or grant the privilege named above.", "registry.local/crm-db:2"},
+		{"mariadb no shell tool", `OCI runtime exec failed: exec failed: unable to start container process: exec: "mariadb-dump": executable file not found in $PATH: unknown`,
+			"mariadb-dump is not installed in the db container.", "mariadb:11"},
+		{"mysql exec tool", `exec: "mysqldump": executable file not found in $PATH: unknown`,
+			"mysqldump is not installed in the db container.", "mysql:9"},
+	}
+	for _, tc := range cases {
+		if got := Hint("mysql", tc.image, "shop", "db", tc.stderr, nil); got != tc.want {
+			t.Errorf("%s: Hint = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	for image, want := range map[string]string{
+		"mariadb:11": "mariadb-dump", "docker.io/library/mariadb:11.4@sha256:abc": "mariadb-dump", "MariaDB:10": "mariadb-dump",
+		"mysql:9": "mysqldump", "registry.local/crm-db:2": "mysqldump", "": "mysqldump",
+	} {
+		if got := dumpTool("mysql", image); got != want {
+			t.Errorf("dumpTool(mysql, %q) = %q, want %q", image, got, want)
+		}
+	}
+	for typ, want := range map[string]string{"postgresql": "pg_dump", "mongodb": "mongodump"} {
+		if got := dumpTool(typ, "mariadb:11"); got != want {
+			t.Errorf("dumpTool(%s) = %q, want %q", typ, got, want)
 		}
 	}
 }
@@ -60,7 +104,7 @@ func TestHintTable(t *testing.T) {
 func TestHintNeverHoldsAValue(t *testing.T) {
 	// A source string carries only names; anything that is not a plain variable
 	// name is dropped, so a value can never reach the hint.
-	got := Hint("postgresql", "shop", "db", "password authentication failed",
+	got := Hint("postgresql", "postgres:17", "shop", "db", "password authentication failed",
 		[]string{".env DATABASE_URL=postgres://u:hunter22@db/shop", "service web s3cr3t!value"})
 	if strings.Contains(got, "hunter22") || strings.Contains(got, "s3cr3t") || strings.Contains(got, "postgres://") {
 		t.Fatalf("hint holds a value: %q", got)

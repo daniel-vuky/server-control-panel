@@ -51,6 +51,7 @@ func TestBackupInsertUpdateList(t *testing.T) {
 
 	started, finished := driveTime.Add(time.Second), driveTime.Add(40*time.Second)
 	b.State, b.FailedStep = "failed", "upload"
+	b.DBService = "postgres" // the worker's resolved service is stored too
 	b.Steps = []BackupStep{{Step: "dump", State: "done", Detail: "pg_dump · 18s"}, {Step: "upload", State: "failed", Detail: "Google Drive is full."}}
 	b.Error, b.Hint = "Upload: Google Drive is full.", "h"
 	b.RawBytes, b.SizeBytes = 212, 38
@@ -157,6 +158,10 @@ func TestOpenInterruptsActiveBackups(t *testing.T) {
 	for _, st := range []string{"queued", "running", "ok", "failed"} {
 		b := sampleBackup(1, "k"+st)
 		b.State = st
+		if st == "running" {
+			b.Steps = []BackupStep{{Step: "dump", State: "done", Detail: "pg_dump · 2s"}, {Step: "compress", State: "running", Detail: "gzip"},
+				{Step: "upload", State: "waiting"}, {Step: "prune", State: "waiting"}}
+		}
 		id, err := s.InsertBackup(ctx, b)
 		if err != nil {
 			t.Fatal(err)
@@ -180,9 +185,27 @@ func TestOpenInterruptsActiveBackups(t *testing.T) {
 			t.Fatalf("%s row after reopen = %+v", st, b)
 		}
 	}
+	// No step is left running or waiting: a running step failed, a waiting one
+	// skipped, the others kept with their detail.
+	running, _ := s.GetBackup(ctx, idsByState["running"])
+	wantRunning := []BackupStep{{Step: "dump", State: "done", Detail: "pg_dump · 2s"}, {Step: "compress", State: "failed", Detail: "gzip"},
+		{Step: "upload", State: "skipped"}, {Step: "prune", State: "skipped"}}
+	if !reflect.DeepEqual(running.Steps, wantRunning) {
+		t.Errorf("running row steps = %+v\nwant %+v", running.Steps, wantRunning)
+	}
+	queued, _ := s.GetBackup(ctx, idsByState["queued"])
+	wantQueued := []BackupStep{{Step: "dump", State: "skipped"}, {Step: "compress", State: "skipped"}}
+	if !reflect.DeepEqual(queued.Steps, wantQueued) {
+		t.Errorf("queued row steps = %+v\nwant %+v", queued.Steps, wantQueued)
+	}
 	for _, st := range []string{"ok", "failed"} {
-		if b, _ := s.GetBackup(ctx, idsByState[st]); b.State != st || b.FinishedAt != nil || b.Error != "" {
+		b, _ := s.GetBackup(ctx, idsByState[st])
+		if b.State != st || b.FinishedAt != nil || b.Error != "" {
 			t.Fatalf("%s row touched: %+v", st, b)
+		}
+		// A final row's steps are never rewritten, even a stray waiting one.
+		if !reflect.DeepEqual(b.Steps, sampleBackup(1, "").Steps) {
+			t.Errorf("%s row steps rewritten: %+v", st, b.Steps)
 		}
 	}
 }

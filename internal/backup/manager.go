@@ -160,6 +160,7 @@ type job struct {
 // plan is how a backup runs: the resolved service and the commands.
 type plan struct {
 	service    string
+	image      string // the service's image, for the tool and hint words; "" when not known
 	values     runner.Values
 	dump, size runner.Action
 	tool       string
@@ -525,10 +526,21 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 	if !byDefault {
 		values["dbname"] = db.Name
 	}
-	p := plan{service: service, values: values, tool: defaultTool(db.Type),
+	image := serviceImage(t.ServiceDetails, service)
+	p := plan{service: service, image: image, values: values, tool: dumpTool(db.Type, image),
 		secrets: scan.SecretValues(scan.ReadDotenv(filepath.Join(t.Path, ".env")))}
 	p.dump, p.size = actions(db.Type, byDefault, override)
 	return p, nil
+}
+
+// serviceImage is the image of the named compose service, "" when not known.
+func serviceImage(services []project.Service, name string) string {
+	for _, s := range services {
+		if s.Name == name {
+			return s.Image
+		}
+	}
+	return ""
 }
 
 // actions are the dump and size actions of a database type.

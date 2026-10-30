@@ -96,7 +96,7 @@ func DetectDatabases(cfg ComposeConfig, dotenv map[string]string) []project.Data
 	svcRecord := map[string]*project.Database{} // service name -> its record
 	explicit := map[*project.Database]bool{}    // the service names its database in its own environment
 	for _, s := range services {
-		t, ok := imageTypes[imageBase(s.Image)]
+		t, ok := imageTypes[ImageBase(s.Image)]
 		if !ok {
 			continue
 		}
@@ -294,9 +294,9 @@ func serviceLocation(s ComposeService) string {
 	return s.Name
 }
 
-// imageBase returns the last path segment of an image reference, without tag
+// ImageBase returns the last path segment of an image reference, without tag
 // or digest, in lower case: "docker.io/library/mongo@sha256:..." gives "mongo".
-func imageBase(image string) string {
+func ImageBase(image string) string {
 	if i := strings.LastIndex(image, "/"); i >= 0 {
 		image = image[i+1:]
 	}

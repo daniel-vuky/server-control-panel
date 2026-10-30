@@ -364,7 +364,7 @@ func (m *Manager) dumpError(j *job, err error, stderr []byte) (msg, hint string)
 		if msg == "" {
 			msg = p.tool + " exited with status " + strconv.Itoa(exit.Code) + "."
 		}
-		return msg, Hint(j.db.Type, j.db.Name, p.service, masked, j.db.Sources)
+		return msg, Hint(j.db.Type, p.image, j.db.Name, p.service, masked, j.db.Sources)
 	}
 	return cut(runner.Mask(err.Error(), p.secrets), maxErrorLine), ""
 }

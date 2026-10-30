@@ -72,10 +72,13 @@ type DatabaseView struct {
 // Reason is "". Reason is one of ReasonNotFound, project.ReasonNotSupported,
 // project.ReasonNoDBName, project.ReasonDBNotRunning, ReasonDriveNotConnected,
 // ReasonDriveExpired or ReasonFolderMissing. Each equals the backup manager's
-// refusal code of the same name.
+// refusal code of the same name. Service is the compose service
+// project.BackupReason resolved ("" when it resolved none, or for not_found),
+// so the words can name it ("Start <service> first").
 type BackupRule struct {
 	Allowed bool
 	Reason  string
+	Service string
 }
 
 // The reasons a database cannot be backed up, layered around
@@ -155,14 +158,15 @@ func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp b
 func databaseViews(t store.Tracked, cs []project.Container, dockerUp bool, drv drive.Status) []DatabaseView {
 	out := make([]DatabaseView, 0, len(t.Databases))
 	for _, d := range t.Databases {
-		reason := ReasonNotFound
+		reason, service := ReasonNotFound, ""
 		if t.MissingSince == nil {
-			_, reason = project.BackupReason(d, t.ComposeProject, t.ServiceDetails, cs, dockerUp)
+			service, reason = project.BackupReason(d, t.ComposeProject, t.ServiceDetails, cs, dockerUp)
 		}
 		if reason == "" {
 			reason = driveReason(drv)
 		}
-		out = append(out, DatabaseView{Database: d, Key: project.DatabaseKey(d), Backup: BackupRule{Allowed: reason == "", Reason: reason}})
+		out = append(out, DatabaseView{Database: d, Key: project.DatabaseKey(d),
+			Backup: BackupRule{Allowed: reason == "", Reason: reason, Service: service}})
 	}
 	return out
 }

@@ -1092,6 +1092,21 @@ func TestViewsDatabaseBackupRule(t *testing.T) {
 		{"the database rule wins over Drive", project.Database{Type: "mysql", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, drive.Status{State: drive.StateExpired}, project.ReasonNoDBName, nil},
 		{"not running wins over Drive", pg, stopped, nil, true, drive.Status{State: drive.StateNotConnected}, project.ReasonDBNotRunning, nil},
 	}
+	// The resolved service, not the location, for a container-name location.
+	byName := with(func(d *project.Database) { d.Location = "shop-db-1" })
+	if sv, _ := project.BackupReason(byName, "shop", services, stopped, true); sv != "db" {
+		t.Fatalf("BackupReason service = %q, want db", sv)
+	}
+	tests = append(tests, struct {
+		name     string
+		db       project.Database
+		cs       []project.Container
+		readErr  error
+		dockerUp bool
+		drive    drive.Status
+		want     string
+		missing  *time.Time
+	}{"a stopped service by container name", byName, stopped, nil, true, connected, project.ReasonDBNotRunning, nil})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ts := []store.Tracked{{ID: 1, DisplayName: "shop", ComposeProject: "shop", Services: []string{"app", "db"},
@@ -1103,6 +1118,14 @@ func TestViewsDatabaseBackupRule(t *testing.T) {
 			dv := v.DatabaseViews[0]
 			if dv.Backup.Reason != tt.want || dv.Backup.Allowed != (tt.want == "") {
 				t.Errorf("backup = %+v, want reason %q", dv.Backup, tt.want)
+			}
+			// The rule carries the service BackupReason resolved, for the words.
+			wantService, _ := project.BackupReason(tt.db, "shop", services, tt.cs, tt.dockerUp)
+			if tt.missing != nil {
+				wantService = ""
+			}
+			if dv.Backup.Service != wantService {
+				t.Errorf("service = %q, want %q", dv.Backup.Service, wantService)
 			}
 			if dv.Key != project.DatabaseKey(tt.db) || !slices.Equal(dv.Sources, tt.db.Sources) || dv.Name != tt.db.Name || dv.Type != tt.db.Type {
 				t.Errorf("view = %+v, want the database %+v with its key", dv, tt.db)

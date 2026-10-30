@@ -9,6 +9,7 @@ import DriveRequiredDialog from '../components/DriveRequiredDialog'
 import { useToast } from '../components/Toast'
 import { DRIVE_NOT_SET_UP, databaseRule } from './backup'
 import { formatBytes } from './format'
+import { usePageRestore } from './usePageRestore'
 
 /** Target is the database a start or a retry is about. */
 type Target = { projectId: number; key: string; name: string }
@@ -20,6 +21,21 @@ export const backupReturnTo = (projectId: number, key: string): string =>
   `/projects/${projectId}/database?backup=${encodeURIComponent(key)}`
 
 const DRIVE_CODES = new Set(['drive_not_connected', 'drive_expired'])
+
+/**
+ * ROW_CODES are the refusals that store a refused backup in the history
+ * (internal/backup/manager.go's refuse, checks 4, 6 and 7). not_supported is
+ * also check 3, which stores none; a re-read then finds nothing new.
+ */
+const ROW_CODES = new Set([
+  'disk_short',
+  'db_not_running',
+  'no_db_name',
+  'not_supported',
+  'drive_not_connected',
+  'drive_expired',
+  'folder_missing',
+])
 
 /**
  * useBackup is the Back up now flow (spec §6), shared by the detail header,
@@ -35,6 +51,8 @@ const DRIVE_CODES = new Set(['drive_not_connected', 'drive_expired'])
  *   again, answered like a start (the progress dialog, or a toast).
  * - pendingKey is the database whose start is out (pendingProjectId its project);
  *   retryingId is the backup whose retry is out.
+ * - refusals counts the refusals that stored a refused backup, so the history
+ *   can read its newest page again when it changes.
  */
 export function useBackup() {
   const live = useLive()
@@ -46,6 +64,8 @@ export function useBackup() {
   const [openId, setOpenId] = useState<number | null>(null)
   const [pending, setPending] = useState<Target | null>(null)
   const [retrying, setRetrying] = useState<number | null>(null)
+  const [refusals, setRefusals] = useState(0)
+  usePageRestore(() => setConnecting(false))
   // One start or retry at a time: a second press while one is out does nothing.
   const busy = useRef(false)
   const mounted = useRef(true)
@@ -66,6 +86,7 @@ export function useBackup() {
       } catch (err) {
         if (!mounted.current) return
         const refusal = backupRefusal(err)
+        if (refusal !== null && ROW_CODES.has(refusal.error)) setRefusals((n) => n + 1)
         if (refusal?.error === 'already_running' && refusal.id !== null) {
           toast.show(<>A backup of {mono(t.name)} is already running.</>)
           setOpenId(refusal.id)
@@ -224,6 +245,7 @@ export function useBackup() {
     pendingKey: pending?.key ?? null,
     pendingProjectId: pending?.projectId ?? null,
     retryingId: retrying,
+    refusals,
   }
 }
 

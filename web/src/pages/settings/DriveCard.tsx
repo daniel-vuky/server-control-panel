@@ -20,6 +20,7 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import FieldMessage from '../../components/FieldMessage'
 import { useToast } from '../../components/Toast'
 import { useLoad } from '../../lib/useLoad'
+import { usePageRestore } from '../../lib/usePageRestore'
 
 const buttonBase =
   'flex h-9 cursor-pointer items-center gap-2 rounded-[7px] px-3.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
@@ -145,6 +146,7 @@ function NotConfigured({ status }: { status: DriveStatus }) {
 function Connect({ expired }: { expired: boolean }) {
   const [busy, setBusy] = useState(false)
   const [issue, setIssue] = useState<DriveIssue | null>(null)
+  usePageRestore(() => setBusy(false))
 
   const connect = async () => {
     if (busy) return

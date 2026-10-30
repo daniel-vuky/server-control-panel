@@ -130,10 +130,13 @@ type Database struct {
 // BackupRule says whether a database can be backed up now. Allowed is true
 // only when Reason is "". Reason is not_found (the project's folder is
 // missing), not_supported, no_db_name, db_not_running, drive_not_connected,
-// drive_expired or folder_missing.
+// drive_expired or folder_missing. Service is the compose service the
+// database resolved to ("" when none did), for words such as "Start <service>
+// first".
 type BackupRule struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason"`
+	Service string `json:"service"`
 }
 
 // TrackRequest is the body of POST /api/scans/{id}/track. For a first-time

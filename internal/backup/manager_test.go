@@ -42,6 +42,7 @@ const (
 	keyGhost   = "postgresql:ghost:ghost"
 	keyStopped = "postgresql:stopped:st"
 	keyBadName = "mysql:my3:bad name"
+	keyMaria   = "mysql:maria:books"
 )
 
 // call is one runner call.
@@ -223,7 +224,7 @@ func newEnv(t *testing.T, opts ...envOpt) *env {
 		Details: project.Details{Services: []project.Service{
 			svc("db", "postgres:16", ""), svc("mysql", "mysql:9", "crm-mysql"), svc("mongo", "mongo:7", ""),
 			svc("pg2", "postgres:16", ""), svc("my2", "mysql:9", ""), svc("my3", "mysql:9", ""),
-			svc("stopped", "postgres:16", ""),
+			svc("stopped", "postgres:16", ""), svc("maria", "mariadb:11", ""),
 		}},
 		Databases: []project.Database{
 			db("postgresql", "shop", "container", "db", "service db", ".env DATABASE_URL"),
@@ -236,6 +237,7 @@ func newEnv(t *testing.T, opts ...envOpt) *env {
 			db("postgresql", "remote", "host", "db.example.com"),
 			db("postgresql", "ghost", "container", "ghost"),
 			db("postgresql", "st", "container", "stopped"),
+			db("mysql", "books", "container", "maria"),
 		},
 	}
 	if _, _, err := st.AddWorkspace(ctx, store.NewWorkspace{Name: "work", Path: root, Depth: 1, LastScanAt: time.Now()}, []store.NewProject{np}); err != nil {
@@ -253,7 +255,7 @@ func newEnv(t *testing.T, opts ...envOpt) *env {
 	e.hub = &fakeHub{up: true, cs: []project.Container{
 		ctr("db", "shop-db-1", "running"), ctr("mysql", "crm-mysql", "running"), ctr("mongo", "shop-mongo-1", "running"),
 		ctr("pg2", "shop-pg2-1", "running"), ctr("my2", "shop-my2-1", "running"), ctr("my3", "shop-my3-1", "running"),
-		ctr("stopped", "shop-stopped-1", "exited"),
+		ctr("stopped", "shop-stopped-1", "exited"), ctr("maria", "shop-maria-1", "running"),
 	}}
 
 	client := drive.NewFake(filepath.Join(e.dataDir, "fake-drive"), "http://localhost:5173")
@@ -568,6 +570,34 @@ func TestDumpFailureHintAndSkippedSteps(t *testing.T) {
 	// Nothing reached Drive.
 	if b.DriveFileID != "" || b.FileName == "" {
 		t.Errorf("drive file = %q, name = %q", b.DriveFileID, b.FileName)
+	}
+}
+
+// A MariaDB service is worded with its own tool and variables: the Dump
+// step's detail, the exit words and the 1045 hint.
+func TestMariaDBWording(t *testing.T) {
+	e := newEnv(t)
+	ok := e.waitDone(t, e.enqueue(t, keyMaria))
+	if d := ok.Steps[0].Detail; ok.State != "ok" || !strings.HasPrefix(d, "mariadb-dump · ") {
+		t.Errorf("mariadb dump = %s, detail %q", ok.State, d)
+	}
+	mysql := e.waitDone(t, e.enqueue(t, keyMySQL))
+	if d := mysql.Steps[0].Detail; mysql.State != "ok" || !strings.HasPrefix(d, "mysqldump · ") {
+		t.Errorf("mysql dump = %s, detail %q", mysql.State, d)
+	}
+
+	e.r.dump = func(context.Context, call, io.Writer) ([]byte, error) {
+		stderr := "mariadb-dump: Got error: 1045: Access denied for user 'root'@'localhost' (using password: YES) when trying to connect\n"
+		return []byte(stderr), &runner.ExitError{Code: 2, Stderr: stderr}
+	}
+	b := e.waitDone(t, e.enqueue(t, keyMaria))
+	if want := "Check MARIADB_ROOT_PASSWORD or MARIADB_USER / MARIADB_PASSWORD in the maria service's environment."; b.Hint != want {
+		t.Errorf("hint = %q, want %q", b.Hint, want)
+	}
+	e.r.dump = func(context.Context, call, io.Writer) ([]byte, error) { return nil, &runner.ExitError{Code: 2} }
+	b = e.waitDone(t, e.enqueue(t, keyMaria))
+	if b.Error != "mariadb-dump exited with status 2." || b.Steps[0].Detail != "mariadb-dump" {
+		t.Errorf("error = %q, dump detail = %q", b.Error, b.Steps[0].Detail)
 	}
 }
 
@@ -1253,6 +1283,13 @@ func TestCloseInterruptsRunningAndQueued(t *testing.T) {
 		if b.State != "interrupted" || b.FinishedAt == nil || b.Error == "" {
 			t.Errorf("backup %d = %+v", id, b)
 		}
+	}
+	// No step is left running or waiting, the shape a reopen also leaves.
+	if b, _ := e.st.GetBackup(context.Background(), running); stepStates(b) != "dump=failed compress=skipped upload=skipped prune=skipped" {
+		t.Errorf("running backup steps = %s", stepStates(b))
+	}
+	if b, _ := e.st.GetBackup(context.Background(), queued); stepStates(b) != "dump=skipped compress=skipped upload=skipped prune=skipped" {
+		t.Errorf("queued backup steps = %s", stepStates(b))
 	}
 	if left := tempFiles(t, e.dataDir); len(left) != 0 {
 		t.Errorf("temp files left: %v", left)

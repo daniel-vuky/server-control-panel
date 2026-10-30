@@ -3,6 +3,7 @@ import { useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DriveStatus } from '../../api/types.gen'
 import { FakeEventSource } from '../../test/fakeEventSource'
+import { showPage } from '../../test/pageshow'
 import { pushState } from '../../test/projects'
 import { renderApp } from '../../test/renderApp'
 import DriveCard from './DriveCard'
@@ -109,6 +110,10 @@ describe('Google Drive card', () => {
       expect(assign).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/auth?x=1'),
     )
     expect(posts(stub, '/api/drive/connect')).toEqual([{ returnTo: '/settings' }])
+    // Back from the consent page restores this page from the cache: Connect works again.
+    expect(screen.getByRole('button', { name: 'Connect Google Drive' })).toBeDisabled()
+    showPage(true)
+    expect(screen.getByRole('button', { name: 'Connect Google Drive' })).toBeEnabled()
   })
 
   it('a failed Connect shows the words and the code', async () => {

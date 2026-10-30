@@ -462,6 +462,10 @@ func (s *Service) setFolder(ctx context.Context, f Folder) error {
 // testFile is the 1 KB of text Test uploads.
 var testFile = bytes.Repeat([]byte("Server Control Panel connection test. This file is deleted right away.\n"), 15)[:1024]
 
+// testDeleteWait bounds the delete of Test's file, which runs even after the
+// caller has left so the file is not stranded on Drive.
+const testDeleteWait = 30 * time.Second
+
 // Test uploads scp-test-<timestamp>.txt to the folder and deletes it. One runs
 // at a time; another gets ErrBusy.
 func (s *Service) Test(ctx context.Context) error {
@@ -478,7 +482,9 @@ func (s *Service) Test(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return sess.Delete(ctx, id)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), testDeleteWait)
+	defer cancel()
+	return sess.Delete(dctx, id)
 }
 
 // Disconnect revokes the token at Google (best effort; a failure is logged with

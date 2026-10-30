@@ -199,11 +199,14 @@ export interface Database {
  * BackupRule says whether a database can be backed up now. Allowed is true
  * only when Reason is "". Reason is not_found (the project's folder is
  * missing), not_supported, no_db_name, db_not_running, drive_not_connected,
- * drive_expired or folder_missing.
+ * drive_expired or folder_missing. Service is the compose service the
+ * database resolved to ("" when none did), for words such as "Start <service>
+ * first".
  */
 export interface BackupRule {
   allowed: boolean;
   reason: string;
+  service: string;
 }
 /**
  * TrackRequest is the body of POST /api/scans/{id}/track. For a first-time

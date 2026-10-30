@@ -63,16 +63,17 @@ func (s *Store) InsertBackup(ctx context.Context, b Backup) (int64, error) {
 }
 
 // UpdateBackup writes every field of b except its identity (project and
-// snapshot), by id. ErrNotFound for an unknown id.
+// snapshot), by id; the database's service, which the worker resolves again,
+// is written too. ErrNotFound for an unknown id.
 func (s *Store) UpdateBackup(ctx context.Context, b Backup) error {
 	steps, err := marshalSteps(b.Steps)
 	if err != nil {
 		return err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE backups SET state = ?, failed_step = ?, steps = ?, error = ?, hint = ?, raw_bytes = ?, size_bytes = ?,
+		`UPDATE backups SET db_service = ?, state = ?, failed_step = ?, steps = ?, error = ?, hint = ?, raw_bytes = ?, size_bytes = ?,
 		   file_name = ?, drive_file_id = ?, drive_link = ?, started_at = ?, finished_at = ?, duration_ms = ? WHERE id = ?`,
-		b.State, nullString(b.FailedStep), steps, b.Error, b.Hint, b.RawBytes, b.SizeBytes,
+		b.DBService, b.State, nullString(b.FailedStep), steps, b.Error, b.Hint, b.RawBytes, b.SizeBytes,
 		b.FileName, b.DriveFileID, b.DriveLink, nullTime(b.StartedAt), nullTime(b.FinishedAt), b.DurationMS, b.ID)
 	if err != nil {
 		return fmt.Errorf("store: update backup: %w", err)
@@ -150,12 +151,62 @@ func (s *Store) ActiveBackup(ctx context.Context, projectID int64, dbKey string)
 }
 
 // interruptActiveBackups ends backups a previous process left queued or
-// running, next to interruptRunningJobs. They are not resumed.
+// running, next to interruptRunningJobs. They are not resumed. Their steps end
+// as the manager's own interrupt leaves them: a running step failed, a waiting
+// one skipped, so no step still reads as in progress.
 func (s *Store) interruptActiveBackups(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE backups SET state = 'interrupted', error = ?, finished_at = ? WHERE state IN ('queued', 'running')`,
-		interruptedBackupError, formatTime(time.Now()))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("store: interrupt active backups: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	type active struct {
+		id    int64
+		steps string
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, steps FROM backups WHERE state IN ('queued', 'running')`)
+	if err != nil {
+		return fmt.Errorf("store: interrupt active backups: %w", err)
+	}
+	var found []active
+	for rows.Next() {
+		var a active
+		if err := rows.Scan(&a.id, &a.steps); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("store: interrupt active backups: %w", err)
+		}
+		found = append(found, a)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("store: interrupt active backups: %w", err)
+	}
+	_ = rows.Close()
+	now := formatTime(time.Now())
+	for _, a := range found {
+		var steps []BackupStep
+		if err := json.Unmarshal([]byte(a.steps), &steps); err != nil {
+			return fmt.Errorf("store: backup %d steps: %w", a.id, err)
+		}
+		for i := range steps {
+			switch steps[i].State {
+			case "running":
+				steps[i].State = "failed"
+			case "waiting":
+				steps[i].State = "skipped"
+			}
+		}
+		js, err := marshalSteps(steps)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE backups SET state = 'interrupted', error = ?, finished_at = ?, steps = ? WHERE id = ?`,
+			interruptedBackupError, now, js, a.id); err != nil {
+			return fmt.Errorf("store: interrupt active backups: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: interrupt active backups: %w", err)
 	}
 	return nil

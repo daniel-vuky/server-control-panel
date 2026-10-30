@@ -23,7 +23,11 @@ function notSupported(db: Database): string {
   return "The database's service could not be found"
 }
 
-/** reasonWords is a backup rule's reason in words, for a database the server refused. */
+/**
+ * reasonWords is a backup rule's reason in words, for a database the server
+ * refused. db_not_running names the compose service the server resolved (the
+ * location may be a container name), else the location.
+ */
 function reasonWords(db: Database, reason: string): string {
   switch (reason) {
     case 'not_supported':
@@ -31,7 +35,7 @@ function reasonWords(db: Database, reason: string): string {
     case 'no_db_name':
       return 'The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan.'
     case 'db_not_running':
-      return `Start ${db.location || 'the database service'} first`
+      return `Start ${db.backup?.service || db.location || 'the database service'} first`
     case 'not_found':
       return "This project's folder is missing."
     case 'folder_missing':
@@ -128,6 +132,21 @@ export const stateWord = (state: string): string => STATE_WORDS[state] ?? state
 
 /** isActive says whether a backup is still queued or running. */
 export const isActive = (b: Backup): boolean => b.state === 'queued' || b.state === 'running'
+
+/**
+ * shownSteps are a backup's steps as drawn: once it is no longer active, a
+ * step still marked running is drawn failed and a waiting one skipped (a row
+ * the server ended without rewriting its steps), so nothing spins next to an
+ * ended backup. An active backup's steps are as the server sent them.
+ */
+export function shownSteps(b: Backup): BackupStep[] {
+  if (isActive(b)) return b.steps
+  return b.steps.map((s) => {
+    if (s.state === 'running') return { ...s, state: 'failed' }
+    if (s.state === 'waiting') return { ...s, state: 'skipped' }
+    return s
+  })
+}
 
 /** isRetryable says whether Retry is offered: failed, refused or interrupted. */
 export const isRetryable = (b: Backup): boolean =>

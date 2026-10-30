@@ -3,7 +3,7 @@ import type { Backup } from '../api/types.gen'
 import { makeBackup, makeDatabase, makeProject } from '../test/projects'
 import { backupLine, databaseRule, projectFolder, projectRule, stepLabel } from './backup'
 
-const rule = (reason: string, allowed = reason === '') => ({ allowed, reason })
+const rule = (reason: string, service = '') => ({ allowed: reason === '', reason, service })
 
 describe('databaseRule', () => {
   it('allows an allowed database', () => {
@@ -33,8 +33,14 @@ describe('databaseRule', () => {
       'The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan.',
     ],
     [
-      makeDatabase({ location: 'postgres', backup: rule('db_not_running') }),
+      // The compose service the server resolved, not the location (a container name).
+      makeDatabase({ location: 'shop-postgres-1', backup: rule('db_not_running', 'postgres') }),
       'Start postgres first',
+    ],
+    [
+      // No service resolved: the location.
+      makeDatabase({ location: 'pg', backup: rule('db_not_running') }),
+      'Start pg first',
     ],
     [makeDatabase({ backup: rule('not_found') }), "This project's folder is missing."],
     [makeDatabase({ backup: rule('folder_missing') }), 'Choose a destination folder in Settings.'],
@@ -76,7 +82,7 @@ describe('projectRule', () => {
     expect(projectRule(p, 'connected')).toEqual({ enabled: true, reason: '' })
     const off = makeProject({
       databases: [
-        makeDatabase({ name: 'a', location: 'pg', backup: rule('db_not_running') }),
+        makeDatabase({ name: 'a', location: 'shop-pg-1', backup: rule('db_not_running', 'pg') }),
         makeDatabase({ name: 'b', locationKind: 'host', backup: rule('not_supported') }),
       ],
     })
