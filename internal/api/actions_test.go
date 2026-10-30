@@ -84,10 +84,10 @@ func TestActionStartOK(t *testing.T) {
 		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
 	}
 	if got := decode[ActionResult](t, rec); got.Outcome != "ok" || got.Status != "running" || got.Message != "" ||
-		!slices.Equal(got.Actions, []string{"stop", "restart"}) {
-		t.Errorf("body = %+v, want ok, running, actions [stop restart]", got)
+		!slices.Equal(got.Actions, []string{"stop", "restart", "untrack"}) {
+		t.Errorf("body = %+v, want ok, running, actions [stop restart untrack]", got)
 	}
-	if !strings.Contains(rec.Body.String(), `"actions":["stop","restart"]`) {
+	if !strings.Contains(rec.Body.String(), `"actions":["stop","restart","untrack"]`) {
 		t.Errorf("body = %s, want the actions", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"message":""`) {

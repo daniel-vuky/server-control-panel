@@ -153,20 +153,20 @@ func TestViewsEffectiveStatus(t *testing.T) {
 		inFlight func(int64) (project.Status, bool)
 		want     []want
 	}{
-		{"in-flight wins, self has no actions", nil, true, inFlight, []want{
-			{project.StatusRunning, []project.Action{project.ActionStop, project.ActionRestart}},
+		{"in-flight wins, self has only untrack", nil, true, inFlight, []want{
+			{project.StatusRunning, []project.Action{project.ActionStop, project.ActionRestart, project.ActionUntrack}},
 			{project.StatusStopping, []project.Action{}},
-			{project.StatusRunning, []project.Action{}},
+			{project.StatusRunning, []project.Action{project.ActionUntrack}},
 		}},
 		{"a read error gives unknown", errors.New("boom"), true, inFlight, []want{
-			{project.StatusUnknown, []project.Action{}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
 			{project.StatusStopping, []project.Action{}},
-			{project.StatusUnknown, []project.Action{}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
 		}},
-		{"Docker down gives no actions", errors.New("down"), false, nil, []want{
-			{project.StatusUnknown, []project.Action{}},
-			{project.StatusUnknown, []project.Action{}},
-			{project.StatusUnknown, []project.Action{}},
+		{"Docker down gives only untrack", errors.New("down"), false, nil, []want{
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
 		}},
 	}
 	for _, tt := range tests {
@@ -224,10 +224,10 @@ func TestHubSubscribeGetsState(t *testing.T) {
 			t.Errorf("%s is %s, want %s", name, v.Status, want)
 		}
 	}
-	if v := viewOf(t, cur, "panel"); len(v.Actions) != 0 {
-		t.Errorf("panel actions = %v, want none", v.Actions)
+	if v := viewOf(t, cur, "panel"); !slices.Equal(v.Actions, []project.Action{project.ActionUntrack}) {
+		t.Errorf("panel actions = %v, want only untrack", v.Actions)
 	}
-	if v := viewOf(t, cur, "shop"); !slices.Equal(v.Actions, []project.Action{project.ActionStop, project.ActionRestart}) {
+	if v := viewOf(t, cur, "shop"); !slices.Equal(v.Actions, []project.Action{project.ActionStop, project.ActionRestart, project.ActionUntrack}) {
 		t.Errorf("shop actions = %v", v.Actions)
 	}
 
@@ -334,8 +334,8 @@ func TestHubLockChangedPushesWithoutTick(t *testing.T) {
 	e.ctl.unlock(id)
 	h.lockChanged(project.ParseContainers([]byte(stoppedOut("shop"))))
 	s = nextUpdate(t, updates, 10*time.Millisecond)
-	if v := viewOf(t, s, "shop"); v.Status != project.StatusStopped || !slices.Equal(v.Actions, []project.Action{project.ActionStart}) {
-		t.Fatalf("shop = %s %v, want stopped with start", v.Status, v.Actions)
+	if v := viewOf(t, s, "shop"); v.Status != project.StatusStopped || !slices.Equal(v.Actions, []project.Action{project.ActionStart, project.ActionUntrack}) {
+		t.Fatalf("shop = %s %v, want stopped with start and untrack", v.Status, v.Actions)
 	}
 	if n := e.cmd.count(runner.DockerPing) + e.cmd.count(runner.DockerContainers); n != reads {
 		t.Fatalf("%d Docker reads after the lock changes, want none", n-reads)
@@ -488,8 +488,8 @@ func TestHubDockerDown(t *testing.T) {
 		t.Fatalf("state = %+v, want Docker down and 5 projects", cur)
 	}
 	for _, v := range cur.Projects {
-		if v.Status != project.StatusUnknown || len(v.Actions) != 0 || v.Actions == nil {
-			t.Errorf("%s = %s %v, want unknown with no actions", v.DisplayName, v.Status, v.Actions)
+		if v.Status != project.StatusUnknown || !slices.Equal(v.Actions, []project.Action{project.ActionUntrack}) {
+			t.Errorf("%s = %s %v, want unknown with only untrack", v.DisplayName, v.Status, v.Actions)
 		}
 	}
 	if n := e.cmd.count(runner.DockerContainers); n != 0 {
