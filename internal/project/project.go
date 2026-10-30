@@ -15,10 +15,11 @@ type Database struct {
 
 // Service is one service of a compose project, as the compose config reports it.
 type Service struct {
-	Name    string   `json:"name"`
-	Image   string   `json:"image"`
-	Ports   []string `json:"ports"`
-	Volumes []Volume `json:"volumes"`
+	Name          string   `json:"name"`
+	Image         string   `json:"image"`
+	ContainerName string   `json:"containerName,omitempty"` // empty when compose sets none, and on rows stored before it was read
+	Ports         []string `json:"ports"`
+	Volumes       []Volume `json:"volumes"`
 }
 
 // Volume is one mount of a service.

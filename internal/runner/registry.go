@@ -102,12 +102,17 @@ const (
 	kindSince                 // an RFC 3339 UTC timestamp
 )
 
+// ValidDBName reports whether name may reach a database dump script as its
+// database name: a whole argument, never a flag.
+func ValidDBName(name string) bool { return dbNamePattern.MatchString(name) }
+
 // maxIDs is the most container ids one call may carry.
 const maxIDs = 1000
 
 var (
-	idPattern   = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+	idPattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	namePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+	dbNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.$-]{0,63}$`)
 	// sincePattern is RFC 3339 in UTC with an optional fraction, which docker
 	// compose logs --since accepts.
 	sincePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$`)

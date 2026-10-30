@@ -317,3 +317,16 @@ func TestTimeoutForDown(t *testing.T) {
 		}
 	}
 }
+
+func TestValidDBName(t *testing.T) {
+	for _, ok := range []string{"shop", "_x", "a.b-c$d", "A1", strings.Repeat("a", 64)} {
+		if !ValidDBName(ok) {
+			t.Errorf("ValidDBName(%q) = false", ok)
+		}
+	}
+	for _, bad := range []string{"", "-x", ".x", "$x", "a b", "a'b", "a;b", "a\nb", "é", strings.Repeat("a", 65)} {
+		if ValidDBName(bad) {
+			t.Errorf("ValidDBName(%q) = true", bad)
+		}
+	}
+}

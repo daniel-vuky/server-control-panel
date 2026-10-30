@@ -123,10 +123,11 @@ func (c ComposeConfig) Details() project.Details {
 	d := project.Details{Services: make([]project.Service, 0, len(c.Services))}
 	for _, s := range c.Services {
 		d.Services = append(d.Services, project.Service{
-			Name:    s.Name,
-			Image:   s.Image,
-			Ports:   s.Ports,
-			Volumes: s.Volumes,
+			Name:          s.Name,
+			Image:         s.Image,
+			ContainerName: s.ContainerName,
+			Ports:         s.Ports,
+			Volumes:       s.Volumes,
 		})
 	}
 	return d

@@ -103,11 +103,11 @@ func TestDetectDatabases(t *testing.T) {
 		{"host that is a service merges with both sources",
 			cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"DATABASE_URL": "postgres://u:p@db:5432/shop"},
-			[]project.Database{db("postgresql", "db", "container", "db", ".env DATABASE_URL", "service db")}},
+			[]project.Database{db("postgresql", "shop", "container", "db", ".env DATABASE_URL", "service db")}},
 		{"host that is a container_name merges",
 			cfgOf(ComposeService{Name: "db", Image: "postgres:16", ContainerName: "shop-db"}),
 			map[string]string{"DATABASE_URL": "postgres://u:p@shop-db/shop"},
-			[]project.Database{db("postgresql", "db", "container", "shop-db", ".env DATABASE_URL", "service db")}},
+			[]project.Database{db("postgresql", "shop", "container", "shop-db", ".env DATABASE_URL", "service db")}},
 		{"host of another type does not merge",
 			cfgOf(svc("db", "mysql:8", nil)),
 			map[string]string{"DATABASE_URL": "postgres://u:p@db/shop"},
@@ -118,7 +118,7 @@ func TestDetectDatabases(t *testing.T) {
 		{"URL with no host merges into the service of its type",
 			cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"DATABASE_URL": "postgres:///shop"},
-			[]project.Database{db("postgresql", "db", "container", "db", ".env DATABASE_URL", "service db")}},
+			[]project.Database{db("postgresql", "shop", "container", "db", ".env DATABASE_URL", "service db")}},
 		{"URL with no host and no service is unknown",
 			cfgOf(),
 			map[string]string{"DATABASE_URL": "postgres:///shop"},
@@ -192,11 +192,11 @@ func TestDetectDatabases(t *testing.T) {
 		{"POSTGRES_* with no host and a postgres service merges",
 			cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_USER": "u", "POSTGRES_PASSWORD": "p"},
-			[]project.Database{db("postgresql", "db", "container", "db", ".env POSTGRES_DB", "service db")}},
+			[]project.Database{db("postgresql", "shop", "container", "db", ".env POSTGRES_DB", "service db")}},
 		{"POSTGRES_* with a host that is a service merges",
 			cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "db"},
-			[]project.Database{db("postgresql", "db", "container", "db", ".env POSTGRES_DB POSTGRES_HOST", "service db")}},
+			[]project.Database{db("postgresql", "shop", "container", "db", ".env POSTGRES_DB POSTGRES_HOST", "service db")}},
 		{"POSTGRES_* with an external host",
 			cfgOf(),
 			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "rds.example.com"},
@@ -212,7 +212,7 @@ func TestDetectDatabases(t *testing.T) {
 		{"POSTGRES_HOST with a port matches the service",
 			cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "db:5432"},
-			[]project.Database{db("postgresql", "db", "container", "db", ".env POSTGRES_DB POSTGRES_HOST", "service db")}},
+			[]project.Database{db("postgresql", "shop", "container", "db", ".env POSTGRES_DB POSTGRES_HOST", "service db")}},
 		{"POSTGRES_HOST external with a port keeps the host only",
 			cfgOf(),
 			map[string]string{"POSTGRES_DB": "shop", "POSTGRES_HOST": "rds.example.com:5432"},
@@ -364,5 +364,64 @@ func TestDetectDatabasesDoesNotChangeItsInput(t *testing.T) {
 	DetectDatabases(cfg, nil)
 	if cfg.Services[0].Name != "web" {
 		t.Error("services were reordered")
+	}
+}
+
+func TestDetectKeepsURLPathAsName(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    ComposeConfig
+		dotenv map[string]string
+		want   project.Database
+	}{
+		{"postgres url in .env", cfgOf(svc("db", "postgres:16", nil)),
+			map[string]string{"DATABASE_URL": "postgres://u:p@db/myapp"},
+			db("postgresql", "myapp", "container", "db", ".env DATABASE_URL", "service db")},
+		{"mysql url in a service", cfgOf(svc("db", "mysql:8", nil), svc("web", "app", map[string]string{"DATABASE_URL": "mysql://u:p@db:3306/shop?x=1"})),
+			nil,
+			db("mysql", "shop", "container", "db", "service db", "service web DATABASE_URL")},
+		{"mongo url", cfgOf(svc("db", "mongo:7", nil)),
+			map[string]string{"MONGO_URI": "mongodb://u:p@db:27017/appdata"},
+			db("mongodb", "appdata", "container", "db", ".env MONGO_URI", "service db")},
+		{"url by container_name keeps the location", cfgOf(ComposeService{Name: "db", Image: "postgres:16", ContainerName: "shop-db"}),
+			map[string]string{"DATABASE_URL": "postgres://u:p@shop-db/myapp"},
+			db("postgresql", "myapp", "container", "shop-db", ".env DATABASE_URL", "service db")},
+		{"url without a path keeps the placeholder", cfgOf(svc("db", "postgres:16", nil)),
+			map[string]string{"DATABASE_URL": "postgres://u:p@db:5432"},
+			db("postgresql", "db", "container", "db", ".env DATABASE_URL", "service db")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectDatabases(tt.cfg, tt.dotenv)
+			if !reflect.DeepEqual(got, []project.Database{tt.want}) {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectExplicitNameWins(t *testing.T) {
+	tests := []struct {
+		name string
+		svc  ComposeService
+		url  string
+		want project.Database
+	}{
+		{"POSTGRES_DB", svc("db", "postgres:16", map[string]string{"POSTGRES_DB": "shop"}),
+			"postgres://u:p@db/other", db("postgresql", "shop", "container", "db", ".env DATABASE_URL", "service db", "service db POSTGRES_DB")},
+		{"MYSQL_DATABASE", svc("db", "mysql:8", map[string]string{"MYSQL_DATABASE": "shop"}),
+			"mysql://u:p@db/other", db("mysql", "shop", "container", "db", ".env DATABASE_URL", "service db", "service db MYSQL_DATABASE")},
+		{"MARIADB_DATABASE", svc("db", "mariadb:11", map[string]string{"MARIADB_DATABASE": "shop"}),
+			"mariadb://u:p@db/other", db("mysql", "shop", "container", "db", ".env DATABASE_URL", "service db")},
+		{"MONGO_INITDB_DATABASE", svc("db", "mongo:7", map[string]string{"MONGO_INITDB_DATABASE": "shop"}),
+			"mongodb://u:p@db/other", db("mongodb", "shop", "container", "db", ".env DATABASE_URL", "service db")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectDatabases(cfgOf(tt.svc), map[string]string{"DATABASE_URL": tt.url})
+			if !reflect.DeepEqual(got, []project.Database{tt.want}) {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
