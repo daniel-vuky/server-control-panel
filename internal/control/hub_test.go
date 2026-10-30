@@ -1053,7 +1053,8 @@ func TestViewsDatabaseBackupRule(t *testing.T) {
 	running := project.ParseContainers([]byte(runningOut("shop")))
 	stopped := project.ParseContainers([]byte(stoppedOut("shop")))
 	pg := project.Database{Type: "postgresql", Name: "app_db", LocationKind: "container", Location: "db", Sources: []string{"POSTGRES_DB"}}
-	connected := drive.Status{State: drive.StateConnected}
+	connected := drive.Status{State: drive.StateConnected, Folder: &drive.Folder{ID: "f1", Name: "Panel backups"}}
+	since := time.Now()
 	with := func(f func(*project.Database)) project.Database {
 		d := pg
 		f(&d)
@@ -1067,30 +1068,34 @@ func TestViewsDatabaseBackupRule(t *testing.T) {
 		dockerUp bool
 		drive    drive.Status
 		want     string
+		missing  *time.Time
 	}{
-		{"a running container database is allowed", pg, running, nil, true, connected, ""},
-		{"the container name resolves too", with(func(d *project.Database) { d.Location = "shop-db-1" }), running, nil, true, connected, ""},
-		{"a PostgreSQL placeholder name is allowed", with(func(d *project.Database) { d.Name = "db" }), running, nil, true, connected, ""},
-		{"SQLite is not supported", project.Database{Type: "sqlite", Name: "app.db", LocationKind: "file", Location: "/data/app.db"}, running, nil, true, connected, project.ReasonNotSupported},
-		{"a host database is not supported", with(func(d *project.Database) { d.LocationKind = "host"; d.Location = "db.example.com" }), running, nil, true, connected, project.ReasonNotSupported},
-		{"an unresolved service is not supported", with(func(d *project.Database) { d.Location = "ghost" }), running, nil, true, connected, project.ReasonNotSupported},
-		{"a MySQL placeholder name has no name", project.Database{Type: "mysql", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, connected, project.ReasonNoDBName},
-		{"a MongoDB placeholder name has no name", project.Database{Type: "mongodb", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, connected, project.ReasonNoDBName},
-		{"a name the slot refuses has no name", with(func(d *project.Database) { d.Name = "-bad name" }), running, nil, true, connected, project.ReasonNoDBName},
-		{"a stopped service is not running", pg, stopped, nil, true, connected, project.ReasonDBNotRunning},
-		{"Docker down is not running", pg, nil, errors.New("down"), false, connected, project.ReasonDBNotRunning},
-		{"a failed read is not running", pg, nil, errors.New("boom"), true, connected, project.ReasonDBNotRunning},
-		{"Drive not connected", pg, running, nil, true, drive.Status{State: drive.StateNotConnected}, "drive_not_connected"},
-		{"Drive not configured", pg, running, nil, true, drive.Status{State: drive.StateNotConfigured, Reason: "no client id"}, "drive_not_connected"},
-		{"Drive state unknown", pg, running, nil, true, drive.Status{}, "drive_not_connected"},
-		{"Drive expired", pg, running, nil, true, drive.Status{State: drive.StateExpired}, "drive_expired"},
-		{"the database rule wins over Drive", project.Database{Type: "mysql", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, drive.Status{State: drive.StateExpired}, project.ReasonNoDBName},
-		{"not running wins over Drive", pg, stopped, nil, true, drive.Status{State: drive.StateNotConnected}, project.ReasonDBNotRunning},
+		{"a running container database is allowed", pg, running, nil, true, connected, "", nil},
+		{"the container name resolves too", with(func(d *project.Database) { d.Location = "shop-db-1" }), running, nil, true, connected, "", nil},
+		{"a PostgreSQL placeholder name is allowed", with(func(d *project.Database) { d.Name = "db" }), running, nil, true, connected, "", nil},
+		{"SQLite is not supported", project.Database{Type: "sqlite", Name: "app.db", LocationKind: "file", Location: "/data/app.db"}, running, nil, true, connected, project.ReasonNotSupported, nil},
+		{"a host database is not supported", with(func(d *project.Database) { d.LocationKind = "host"; d.Location = "db.example.com" }), running, nil, true, connected, project.ReasonNotSupported, nil},
+		{"an unresolved service is not supported", with(func(d *project.Database) { d.Location = "ghost" }), running, nil, true, connected, project.ReasonNotSupported, nil},
+		{"a MySQL placeholder name has no name", project.Database{Type: "mysql", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, connected, project.ReasonNoDBName, nil},
+		{"a MongoDB placeholder name has no name", project.Database{Type: "mongodb", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, connected, project.ReasonNoDBName, nil},
+		{"a name the slot refuses has no name", with(func(d *project.Database) { d.Name = "-bad name" }), running, nil, true, connected, project.ReasonNoDBName, nil},
+		{"a stopped service is not running", pg, stopped, nil, true, connected, project.ReasonDBNotRunning, nil},
+		{"Docker down is not running", pg, nil, errors.New("down"), false, connected, project.ReasonDBNotRunning, nil},
+		{"a failed read is not running", pg, nil, errors.New("boom"), true, connected, project.ReasonDBNotRunning, nil},
+		{"Drive not connected", pg, running, nil, true, drive.Status{State: drive.StateNotConnected}, "drive_not_connected", nil},
+		{"Drive not configured", pg, running, nil, true, drive.Status{State: drive.StateNotConfigured, Reason: "no client id"}, "drive_not_connected", nil},
+		{"Drive state unknown", pg, running, nil, true, drive.Status{}, "drive_not_connected", nil},
+		{"Drive expired", pg, running, nil, true, drive.Status{State: drive.StateExpired}, "drive_expired", nil},
+		{"Drive connected without a folder", pg, running, nil, true, drive.Status{State: drive.StateConnected}, "folder_missing", nil},
+		{"a missing project is not found", pg, running, nil, true, connected, "not_found", &since},
+		{"not found wins over the database rule", project.Database{Type: "sqlite", Name: "app.db", LocationKind: "file", Location: "/data/app.db"}, running, nil, true, connected, "not_found", &since},
+		{"the database rule wins over Drive", project.Database{Type: "mysql", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, drive.Status{State: drive.StateExpired}, project.ReasonNoDBName, nil},
+		{"not running wins over Drive", pg, stopped, nil, true, drive.Status{State: drive.StateNotConnected}, project.ReasonDBNotRunning, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ts := []store.Tracked{{ID: 1, DisplayName: "shop", ComposeProject: "shop", Services: []string{"app", "db"},
-				ServiceDetails: services, Databases: []project.Database{tt.db}}}
+				ServiceDetails: services, Databases: []project.Database{tt.db}, MissingSince: tt.missing}}
 			v := Views(ts, tt.cs, tt.readErr, tt.dockerUp, nil, nil, nil, tt.drive)[0]
 			if len(v.DatabaseViews) != 1 {
 				t.Fatalf("got %d database views, want 1", len(v.DatabaseViews))
@@ -1135,6 +1140,25 @@ func dockerReads(cmd *fakeCmd) int {
 	return cmd.count(runner.DockerPing) + cmd.count(runner.DockerContainers) + cmd.count(runner.DockerInspect) + cmd.count(runner.DockerStats)
 }
 
+// quietSubscribe loads the cache with one Check and registers a subscriber
+// channel without starting the loops, so the test's Docker counts move only
+// when the test makes them: Subscribe's loop may run a tick of its own after
+// Subscribe's, at any time.
+func quietSubscribe(t *testing.T, h *Hub) <-chan State {
+	t.Helper()
+	h.Check(context.Background())
+	ch := make(chan State, 1)
+	h.mu.Lock()
+	h.subs[ch] = struct{}{}
+	h.mu.Unlock()
+	t.Cleanup(func() {
+		h.mu.Lock()
+		delete(h.subs, ch)
+		h.mu.Unlock()
+	})
+	return ch
+}
+
 func TestStateCarriesBackupsAndDrive(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
@@ -1171,8 +1195,8 @@ func TestPublishFromCacheNoDockerRead(t *testing.T) {
 		defer dmu.Unlock()
 		return drive.Status{State: state}
 	})
-	cur, updates := subscribe(t, h)
-	if len(cur.Backups) != 0 {
+	updates := quietSubscribe(t, h)
+	if cur := h.current(); len(cur.Backups) != 0 {
 		t.Fatalf("backups = %+v, want none", cur.Backups)
 	}
 	reads := dockerReads(e.cmd)
@@ -1221,7 +1245,7 @@ func TestPublishSkipsWhenNotReady(t *testing.T) {
 		t.Fatalf("Publish before the first tick sent %s after %d Docker reads", sent, dockerReads(e.cmd))
 	}
 
-	_, updates := subscribe(t, h)
+	updates := quietSubscribe(t, h)
 	// A successful WithLocks write leaves the cache behind the Controller:
 	// Publish waits for a tick or a lock change to catch up.
 	if err := e.ctl.WithLocks([]int64{e.ids["shop"]}, func() error { return nil }); err != nil {
@@ -1242,7 +1266,7 @@ func TestPublishSkipsWhenNotReady(t *testing.T) {
 func TestRecentContainersUsesCacheWhenFresh(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"), stoppedOut("shop"))
-	subscribe(t, h)
+	h.Check(context.Background())
 	reads := e.cmd.count(runner.DockerContainers)
 
 	cs, ok := h.RecentContainers(context.Background(), time.Minute)
@@ -1298,7 +1322,7 @@ func TestNoStoreReadUnderMu(t *testing.T) {
 		held("drive")
 		return drive.Status{State: drive.StateConnected}
 	})
-	_, updates := subscribe(t, h)
+	updates := quietSubscribe(t, h)
 	reads := dockerReads(e.cmd)
 	if err := e.st.Close(); err != nil {
 		t.Fatal(err)

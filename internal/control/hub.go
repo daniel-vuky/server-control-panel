@@ -69,18 +69,23 @@ type DatabaseView struct {
 }
 
 // BackupRule says whether a backup may start now. Allowed is true only when
-// Reason is "". Reason is one of project.ReasonNotSupported, ReasonNoDBName,
-// ReasonDBNotRunning, ReasonDriveNotConnected or ReasonDriveExpired.
+// Reason is "". Reason is one of ReasonNotFound, project.ReasonNotSupported,
+// project.ReasonNoDBName, project.ReasonDBNotRunning, ReasonDriveNotConnected,
+// ReasonDriveExpired or ReasonFolderMissing. Each equals the backup manager's
+// refusal code of the same name.
 type BackupRule struct {
 	Allowed bool
 	Reason  string
 }
 
-// The Drive reasons a database cannot be backed up, layered on top of
-// project.BackupReason.
+// The reasons a database cannot be backed up, layered around
+// project.BackupReason: a project whose folder is missing, then the Drive
+// reasons.
 const (
+	ReasonNotFound          = "not_found"
 	ReasonDriveNotConnected = "drive_not_connected"
 	ReasonDriveExpired      = "drive_expired"
+	ReasonFolderMissing     = "folder_missing"
 )
 
 // State is one snapshot of the tracked projects, the active backups (queued
@@ -140,14 +145,20 @@ func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp b
 	return out
 }
 
-// databaseViews gives each database of t its key and backup rule:
-// project.BackupReason, then, only when that allows it, the Drive reason. A
-// Drive that is not configured, not connected or in an unknown state is
-// drive_not_connected; an expired one is drive_expired.
+// databaseViews gives each database of t its key and backup rule: not_found
+// for a project whose folder is missing (the backup manager refuses it), else
+// project.BackupReason, then, only when that allows it, the Drive reason.
+//
+// The database is checked before Drive on purpose: the reason is what the UI
+// names as the first thing to fix, and a fix on the project itself (start the
+// service, set the name) comes before connecting Drive.
 func databaseViews(t store.Tracked, cs []project.Container, dockerUp bool, drv drive.Status) []DatabaseView {
 	out := make([]DatabaseView, 0, len(t.Databases))
 	for _, d := range t.Databases {
-		_, reason := project.BackupReason(d, t.ComposeProject, t.ServiceDetails, cs, dockerUp)
+		reason := ReasonNotFound
+		if t.MissingSince == nil {
+			_, reason = project.BackupReason(d, t.ComposeProject, t.ServiceDetails, cs, dockerUp)
+		}
 		if reason == "" {
 			reason = driveReason(drv)
 		}
@@ -157,10 +168,15 @@ func databaseViews(t store.Tracked, cs []project.Container, dockerUp bool, drv d
 }
 
 // driveReason is the reason Drive gives for refusing a backup, "" when it is
-// connected.
+// connected with a folder. Not configured, not connected or an unknown state
+// is drive_not_connected, expired is drive_expired, and connected without a
+// folder is folder_missing.
 func driveReason(drv drive.Status) string {
 	switch drv.State {
 	case drive.StateConnected:
+		if drv.Folder == nil {
+			return ReasonFolderMissing
+		}
 		return ""
 	case drive.StateExpired:
 		return ReasonDriveExpired
