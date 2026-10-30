@@ -316,7 +316,7 @@ func TestDoRefusals(t *testing.T) {
 			setup: func(e *env) {
 				e.cmd.containers(stoppedOut("shop"))
 				e.ctl.mu.Lock()
-				e.ctl.locks[e.ids["shop"]] = project.StatusStopping
+				e.ctl.locks[e.ids["shop"]] = projectLock{status: project.StatusStopping}
 				e.ctl.mu.Unlock()
 			},
 			code: CodeLocked, status: project.StatusStopping, msg: "shop is Stopping…; wait for it to finish.",
@@ -346,7 +346,7 @@ func TestDoRefusals(t *testing.T) {
 			setup: func(e *env) {
 				e.cmd.on(runner.DockerContainers, reply{err: errors.New("cannot connect")})
 				e.ctl.mu.Lock()
-				e.ctl.locks[e.ids["shop"]] = project.StatusStopping
+				e.ctl.locks[e.ids["shop"]] = projectLock{status: project.StatusStopping}
 				e.ctl.mu.Unlock()
 			},
 			code: CodeDockerDown, status: project.StatusUnknown, msg: "Docker is not responding. Try again when it is back.",

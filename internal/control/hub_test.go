@@ -136,11 +136,11 @@ func TestViewsEffectiveStatus(t *testing.T) {
 		{ID: 3, DisplayName: "panel", ComposeProject: "panel", Services: []string{"app", "db"}, Self: true},
 	}
 	cs := project.ParseContainers([]byte(runningOut("shop") + runningOut("blog") + runningOut("panel")))
-	inFlight := func(id int64) (project.Status, bool) {
+	inFlight := func(id int64) (project.Status, bool, bool) {
 		if id == 2 {
-			return project.StatusStopping, true
+			return project.StatusStopping, false, true
 		}
-		return "", false
+		return "", false, false
 	}
 	type want struct {
 		status  project.Status
@@ -150,7 +150,7 @@ func TestViewsEffectiveStatus(t *testing.T) {
 		name     string
 		readErr  error
 		dockerUp bool
-		inFlight func(int64) (project.Status, bool)
+		inFlight func(int64) (project.Status, bool, bool)
 		want     []want
 	}{
 		{"in-flight wins, self has only untrack", nil, true, inFlight, []want{
@@ -317,7 +317,7 @@ func TestHubLockChangedPushesWithoutTick(t *testing.T) {
 	// Take the lock as Do does, then tell the hub.
 	id := e.ids["shop"]
 	e.ctl.mu.Lock()
-	e.ctl.locks[id] = project.StatusStopping
+	e.ctl.locks[id] = projectLock{status: project.StatusStopping}
 	e.ctl.gen++
 	e.ctl.mu.Unlock()
 	start := time.Now()
@@ -417,8 +417,9 @@ func TestHubStaleTickGivesUpAfterThreeReads(t *testing.T) {
 	}
 }
 
+// Do, Untrack, WithLocks and Refresh mixed with Check and the loop.
 func TestNoDeadlock(t *testing.T) {
-	e, h := newHubEnv(t, 20*time.Millisecond)
+	e, h := newHubEnv(t, 5*time.Millisecond)
 	all := ""
 	names := []string{"shop", "blog", "over", "panel", "notes"}
 	for _, n := range names {
@@ -431,19 +432,26 @@ func TestNoDeadlock(t *testing.T) {
 	} {
 		e.cmd.on(a, reply{delay: time.Millisecond})
 	}
+	e.markMissing(t, "notes")
 	_, updates := subscribe(t, h)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		ctx, cancel := context.WithCancel(context.Background())
-		var checks sync.WaitGroup
-		checks.Go(func() {
+		var bg sync.WaitGroup
+		bg.Go(func() {
 			for ctx.Err() == nil {
 				h.Check(ctx)
 			}
 		})
-		checks.Go(func() {
+		bg.Go(func() {
+			for ctx.Err() == nil {
+				h.Refresh()
+				time.Sleep(time.Millisecond)
+			}
+		})
+		bg.Go(func() {
 			for {
 				select {
 				case <-updates:
@@ -452,20 +460,37 @@ func TestNoDeadlock(t *testing.T) {
 				}
 			}
 		})
+		ok := func(err error) bool {
+			var r *Refusal
+			return err == nil || errors.As(err, &r) || errors.Is(err, store.ErrNotFound)
+		}
 		var wg sync.WaitGroup
 		actions := []project.Action{project.ActionStart, project.ActionStop, project.ActionRestart}
-		for i := range 50 {
+		for i := range 60 {
+			id := e.ids[names[i%len(names)]]
 			wg.Go(func() {
-				_, err := e.ctl.Do(context.Background(), e.ids[names[i%len(names)]], actions[i%len(actions)], actor)
-				var r *Refusal
-				if err != nil && !errors.As(err, &r) {
-					t.Errorf("Do: %v", err)
+				switch i % 4 {
+				case 0:
+					if _, err := e.ctl.Untrack(context.Background(), id, actor); !ok(err) {
+						t.Errorf("Untrack: %v", err)
+					}
+				case 1:
+					if err := e.ctl.WithLocks([]int64{e.ids["shop"], e.ids["blog"]}, func() error {
+						_, err := e.st.TrackedProjects(context.Background())
+						return err
+					}); !ok(err) {
+						t.Errorf("WithLocks: %v", err)
+					}
+				default:
+					if _, err := e.ctl.Do(context.Background(), id, actions[i%len(actions)], actor); !ok(err) {
+						t.Errorf("Do: %v", err)
+					}
 				}
 			})
 		}
 		wg.Wait()
 		cancel()
-		checks.Wait()
+		bg.Wait()
 	}()
 	select {
 	case <-done:
@@ -474,7 +499,7 @@ func TestNoDeadlock(t *testing.T) {
 		t.Fatalf("deadlock: not done after 10s\n%s", buf[:runtime.Stack(buf, true)])
 	}
 	for _, n := range names {
-		if _, locked := e.ctl.InFlight(e.ids[n]); locked {
+		if _, _, locked := e.ctl.Lock(e.ids[n]); locked {
 			t.Errorf("%s is still locked", n)
 		}
 	}

@@ -49,13 +49,18 @@ const (
 	CodeDockerDown = "docker_down"
 )
 
-// Refusal is returned by Do when the command was not run. Status is the
-// project's status at the time: the in-flight status when it is locked, and
-// unknown when Docker is down.
+// Refusal is returned by Do, Untrack and WithLocks when nothing was run.
+// Status is the project's status at the time: the in-flight status when it is
+// locked by a command, and unknown when Docker is down. ProjectID is the
+// project that caused it. Held is true when that project is held for a store
+// write (WithLocks) rather than running a command; WithLocks then gives the
+// status unknown, and Do the project's computed status.
 type Refusal struct {
-	Code    string // locked | not_allowed | docker_down
-	Message string
-	Status  project.Status
+	Code      string // locked | not_allowed | docker_down
+	Message   string
+	Status    project.Status
+	ProjectID int64
+	Held      bool
 }
 
 func (r *Refusal) Error() string { return r.Message }
@@ -86,7 +91,16 @@ const (
 	msgTimedOut     = "Timed out after 60 seconds."
 	msgRereadFailed = "The command finished but Docker could not be read."
 	msgInternal     = "internal error"
+	msgHeld         = " is being removed from the panel."
 )
+
+// projectLock is one entry of the Controller's lock map: a command running
+// (status is its in-flight status), or the project held for a store write
+// (held, with no status).
+type projectLock struct {
+	status project.Status
+	held   bool
+}
 
 // Controller holds the per-project locks and runs the lifecycle commands.
 //
@@ -100,7 +114,7 @@ type Controller struct {
 	obs observer // set once by New before any Do; nil means none
 
 	mu    sync.Mutex
-	locks map[int64]project.Status // project id → in-flight status
+	locks map[int64]projectLock // project id → its lock
 	gen   uint64
 
 	wg sync.WaitGroup
@@ -109,19 +123,31 @@ type Controller struct {
 // NewController returns a Controller that records activity in st and runs
 // commands with cmd.
 func NewController(st *store.Store, cmd scan.Commander, log *slog.Logger) *Controller {
-	return &Controller{st: st, cmd: cmd, log: log, locks: map[int64]project.Status{}}
+	return &Controller{st: st, cmd: cmd, log: log, locks: map[int64]projectLock{}}
 }
 
 // setObserver sets the observer. It must be called before the first Do.
 func (c *Controller) setObserver(o observer) { c.obs = o }
 
 // InFlight returns the in-flight status of a project while a command runs on
-// it; false when it is not locked.
+// it; false when no command runs (a project held for a store write is not in
+// flight).
 func (c *Controller) InFlight(id int64) (project.Status, bool) {
+	s, held, ok := c.Lock(id)
+	if !ok || held {
+		return "", false
+	}
+	return s, true
+}
+
+// Lock tells whether project id is locked: by a command (status is its
+// in-flight status) or held for a store write (held true, status empty). ok is
+// false when it is not locked. Views takes it as its lock lookup.
+func (c *Controller) Lock(id int64) (status project.Status, held bool, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s, ok := c.locks[id]
-	return s, ok
+	l, ok := c.locks[id]
+	return l.status, l.held, ok
 }
 
 // Generation is bumped on every lock take and release.
@@ -151,7 +177,11 @@ func (c *Controller) Wait(ctx context.Context) error {
 
 // Do runs action a on tracked project id for actor and waits for the outcome.
 // It returns store.ErrNotFound for an unknown or ignored project, a *Refusal
-// when the command may not run, or another error.
+// when the command may not run, or another error. A project a rescan could not
+// find counts as Not found, which allows no lifecycle action. Once the lock is
+// taken Do reads the project again, so an untrack or a removal that committed
+// meanwhile runs nothing: ErrNotFound when it is gone, not_allowed when it is
+// now missing.
 //
 // The checks and the lock take run on ctx. Once the lock is taken, the
 // command, the re-read and the release run on their own, detached from ctx's
@@ -173,34 +203,36 @@ func (c *Controller) Do(ctx context.Context, id int64, a project.Action, actor s
 		return Result{}, err
 	}
 	if !up {
-		return Result{}, c.refuse(ctx, rec, &Refusal{Code: CodeDockerDown, Message: msgDockerDown, Status: project.StatusUnknown})
+		return Result{}, c.refuse(ctx, rec, &Refusal{Code: CodeDockerDown, Message: msgDockerDown, Status: project.StatusUnknown, ProjectID: t.ID})
 	}
-	if s, locked := c.InFlight(id); locked {
-		return Result{}, c.refuse(ctx, rec, lockedRefusal(t.DisplayName, s))
+	status := statusOf(t, cs)
+	if s, held, locked := c.Lock(id); locked {
+		return Result{}, c.refuse(ctx, rec, lockedRefusal(t, projectLock{status: s, held: held}, status))
 	}
-	status := project.StatusOf(cs, t.ComposeProject, t.Services)
-	if t.Self {
-		return Result{}, c.refuse(ctx, rec, &Refusal{
-			Code: CodeNotAllowed, Status: status,
-			Message: t.DisplayName + " is the panel itself and is Monitor only.",
-		})
-	}
-	if !slices.Contains(project.Allowed(status, false, true), a) {
-		return Result{}, c.refuse(ctx, rec, &Refusal{
-			Code: CodeNotAllowed, Status: status,
-			Message: verb + " is not allowed while " + t.DisplayName + " is " + project.Word(status) + ".",
-		})
+	if r := notAllowed(t, a, verb, status); r != nil {
+		return Result{}, c.refuse(ctx, rec, r)
 	}
 
 	// Take the lock: check and set in one critical section.
 	c.mu.Lock()
-	if s, locked := c.locks[id]; locked {
+	if l, locked := c.locks[id]; locked {
 		c.mu.Unlock()
-		return Result{}, c.refuse(ctx, rec, lockedRefusal(t.DisplayName, s))
+		return Result{}, c.refuse(ctx, rec, lockedRefusal(t, l, status))
 	}
-	c.locks[id] = project.InFlight(a)
+	c.locks[id] = projectLock{status: project.InFlight(a)}
 	c.gen++
 	c.mu.Unlock()
+
+	// Re-read under the lock: an untrack, a workspace removal or a rescan may
+	// have committed since the first read.
+	if t, err = c.st.TrackedProject(ctx, id); err != nil || t.MissingSince != nil {
+		c.unlock(id)
+		c.notify(nil)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{}, c.refuse(ctx, rec, notAllowed(t, a, verb, project.StatusNotFound))
+	}
 
 	activityID, err := c.st.StartActivity(ctx, rec)
 	if err != nil {
@@ -252,8 +284,134 @@ func (c *Controller) refuse(ctx context.Context, rec store.Activity, r *Refusal)
 	return r
 }
 
-func lockedRefusal(name string, s project.Status) *Refusal {
-	return &Refusal{Code: CodeLocked, Status: s, Message: name + " is " + project.Word(s) + "; wait for it to finish."}
+// statusOf is the status the pre-check judges t by: Not found when a rescan
+// could not find its folder, otherwise its status from cs.
+func statusOf(t store.Tracked, cs []project.Container) project.Status {
+	if t.MissingSince != nil {
+		return project.StatusNotFound
+	}
+	return project.StatusOf(cs, t.ComposeProject, t.Services)
+}
+
+// notAllowed is the refusal of action a on t at status, or nil when a is
+// allowed.
+func notAllowed(t store.Tracked, a project.Action, verb string, status project.Status) *Refusal {
+	if t.Self {
+		return &Refusal{
+			Code: CodeNotAllowed, Status: status, ProjectID: t.ID,
+			Message: t.DisplayName + " is the panel itself and is Monitor only.",
+		}
+	}
+	if !slices.Contains(project.Allowed(status, false, true), a) {
+		return &Refusal{
+			Code: CodeNotAllowed, Status: status, ProjectID: t.ID,
+			Message: verb + " is not allowed while " + t.DisplayName + " is " + project.Word(status) + ".",
+		}
+	}
+	return nil
+}
+
+// lockedRefusal is the refusal for t while lock l is on it. status is the
+// project's computed status, given when it is held for a store write.
+func lockedRefusal(t store.Tracked, l projectLock, status project.Status) *Refusal {
+	if l.held {
+		return &Refusal{Code: CodeLocked, Status: status, ProjectID: t.ID, Held: true, Message: t.DisplayName + msgHeld}
+	}
+	return &Refusal{
+		Code: CodeLocked, Status: l.status, ProjectID: t.ID,
+		Message: t.DisplayName + " is " + project.Word(l.status) + "; wait for it to finish.",
+	}
+}
+
+// WithLocks holds the locks of every project in ids while fn runs, so no
+// command starts on them meanwhile; it is how a store write that drops
+// projects (untrack, workspace removal) runs. The locks are taken in one
+// critical section, or none is: when any id is locked it returns a locked
+// *Refusal for the first such id and fn does not run. fn runs outside the
+// Controller's mutex, so it may call the store. The locks are released on
+// every path, a panic in fn included (the panic goes on). The observer hears
+// of the take and of the release. fn's error is returned as is.
+func (c *Controller) WithLocks(ids []int64, fn func() error) error {
+	c.mu.Lock()
+	for _, id := range ids {
+		if l, locked := c.locks[id]; locked {
+			c.mu.Unlock()
+			status := l.status
+			msg := "A project is " + project.Word(status) + "; wait for it to finish."
+			if l.held {
+				status, msg = project.StatusUnknown, "A project"+msgHeld
+			}
+			return &Refusal{Code: CodeLocked, Status: status, ProjectID: id, Held: l.held, Message: msg}
+		}
+	}
+	for _, id := range ids {
+		c.locks[id] = projectLock{held: true}
+	}
+	c.gen++
+	c.mu.Unlock()
+	c.notify(nil)
+
+	defer func() {
+		c.mu.Lock()
+		for _, id := range ids {
+			delete(c.locks, id)
+		}
+		c.gen++
+		c.mu.Unlock()
+		c.notify(nil)
+	}()
+	return fn()
+}
+
+// Untrack stops tracking project id for actor and returns it as it was: a
+// present project becomes ignored, and one a rescan could not find is removed
+// from the list. It holds the project's lock for the store write, so it is
+// refused (locked) while a command runs on it, and no command can start
+// meanwhile. It records project.untrack, or project.remove for a missing
+// project, as ok or refused. It returns store.ErrNotFound for an unknown or
+// ignored project. The caller refreshes the hub.
+func (c *Controller) Untrack(ctx context.Context, id int64, actor string) (store.Tracked, error) {
+	t, err := c.st.TrackedProject(ctx, id)
+	if err != nil {
+		return store.Tracked{}, err
+	}
+	rec := store.Activity{Actor: actor, ActorKind: store.ActorPerson, Action: untrackAction(t), ProjectID: t.ID, Target: t.DisplayName}
+
+	var (
+		ran  bool
+		gone store.Tracked
+	)
+	err = c.WithLocks([]int64{id}, func() error {
+		ran = true
+		var err error
+		gone, err = c.st.UntrackProject(ctx, id)
+		return err
+	})
+	if !ran {
+		var r *Refusal
+		if errors.As(err, &r) {
+			return store.Tracked{}, c.refuse(ctx, rec, lockedRefusal(t, projectLock{status: r.Status, held: r.Held}, project.StatusUnknown))
+		}
+		return store.Tracked{}, err
+	}
+	if err != nil {
+		return store.Tracked{}, err
+	}
+	// The write decides which it was: the project may have gone missing, or
+	// come back, since the first read.
+	rec.Action = untrackAction(gone)
+	if err := c.st.RecordActivity(ctx, rec, store.ResultOK, ""); err != nil {
+		c.log.Error("control: record the untrack", "project", id, "err", err)
+	}
+	return gone, nil
+}
+
+// untrackAction is the activity action of untracking t.
+func untrackAction(t store.Tracked) string {
+	if t.MissingSince != nil {
+		return store.ActProjectRemove
+	}
+	return store.ActProjectUntrack
 }
 
 // unlock clears the lock of project id and bumps the generation.
