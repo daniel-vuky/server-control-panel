@@ -106,9 +106,10 @@ type Manager struct {
 // job is the in-memory state of the running scan. Its fields are guarded by
 // Manager.mu, except id, path and depth, which never change.
 type job struct {
-	id    int64
-	path  string
-	depth int
+	id       int64
+	activity int64 // the activity record of this scan; 0 when it could not be stored
+	path     string
+	depth    int
 
 	progress Progress
 	subs     *broadcaster
@@ -144,6 +145,13 @@ func (m *Manager) Start(ctx context.Context, resolvedPath string, depth int, by 
 		return 0, err
 	}
 	j := &job{id: id, path: resolvedPath, depth: depth, subs: newBroadcaster()}
+	if aid, err := m.st.StartActivity(ctx, store.Activity{
+		Actor: by, ActorKind: store.ActorPerson, Action: store.ActScanStart, Target: resolvedPath,
+	}); err != nil {
+		m.log.Error("scan: store the activity", "job", id, "err", err)
+	} else {
+		j.activity = aid
+	}
 	m.mu.Lock()
 	m.running = j
 	m.mu.Unlock()
@@ -238,6 +246,15 @@ func (m *Manager) run(j *job) {
 	}
 	if err := m.st.FinishJob(context.Background(), j.id, state, progJSON, resJSON, errMsg); err != nil {
 		m.log.Error("scan: store the finished job", "job", j.id, "err", err)
+	}
+	if j.activity != 0 {
+		result := store.ResultOK
+		if state == stateFailed {
+			result = store.ResultFailed
+		}
+		if err := m.st.FinishActivity(context.Background(), j.activity, result, errMsg); err != nil {
+			m.log.Error("scan: finish the activity", "job", j.id, "err", err)
+		}
 	}
 
 	m.mu.Lock()
@@ -336,7 +353,7 @@ func (m *Manager) examine(ctx context.Context, f Folder) (row Row, configRead bo
 		action = runner.ComposeConfigOverride
 	}
 
-	dotenv := readDotenv(filepath.Join(f.Path, ".env"))
+	dotenv := ReadDotenv(filepath.Join(f.Path, ".env"))
 	secrets := SecretValues(dotenv)
 
 	cfg, warning := m.readConfig(ctx, action, values, secrets)
@@ -405,10 +422,11 @@ func firstErrorLine(text string) string {
 	return fallback
 }
 
-// readDotenv parses a project's .env if it is a regular file. A symlink, a
+// ReadDotenv parses a project's .env if it is a regular file. A symlink, a
 // missing file or anything else gives an empty map. O_NOFOLLOW refuses a
 // symlink at open time, and O_NONBLOCK keeps a FIFO from blocking the open.
-func readDotenv(path string) map[string]string {
+// The lifecycle controller reads a project's secrets through it too.
+func ReadDotenv(path string) map[string]string {
 	//nolint:gosec // G304: the path is <project folder>/.env inside the workspace, opened without following symlinks
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {

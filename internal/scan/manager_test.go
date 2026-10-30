@@ -42,6 +42,7 @@ type fakeCmd struct {
 	containers    string
 	containersErr error
 	gate          chan struct{} // when set, docker.containers waits for it to close
+	panicOn       runner.Action // when set, this action panics
 	calls         []fakeCall
 }
 
@@ -52,6 +53,9 @@ func (f *fakeCmd) Run(_ context.Context, s runner.Stack, a runner.Action, v runn
 	f.calls = append(f.calls, fakeCall{s, a, v, slices.Clone(secrets)})
 	gate := f.gate
 	f.mu.Unlock()
+	if f.panicOn != "" && a == f.panicOn {
+		panic("fake: " + string(a))
+	}
 	switch a {
 	case runner.DockerContainers:
 		if gate != nil {
@@ -597,6 +601,50 @@ func TestSymlinkedEnvNotRead(t *testing.T) {
 	calls := fc.callsOf(runner.ComposeConfig)
 	if len(calls) != 1 || len(calls[0].Secrets) != 0 {
 		t.Fatalf("calls %+v, want no secrets from a symlinked .env", calls)
+	}
+	if got := ReadDotenv(filepath.Join(root, "p", ".env")); len(got) != 0 {
+		t.Fatalf("ReadDotenv followed a symlink: %v", got)
+	}
+}
+
+func TestScanRecordsActivity(t *testing.T) {
+	root := tempRoot(t)
+	mkfile(t, root, "p/compose.yaml", "")
+	m, st := newTestManager(t, newFakeCmd())
+	job, _ := runScan(t, m, root, 1)
+	if job.State != "done" {
+		t.Fatalf("job state %q", job.State)
+	}
+	rows, err := st.RecentActivity(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("activity rows %+v, want one", rows)
+	}
+	r := rows[0]
+	if r.Action != store.ActScanStart || r.Result != store.ResultOK || r.Actor != "dev@localhost" ||
+		r.ActorKind != store.ActorPerson || r.Target != root || r.FinishedAt == nil {
+		t.Fatalf("activity row %+v", r)
+	}
+}
+
+func TestScanFailureRecordsActivity(t *testing.T) {
+	root := tempRoot(t)
+	mkfile(t, root, "p/compose.yaml", "")
+	fc := newFakeCmd()
+	fc.panicOn = runner.ComposeConfig
+	m, st := newTestManager(t, fc)
+	job, _ := runScan(t, m, root, 1)
+	if job.State != "failed" {
+		t.Fatalf("job state %q, want failed", job.State)
+	}
+	rows, err := st.RecentActivity(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Result != store.ResultFailed || rows[0].Reason != job.Error {
+		t.Fatalf("activity rows %+v, want one failed with reason %q", rows, job.Error)
 	}
 }
 
