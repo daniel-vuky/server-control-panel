@@ -596,3 +596,24 @@ func TestDoObserver(t *testing.T) {
 		}
 	})
 }
+
+// A re-read that succeeds with no container at all (the last project on the
+// host stopped) is handed to the observer as an empty list, not nil, which
+// would mean the re-read failed and leave the old list in place.
+func TestDoEmptyRereadIsFresh(t *testing.T) {
+	e := newEnv(t)
+	id := e.ids["shop"]
+	obs := &fakeObserver{ctl: e.ctl, id: id, cs: project.ParseContainers([]byte(runningOut("shop"))), dockerUp: true, ok: true}
+	e.ctl.setObserver(obs)
+	e.cmd.containers("").on(runner.ComposeStop, reply{})
+
+	wantResult(t, e.do(t, "shop", project.ActionStop), OutcomeOK, project.StatusStopped, "")
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.changes) != 2 {
+		t.Fatalf("lockChanged calls = %+v, want 2", obs.changes)
+	}
+	if release := obs.changes[1]; release.fresh == nil || len(release.fresh) != 0 {
+		t.Fatalf("release fresh = %#v, want an empty non-nil list", release.fresh)
+	}
+}

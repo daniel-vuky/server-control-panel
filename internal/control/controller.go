@@ -316,7 +316,9 @@ func (c *Controller) execute(ctx context.Context, t store.Tracked, a project.Act
 	cancel()
 	res.Status = project.StatusUnknown
 	if readErr == nil {
-		fresh = cs
+		// Never nil on success: the observer reads nil as a failed re-read,
+		// and an empty list (nothing left running on the host) is a real one.
+		fresh = append([]project.Container{}, cs...)
 		res.Status = project.StatusOf(cs, t.ComposeProject, t.Services)
 	} else {
 		c.log.Warn("control: cannot re-read containers", "project", t.ID, "err", readErr)
