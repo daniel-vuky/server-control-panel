@@ -136,11 +136,11 @@ func TestViewsEffectiveStatus(t *testing.T) {
 		{ID: 3, DisplayName: "panel", ComposeProject: "panel", Services: []string{"app", "db"}, Self: true},
 	}
 	cs := project.ParseContainers([]byte(runningOut("shop") + runningOut("blog") + runningOut("panel")))
-	inFlight := func(id int64) (project.Status, bool) {
+	inFlight := func(id int64) (project.Status, bool, bool) {
 		if id == 2 {
-			return project.StatusStopping, true
+			return project.StatusStopping, false, true
 		}
-		return "", false
+		return "", false, false
 	}
 	type want struct {
 		status  project.Status
@@ -150,23 +150,23 @@ func TestViewsEffectiveStatus(t *testing.T) {
 		name     string
 		readErr  error
 		dockerUp bool
-		inFlight func(int64) (project.Status, bool)
+		inFlight func(int64) (project.Status, bool, bool)
 		want     []want
 	}{
-		{"in-flight wins, self has no actions", nil, true, inFlight, []want{
-			{project.StatusRunning, []project.Action{project.ActionStop, project.ActionRestart}},
+		{"in-flight wins, self has only untrack", nil, true, inFlight, []want{
+			{project.StatusRunning, []project.Action{project.ActionStop, project.ActionRestart, project.ActionUntrack}},
 			{project.StatusStopping, []project.Action{}},
-			{project.StatusRunning, []project.Action{}},
+			{project.StatusRunning, []project.Action{project.ActionUntrack}},
 		}},
 		{"a read error gives unknown", errors.New("boom"), true, inFlight, []want{
-			{project.StatusUnknown, []project.Action{}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
 			{project.StatusStopping, []project.Action{}},
-			{project.StatusUnknown, []project.Action{}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
 		}},
-		{"Docker down gives no actions", errors.New("down"), false, nil, []want{
-			{project.StatusUnknown, []project.Action{}},
-			{project.StatusUnknown, []project.Action{}},
-			{project.StatusUnknown, []project.Action{}},
+		{"Docker down gives only untrack", errors.New("down"), false, nil, []want{
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
+			{project.StatusUnknown, []project.Action{project.ActionUntrack}},
 		}},
 	}
 	for _, tt := range tests {
@@ -224,10 +224,10 @@ func TestHubSubscribeGetsState(t *testing.T) {
 			t.Errorf("%s is %s, want %s", name, v.Status, want)
 		}
 	}
-	if v := viewOf(t, cur, "panel"); len(v.Actions) != 0 {
-		t.Errorf("panel actions = %v, want none", v.Actions)
+	if v := viewOf(t, cur, "panel"); !slices.Equal(v.Actions, []project.Action{project.ActionUntrack}) {
+		t.Errorf("panel actions = %v, want only untrack", v.Actions)
 	}
-	if v := viewOf(t, cur, "shop"); !slices.Equal(v.Actions, []project.Action{project.ActionStop, project.ActionRestart}) {
+	if v := viewOf(t, cur, "shop"); !slices.Equal(v.Actions, []project.Action{project.ActionStop, project.ActionRestart, project.ActionUntrack}) {
 		t.Errorf("shop actions = %v", v.Actions)
 	}
 
@@ -317,7 +317,7 @@ func TestHubLockChangedPushesWithoutTick(t *testing.T) {
 	// Take the lock as Do does, then tell the hub.
 	id := e.ids["shop"]
 	e.ctl.mu.Lock()
-	e.ctl.locks[id] = project.StatusStopping
+	e.ctl.locks[id] = projectLock{status: project.StatusStopping}
 	e.ctl.gen++
 	e.ctl.mu.Unlock()
 	start := time.Now()
@@ -334,8 +334,8 @@ func TestHubLockChangedPushesWithoutTick(t *testing.T) {
 	e.ctl.unlock(id)
 	h.lockChanged(project.ParseContainers([]byte(stoppedOut("shop"))))
 	s = nextUpdate(t, updates, 10*time.Millisecond)
-	if v := viewOf(t, s, "shop"); v.Status != project.StatusStopped || !slices.Equal(v.Actions, []project.Action{project.ActionStart}) {
-		t.Fatalf("shop = %s %v, want stopped with start", v.Status, v.Actions)
+	if v := viewOf(t, s, "shop"); v.Status != project.StatusStopped || !slices.Equal(v.Actions, []project.Action{project.ActionStart, project.ActionUntrack}) {
+		t.Fatalf("shop = %s %v, want stopped with start and untrack", v.Status, v.Actions)
 	}
 	if n := e.cmd.count(runner.DockerPing) + e.cmd.count(runner.DockerContainers); n != reads {
 		t.Fatalf("%d Docker reads after the lock changes, want none", n-reads)
@@ -417,8 +417,9 @@ func TestHubStaleTickGivesUpAfterThreeReads(t *testing.T) {
 	}
 }
 
+// Do, Untrack, WithLocks and Refresh mixed with Check and the loop.
 func TestNoDeadlock(t *testing.T) {
-	e, h := newHubEnv(t, 20*time.Millisecond)
+	e, h := newHubEnv(t, 5*time.Millisecond)
 	all := ""
 	names := []string{"shop", "blog", "over", "panel", "notes"}
 	for _, n := range names {
@@ -431,19 +432,26 @@ func TestNoDeadlock(t *testing.T) {
 	} {
 		e.cmd.on(a, reply{delay: time.Millisecond})
 	}
+	e.markMissing(t, "notes")
 	_, updates := subscribe(t, h)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		ctx, cancel := context.WithCancel(context.Background())
-		var checks sync.WaitGroup
-		checks.Go(func() {
+		var bg sync.WaitGroup
+		bg.Go(func() {
 			for ctx.Err() == nil {
 				h.Check(ctx)
 			}
 		})
-		checks.Go(func() {
+		bg.Go(func() {
+			for ctx.Err() == nil {
+				h.Refresh()
+				time.Sleep(time.Millisecond)
+			}
+		})
+		bg.Go(func() {
 			for {
 				select {
 				case <-updates:
@@ -452,20 +460,37 @@ func TestNoDeadlock(t *testing.T) {
 				}
 			}
 		})
+		ok := func(err error) bool {
+			var r *Refusal
+			return err == nil || errors.As(err, &r) || errors.Is(err, store.ErrNotFound)
+		}
 		var wg sync.WaitGroup
 		actions := []project.Action{project.ActionStart, project.ActionStop, project.ActionRestart}
-		for i := range 50 {
+		for i := range 60 {
+			id := e.ids[names[i%len(names)]]
 			wg.Go(func() {
-				_, err := e.ctl.Do(context.Background(), e.ids[names[i%len(names)]], actions[i%len(actions)], actor)
-				var r *Refusal
-				if err != nil && !errors.As(err, &r) {
-					t.Errorf("Do: %v", err)
+				switch i % 4 {
+				case 0:
+					if _, err := e.ctl.Untrack(context.Background(), id, actor); !ok(err) {
+						t.Errorf("Untrack: %v", err)
+					}
+				case 1:
+					if err := e.ctl.WithLocks([]int64{e.ids["shop"], e.ids["blog"]}, func() error {
+						_, err := e.st.TrackedProjects(context.Background())
+						return err
+					}); !ok(err) {
+						t.Errorf("WithLocks: %v", err)
+					}
+				default:
+					if _, err := e.ctl.Do(context.Background(), id, actions[i%len(actions)], actor); !ok(err) {
+						t.Errorf("Do: %v", err)
+					}
 				}
 			})
 		}
 		wg.Wait()
 		cancel()
-		checks.Wait()
+		bg.Wait()
 	}()
 	select {
 	case <-done:
@@ -474,7 +499,7 @@ func TestNoDeadlock(t *testing.T) {
 		t.Fatalf("deadlock: not done after 10s\n%s", buf[:runtime.Stack(buf, true)])
 	}
 	for _, n := range names {
-		if _, locked := e.ctl.InFlight(e.ids[n]); locked {
+		if _, _, locked := e.ctl.Lock(e.ids[n]); locked {
 			t.Errorf("%s is still locked", n)
 		}
 	}
@@ -488,8 +513,8 @@ func TestHubDockerDown(t *testing.T) {
 		t.Fatalf("state = %+v, want Docker down and 5 projects", cur)
 	}
 	for _, v := range cur.Projects {
-		if v.Status != project.StatusUnknown || len(v.Actions) != 0 || v.Actions == nil {
-			t.Errorf("%s = %s %v, want unknown with no actions", v.DisplayName, v.Status, v.Actions)
+		if v.Status != project.StatusUnknown || !slices.Equal(v.Actions, []project.Action{project.ActionUntrack}) {
+			t.Errorf("%s = %s %v, want unknown with only untrack", v.DisplayName, v.Status, v.Actions)
 		}
 	}
 	if n := e.cmd.count(runner.DockerContainers); n != 0 {

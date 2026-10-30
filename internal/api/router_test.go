@@ -208,13 +208,18 @@ func newTestDeps(t *testing.T) Deps {
 		defer cancel()
 		_ = ctl.Wait(ctx)
 	})
+	guard := roots.New([]string{root}, log)
+	// Wired as in cmd/panel.
+	scans := scan.NewManager(st, docker, log)
+	scans.SetGuard(guard)
+	scans.SetOnChange(hub.Refresh)
 	return Deps{
 		Version:  "1.2.3",
 		Verifier: allowVerifier{},
 		Web:      webStub(),
-		Guard:    roots.New([]string{root}, log),
+		Guard:    guard,
 		Store:    st,
-		Scans:    scan.NewManager(st, docker, log),
+		Scans:    scans,
 		Docker:   docker,
 		Control:  ctl,
 		Hub:      hub,
@@ -345,6 +350,9 @@ func TestNewEndpointsNeedIdentity(t *testing.T) {
 		{http.MethodPost, "/api/projects/1/restart"},
 		{http.MethodGet, "/api/events"},
 		{http.MethodPost, "/api/docker/check"},
+		{http.MethodPost, "/api/rescans"},
+		{http.MethodPost, "/api/workspaces/1/remove"},
+		{http.MethodPost, "/api/projects/1/untrack"},
 	} {
 		if rec := do(h, tc.method, tc.path); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", tc.method, tc.path, rec.Code)

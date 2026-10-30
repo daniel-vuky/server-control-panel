@@ -50,9 +50,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return nil, fmt.Errorf("store: create data directory: %w", err)
 	}
-	u := url.URL{Scheme: "file", Path: abs}
-	u.RawQuery = "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", dsn(abs))
 	if err != nil {
 		return nil, fmt.Errorf("store: %w", err)
 	}
@@ -70,6 +68,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// dsn is the connection string for the database file at the absolute path abs.
+func dsn(abs string) string {
+	u := url.URL{Scheme: "file", Path: abs}
+	u.RawQuery = "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
+	return u.String()
 }
 
 // Close closes the database.

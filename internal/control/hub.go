@@ -47,37 +47,50 @@ type State struct {
 }
 
 // Views gives each tracked project its effective status and allowed actions:
-// the in-flight status while a command runs on it, else unknown when Docker is
-// down or the containers could not be read (readErr), else its status from cs.
-// inFlight may be nil.
+// the in-flight status while a command runs on it, else Not found when a
+// rescan could not find its folder, else unknown when Docker is down or the
+// containers could not be read (readErr), else its status from cs. A project
+// held for a store write keeps that computed status and allows no action.
+// lock has Controller.Lock's shape and may be nil.
 func Views(ts []store.Tracked, cs []project.Container, readErr error, dockerUp bool,
-	inFlight func(int64) (project.Status, bool)) []ProjectView {
+	lock func(int64) (status project.Status, held bool, ok bool)) []ProjectView {
 	out := make([]ProjectView, 0, len(ts))
 	for _, t := range ts {
+		s, held, locked := lookup(lock, t.ID)
 		status := project.StatusUnknown
-		if s, ok := lookup(inFlight, t.ID); ok {
+		switch {
+		case locked && !held:
 			status = s
-		} else if dockerUp && readErr == nil {
+		case t.MissingSince != nil:
+			status = project.StatusNotFound
+		case dockerUp && readErr == nil:
 			status = project.StatusOf(cs, t.ComposeProject, t.Services)
 		}
-		out = append(out, ProjectView{Tracked: t, Status: status, Actions: project.Allowed(status, t.Self, dockerUp)})
+		actions := project.Allowed(status, t.Self, dockerUp)
+		if held {
+			actions = []project.Action{}
+		}
+		out = append(out, ProjectView{Tracked: t, Status: status, Actions: actions})
 	}
 	return out
 }
 
-func lookup(inFlight func(int64) (project.Status, bool), id int64) (project.Status, bool) {
-	if inFlight == nil {
-		return "", false
+func lookup(lock func(int64) (project.Status, bool, bool), id int64) (project.Status, bool, bool) {
+	if lock == nil {
+		return "", false, false
 	}
-	return inFlight(id)
+	return lock(id)
 }
 
 // tickRun is one tick in progress. Callers that find it wait for done, then
-// read state; ok is false when the tick was abandoned (its context ended).
+// read state; ok is false when the tick was abandoned (its context ended) or
+// stale (Refresh said the store changed while it ran, so it published
+// nothing and another tick must run).
 type tickRun struct {
 	done  chan struct{}
 	state State
 	ok    bool
+	stale bool
 }
 
 // Hub reads Docker once for every subscriber and broadcasts the snapshots
@@ -85,7 +98,7 @@ type tickRun struct {
 // tickInterval; with none it does no work. Ticks never overlap: Check during a
 // tick waits for that tick's result.
 //
-// Lock order: the hub calls the Controller's InFlight and Generation while it
+// Lock order: the hub calls the Controller's Lock and Generation while it
 // holds mu (hub.mu → ctl.mu); it never runs Docker or reads the store with mu
 // held.
 type Hub struct {
@@ -100,6 +113,7 @@ type Hub struct {
 	subs     map[chan State]struct{}
 	stopLoop context.CancelFunc // non-nil while the loop runs
 	running  *tickRun           // the tick in progress, or nil
+	tsGen    uint64             // bumped by Refresh; a tick that saw it change publishes nothing
 
 	// The cache: the tracked projects and the last container list, as the
 	// last tick or lock release left them.
@@ -168,6 +182,36 @@ func (h *Hub) Check(ctx context.Context) State {
 	return h.shared(ctx)
 }
 
+// Refresh makes the next published state reflect the store, without waiting;
+// call it after a change to the tracked list. With no subscriber it only marks
+// the cache not ready, so the next Subscribe reads fresh (the hub never reads
+// Docker without a subscriber). While a tick runs, that tick may have read the
+// store before the change: it publishes nothing and one more tick runs at
+// once. Otherwise it starts a tick on its own goroutine.
+func (h *Hub) Refresh() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Bumped in every case: a Check's tick can run with no subscriber, and
+	// must not publish (or mark ready) a list read before the change.
+	h.tsGen++
+	switch {
+	case h.stopLoop == nil:
+		h.ready = false
+	case h.running != nil:
+		// That tick is now stale and its runner ticks again. A Check runner
+		// whose context ends, or the maxTickReads cap, can still leave the
+		// old list until the next interval tick.
+	default:
+		// Two quick Refresh calls may start two goroutines; the second finds
+		// the first one's tick running and shares it.
+		h.loops.Add(1)
+		go func() {
+			defer h.loops.Done()
+			h.shared(context.Background())
+		}()
+	}
+}
+
 // loop ticks, then waits tickInterval, until ctx ends. It never uses a Ticker,
 // so a slow Docker stretches the cadence instead of piling up reads.
 func (h *Hub) loop(ctx context.Context) {
@@ -183,9 +227,10 @@ func (h *Hub) loop(ctx context.Context) {
 }
 
 // shared runs one tick, or waits for the one in progress, and returns its
-// state. If that tick was abandoned, it runs its own.
+// state. If that tick was abandoned or stale, it runs its own; a stale tick it
+// ran itself is run again at once, at most maxTickReads times in all.
 func (h *Hub) shared(ctx context.Context) State {
-	for {
+	for ticks := 1; ; {
 		h.mu.Lock()
 		run := h.running
 		if run == nil {
@@ -195,6 +240,10 @@ func (h *Hub) shared(ctx context.Context) State {
 			h.runTick(ctx, run)
 			if run.ok {
 				return run.state
+			}
+			if run.stale && ctx.Err() == nil && ticks < maxTickReads {
+				ticks++
+				continue
 			}
 			return h.current()
 		}
@@ -220,7 +269,9 @@ func (h *Hub) runTick(ctx context.Context, run *tickRun) {
 	defer func() {
 		r := recover()
 		h.mu.Lock()
-		h.running = nil
+		if h.running == run { // the tick may have ended it already
+			h.running = nil
+		}
 		h.mu.Unlock()
 		if r != nil {
 			h.log.Error("hub tick panicked", "panic", r, "stack", string(debug.Stack()))
@@ -228,21 +279,30 @@ func (h *Hub) runTick(ctx context.Context, run *tickRun) {
 		}
 		close(run.done)
 	}()
-	run.state, run.ok = h.tick(ctx)
+	run.state, run.ok, run.stale = h.tick(ctx, run)
 }
 
 // tick reads the tracked projects and Docker, then updates the cache and
 // broadcasts in one critical section. If a lock changed during the read, the
 // container list may predate the change: it is dropped and read again, at
 // most maxTickReads times in all; after that the cached list (which the lock
-// release refreshed) is published. ok is false when ctx ended.
-func (h *Hub) tick(ctx context.Context) (State, bool) {
+// release refreshed) is published. If Refresh ran meanwhile, the tracked
+// projects may predate a store change: the tick changes and publishes nothing
+// and returns stale. ok is false when ctx ended or the tick is stale.
+//
+// The publish also ends run (h.running = nil) in the same critical section:
+// a Refresh after it must start a new tick, since this one can no longer see
+// the change.
+func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) {
+	h.mu.Lock()
+	tsGen := h.tsGen
+	h.mu.Unlock()
 	gen := h.ctl.Generation()
 	ts, tsErr := h.st.TrackedProjects(ctx)
 	_, pingErr := h.cmd.Run(ctx, runner.StackDocker, runner.DockerPing, nil, nil)
 	up := pingErr == nil
 	if ctx.Err() != nil {
-		return State{}, false
+		return State{}, false, false
 	}
 	if tsErr != nil {
 		h.log.Warn("hub: cannot read the tracked projects", "err", tsErr)
@@ -257,7 +317,7 @@ func (h *Hub) tick(ctx context.Context) (State, bool) {
 		if up {
 			cs, readErr = scan.ReadContainers(ctx, h.cmd)
 			if ctx.Err() != nil {
-				return State{}, false
+				return State{}, false, false
 			}
 			if readErr != nil {
 				h.log.Warn("hub: cannot read containers", "err", readErr)
@@ -265,6 +325,10 @@ func (h *Hub) tick(ctx context.Context) (State, bool) {
 		}
 
 		h.mu.Lock()
+		if h.tsGen != tsGen {
+			h.mu.Unlock()
+			return State{}, false, true
+		}
 		stale := h.ctl.Generation() != gen
 		if stale && up && reads < maxTickReads {
 			gen = h.ctl.Generation()
@@ -283,9 +347,12 @@ func (h *Hub) tick(ctx context.Context) (State, bool) {
 		if !stale {
 			h.cs, h.csOK, h.at = cs, up && readErr == nil, time.Now()
 		}
-		s := h.publishLocked()
+		s = h.publishLocked()
+		if h.running == run {
+			h.running = nil
+		}
 		h.mu.Unlock()
-		return s, true
+		return s, true, false
 	}
 }
 
@@ -308,7 +375,8 @@ func (h *Hub) recent(maxAge time.Duration) (cs []project.Container, dockerUp boo
 }
 
 // lockChanged is called by the Controller after a lock take (fresh nil) or a
-// release (fresh is the re-read list, nil when it failed). It neither reads
+// release (fresh is the re-read list, nil when it failed), except after a
+// successful WithLocks write, whose caller calls Refresh instead. It neither reads
 // the store nor runs Docker, and must not panic: the Controller calls it from
 // its release path.
 func (h *Hub) lockChanged(fresh []project.Container) {
@@ -336,7 +404,7 @@ func (h *Hub) buildLocked() State {
 	if !h.csOK {
 		readErr = errNoRead
 	}
-	return State{DockerUp: h.dockerUp, Projects: Views(h.ts, h.cs, readErr, h.dockerUp, h.ctl.InFlight)}
+	return State{DockerUp: h.dockerUp, Projects: Views(h.ts, h.cs, readErr, h.dockerUp, h.ctl.Lock)}
 }
 
 // publishLocked builds the state and sends it to every subscriber when its

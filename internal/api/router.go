@@ -68,8 +68,13 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /api/scans/{id}", protect(http.HandlerFunc(s.getScan)))
 	mux.Handle("GET /api/scans/{id}/events", protect(http.HandlerFunc(s.scanEvents)))
 	mux.Handle("POST /api/scans/{id}/track", protect(requireJSON(http.HandlerFunc(s.trackScan))))
+	mux.Handle("POST /api/rescans", protect(requireJSON(http.HandlerFunc(s.startRescan))))
 	mux.Handle("GET /api/workspaces", protect(http.HandlerFunc(s.listWorkspaces)))
+	mux.Handle("POST /api/workspaces/{id}/remove", protect(requireJSON(http.HandlerFunc(s.removeWorkspace))))
 	mux.Handle("GET /api/projects", protect(http.HandlerFunc(s.listProjects)))
+	// The literal untrack route wins over {action}, which keeps 404 for
+	// untrack and remove as actions.
+	mux.Handle("POST /api/projects/{id}/untrack", protect(requireJSON(http.HandlerFunc(s.untrackProject))))
 	mux.Handle("POST /api/projects/{id}/{action}", protect(requireJSON(http.HandlerFunc(s.projectAction))))
 	mux.Handle("GET /api/events", protect(http.HandlerFunc(s.events)))
 	mux.Handle("POST /api/docker/check", protect(requireJSON(http.HandlerFunc(s.dockerCheck))))
@@ -86,13 +91,19 @@ func NewRouter(d Deps) http.Handler {
 // fail the request. The write outlives r's cancellation, so a client that goes
 // away does not lose the row.
 func (s *server) record(r *http.Request, a store.Activity, result, reason string) {
-	a.Actor, a.ActorKind = "", store.ActorPerson
-	if id, ok := auth.FromContext(r.Context()); ok {
-		a.Actor = id.Email
-	}
+	a.Actor, a.ActorKind = actor(r), store.ActorPerson
 	if err := s.Store.RecordActivity(context.WithoutCancel(r.Context()), a, result, reason); err != nil {
 		s.log.Error("record activity", "action", a.Action, "result", result, "err", err)
 	}
+}
+
+// actor is the verified email of r's identity, "" when there is none. It
+// comes only from auth.FromContext.
+func actor(r *http.Request) string {
+	if id, ok := auth.FromContext(r.Context()); ok {
+		return id.Email
+	}
+	return ""
 }
 
 // internalError logs err and answers 500 without its text, which may name

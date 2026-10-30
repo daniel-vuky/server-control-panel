@@ -55,6 +55,22 @@ describe('ConfirmDialog', () => {
     expect(screen.getByText('$ docker compose stop · timeout 60s')).toBeInTheDocument()
   })
 
+  it('shows no command box when there is no command', () => {
+    render(
+      <ConfirmDialog
+        title="Remove it?"
+        body="Nothing on the server is touched."
+        confirmLabel="Remove"
+        tone="danger"
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    )
+    expect(screen.getByText('Nothing on the server is touched.')).toBeInTheDocument()
+    expect(screen.queryByText(/timeout/)).toBeNull()
+    expect(screen.queryByText(/\$ /)).toBeNull()
+  })
+
   it('starts with focus on Cancel', () => {
     setup()
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()

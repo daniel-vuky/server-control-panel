@@ -30,6 +30,7 @@ const state: LiveState = {
       status: 'running',
       actions: ['stop'],
       databases: [],
+      missingSince: '',
     },
   ],
 }

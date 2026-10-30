@@ -163,6 +163,63 @@ describe('ActionMenu', () => {
     )
   })
 
+  describe('stop tracking and remove', () => {
+    function withUntrack(actions: string[]) {
+      const onUntrack = vi.fn()
+      render(
+        <ActionMenu
+          name="shop"
+          actions={actions}
+          onStart={() => {}}
+          onRestart={() => {}}
+          onUntrack={onUntrack}
+        />,
+      )
+      open(screen.getByRole('button', { name: 'More actions for shop' }))
+      return onUntrack
+    }
+
+    it('shows Stop tracking, red, after a divider, when untrack is allowed', () => {
+      const onUntrack = withUntrack(['stop', 'restart', 'untrack'])
+      const item = screen.getByRole('menuitem', { name: 'Stop tracking' })
+      expect(item).toHaveClass('text-danger')
+      expect(item).not.toHaveAttribute('aria-disabled')
+      expect(screen.queryByRole('menuitem', { name: 'Remove from list' })).toBeNull()
+      const sep = screen.getByRole('separator')
+      expect(sep.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      fireEvent.click(item)
+      expect(onUntrack).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('menu')).toBeNull()
+    })
+
+    it('shows Remove from list, red, when remove is allowed', () => {
+      const onUntrack = withUntrack(['remove'])
+      const item = screen.getByRole('menuitem', { name: 'Remove from list' })
+      expect(item).toHaveClass('text-danger')
+      expect(screen.queryByRole('menuitem', { name: 'Stop tracking' })).toBeNull()
+      // Start and Restart stay, disabled.
+      expect(screen.getByRole('menuitem', { name: 'Start' })).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      )
+      fireEvent.click(item)
+      expect(onUntrack).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows neither item, and no divider, when neither is allowed', () => {
+      withUntrack(['start', 'restart'])
+      expect(screen.queryByRole('menuitem', { name: 'Stop tracking' })).toBeNull()
+      expect(screen.queryByRole('menuitem', { name: 'Remove from list' })).toBeNull()
+      expect(screen.queryByRole('separator')).toBeNull()
+    })
+
+    it('reaches the red item with the arrows', () => {
+      withUntrack(['untrack'])
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' })
+      expect(screen.getByRole('menuitem', { name: 'Stop tracking' })).toHaveFocus()
+    })
+  })
+
   describe('placement', () => {
     afterEach(() => vi.restoreAllMocks())
 

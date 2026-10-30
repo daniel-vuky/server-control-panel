@@ -1,17 +1,10 @@
-import { CircleAlert } from 'lucide-react'
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 import { ApiError } from '../../api/client'
-import { getScan, startScan, trackScan, watchScan } from '../../api/scans'
-import type {
-  FieldError,
-  ScanBusy,
-  ScanJob,
-  ScanProgress,
-  ScanResult,
-  TrackItem,
-} from '../../api/types.gen'
+import { getScan, isScanBusy, startScan, trackScan, watchScan } from '../../api/scans'
+import type { FieldError, ScanJob, ScanProgress, ScanResult, TrackItem } from '../../api/types.gen'
 import { useToast } from '../../components/Toast'
+import ScanFailed from './ScanFailed'
 import ScanProgressView from './ScanProgressView'
 import ScanResults, { NothingFound } from './ScanResults'
 import WorkspaceStep, { DEPTHS, type FieldErrors } from './WorkspaceStep'
@@ -42,32 +35,38 @@ function isFieldError(body: unknown): body is FieldError {
   )
 }
 
-function isScanBusy(body: unknown): body is ScanBusy {
-  const b = body as ScanBusy | null
-  return (
-    typeof b === 'object' &&
-    b !== null &&
-    typeof b.id === 'number' &&
-    typeof b.path === 'string' &&
-    typeof b.depth === 'number'
-  )
+/** handedOffScan is the scan id the Dashboard or the rescan page passed in the router state. */
+function handedOffScan(state: unknown): number | null {
+  const id = (state as { scanId?: unknown } | null)?.scanId
+  return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null
 }
 
 const message = (err: unknown) =>
   err instanceof Error && err.message ? err.message : 'Something went wrong. Try again.'
 
-const emptyProgress: ScanProgress = { examined: 0, total: 0, current: '' }
+const emptyProgress: ScanProgress = {
+  examined: 0,
+  total: 0,
+  current: '',
+  workspace: 0,
+  workspaces: 0,
+}
 
 /** OnboardingPage is /onboarding: design 03 steps 1–2. */
 export default function OnboardingPage() {
   const navigate = useNavigate()
   const toast = useToast()
+  // The Dashboard sends the id of a first scan that already runs.
+  const location = useLocation()
+  const [handedOff] = useState(() => handedOffScan(location.state))
 
   const [path, setPath] = useState('')
   const [depth, setDepth] = useState(1)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState('')
-  const [phase, setPhase] = useState<Phase>({ kind: 'form' })
+  const [phase, setPhase] = useState<Phase>(() =>
+    handedOff === null ? { kind: 'form' } : { kind: 'scanning', id: handedOff, path: '', depth: 1 },
+  )
   const [progress, setProgress] = useState<ScanProgress>(emptyProgress)
   const [starting, setStarting] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -75,36 +74,49 @@ export default function OnboardingPage() {
   const [focusPath, setFocusPath] = useState(0)
   const pathRef = useRef<HTMLInputElement>(null)
 
-  const scan = useCallback(async (p: string, d: number) => {
-    setPath(p)
-    setDepth(d)
-    setErrors({})
-    setFormError('')
-    setTrackError('')
-    setStarting(true)
-    try {
-      const { id } = await startScan({ path: p, depth: d })
-      setProgress(emptyProgress)
-      setPhase({ kind: 'scanning', id, path: p, depth: d })
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && isScanBusy(err.body)) {
-        // Another scan runs: attach to it, as if this tab had started it.
-        setPath(err.body.path)
-        setDepth(err.body.depth)
+  const scan = useCallback(
+    async (p: string, d: number) => {
+      setPath(p)
+      setDepth(d)
+      setErrors({})
+      setFormError('')
+      setTrackError('')
+      setStarting(true)
+      try {
+        const { id } = await startScan({ path: p, depth: d })
         setProgress(emptyProgress)
-        setPhase({ kind: 'scanning', id: err.body.id, path: err.body.path, depth: err.body.depth })
-      } else if (err instanceof ApiError && err.status === 422 && isFieldError(err.body)) {
-        const field = err.body.field === 'depth' ? 'depth' : 'path'
-        setErrors({ [field]: err.body.error })
-        setPhase({ kind: 'form' })
-      } else {
-        setFormError(message(err))
-        setPhase({ kind: 'form' })
+        setPhase({ kind: 'scanning', id, path: p, depth: d })
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409 && isScanBusy(err.body)) {
+          if (err.body.rescan) {
+            // A rescan runs: it has its own page.
+            navigate(`/rescan/${err.body.id}`)
+            return
+          }
+          // Another scan runs: attach to it, as if this tab had started it.
+          setPath(err.body.path)
+          setDepth(err.body.depth)
+          setProgress(emptyProgress)
+          setPhase({
+            kind: 'scanning',
+            id: err.body.id,
+            path: err.body.path,
+            depth: err.body.depth,
+          })
+        } else if (err instanceof ApiError && err.status === 422 && isFieldError(err.body)) {
+          const field = err.body.field === 'depth' ? 'depth' : 'path'
+          setErrors({ [field]: err.body.error })
+          setPhase({ kind: 'form' })
+        } else {
+          setFormError(message(err))
+          setPhase({ kind: 'form' })
+        }
+      } finally {
+        setStarting(false)
       }
-    } finally {
-      setStarting(false)
-    }
-  }, [])
+    },
+    [navigate],
+  )
 
   const scanId = phase.kind === 'scanning' ? phase.id : null
 
@@ -145,6 +157,24 @@ export default function OnboardingPage() {
       ctrl.abort()
     }
   }, [scanId])
+
+  // A handed-off scan starts without a path or depth: read them from the job.
+  useEffect(() => {
+    if (handedOff === null) return
+    const ctrl = new AbortController()
+    getScan(handedOff, ctrl.signal)
+      .then((j) => {
+        setPath(j.path)
+        setDepth(j.depth)
+        setPhase((ph) =>
+          ph.kind === 'scanning' && ph.id === j.id ? { ...ph, path: j.path, depth: j.depth } : ph,
+        )
+      })
+      .catch(() => {
+        // The watch reports a job that cannot be read.
+      })
+    return () => ctrl.abort()
+  }, [handedOff])
 
   useEffect(() => {
     if (focusPath > 0) pathRef.current?.focus()
@@ -281,32 +311,5 @@ function Stepper({ current }: { current: number }) {
         )
       })}
     </ol>
-  )
-}
-
-function ScanFailed({ error, busy, onRetry }: { error: string; busy: boolean; onRetry(): void }) {
-  return (
-    <div
-      role="alert"
-      className="flex flex-col gap-3 rounded-[10px] border border-danger/40 bg-danger/10 p-3.5"
-    >
-      <p className="flex items-start gap-2 text-[13px] text-text">
-        <CircleAlert
-          aria-hidden="true"
-          size={16}
-          strokeWidth={2}
-          className="mt-0.5 flex-none text-danger"
-        />
-        <span>{error}</span>
-      </p>
-      <button
-        type="button"
-        onClick={onRetry}
-        disabled={busy}
-        className="h-9 w-fit cursor-pointer rounded-lg border border-border-strong px-4 text-text disabled:cursor-default disabled:opacity-50"
-      >
-        Scan again
-      </button>
-    </div>
   )
 }

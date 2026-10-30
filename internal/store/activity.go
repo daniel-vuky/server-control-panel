@@ -18,11 +18,15 @@ const (
 
 // What was done.
 const (
-	ActProjectStart   = "project.start"
-	ActProjectStop    = "project.stop"
-	ActProjectRestart = "project.restart"
-	ActScanStart      = "scan.start"
-	ActScanTrack      = "scan.track"
+	ActProjectStart    = "project.start"
+	ActProjectStop     = "project.stop"
+	ActProjectRestart  = "project.restart"
+	ActScanStart       = "scan.start"
+	ActScanTrack       = "scan.track"
+	ActWorkspaceRescan = "workspace.rescan"
+	ActWorkspaceRemove = "workspace.remove"
+	ActProjectUntrack  = "project.untrack"
+	ActProjectRemove   = "project.remove"
 )
 
 // How it ended.

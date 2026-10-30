@@ -20,10 +20,16 @@ func TestAllowed(t *testing.T) {
 		for _, self := range []bool{false, true} {
 			for _, up := range []bool{false, true} {
 				want := []Action{}
-				if !self && up {
-					if b, ok := base[s]; ok {
-						want = b
+				switch s {
+				case StatusNotFound:
+					want = []Action{ActionRemove}
+				case StatusStarting, StatusStopping, StatusRestarting:
+					want = []Action{}
+				default:
+					if !self && up {
+						want = append(want, base[s]...)
 					}
+					want = append(want, ActionUntrack)
 				}
 				got := Allowed(s, self, up)
 				if !reflect.DeepEqual(got, want) {
@@ -31,6 +37,22 @@ func TestAllowed(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestAllowedUntrackWithDockerDownAndSelf(t *testing.T) {
+	want := []Action{ActionUntrack}
+	if got := Allowed(StatusRunning, true, true); !reflect.DeepEqual(got, want) {
+		t.Errorf("self: got %v, want %v", got, want)
+	}
+	if got := Allowed(StatusUnknown, false, false); !reflect.DeepEqual(got, want) {
+		t.Errorf("docker down: got %v, want %v", got, want)
+	}
+	if got := Allowed(StatusNotFound, true, false); !reflect.DeepEqual(got, []Action{ActionRemove}) {
+		t.Errorf("notfound: got %v, want [remove]", got)
+	}
+	if ActionUntrack != "untrack" || ActionRemove != "remove" {
+		t.Errorf("action values: %q %q", ActionUntrack, ActionRemove)
 	}
 }
 

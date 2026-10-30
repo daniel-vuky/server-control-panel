@@ -1,5 +1,5 @@
 import { FolderSearch, TriangleAlert } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import type { ScanJob, ScanResult, ScanRow, TrackItem } from '../../api/types.gen'
 import DatabaseCell from '../../components/DatabaseCell'
 import MonitorOnlyTag from '../../components/MonitorOnlyTag'
@@ -17,7 +17,15 @@ function notShown(r: ScanResult): string {
 }
 
 /** Summary is the line under the step 2 heading; `where` adds the path and depth. */
-function Summary({ job, result, where }: { job: ScanJob; result: ScanResult; where: boolean }) {
+export function Summary({
+  job,
+  result,
+  where,
+}: {
+  job: ScanJob
+  result: ScanResult
+  where: boolean
+}) {
   const hidden = notShown(result)
   const scanned = `${plural(result.foldersScanned, 'folder', 'folders')} scanned`
   return (
@@ -46,7 +54,7 @@ function Summary({ job, result, where }: { job: ScanJob; result: ScanResult; whe
   )
 }
 
-type Choice = { checked: boolean; name: string }
+export type Choice = { checked: boolean; name: string }
 
 type Props = {
   job: ScanJob & { result: ScanResult }
@@ -165,14 +173,17 @@ export default function ScanResults({ job, busy, error, onRescan, onAdd }: Props
   )
 }
 
-function Row({
+export function Row({
   row,
   choice,
   onChange,
+  tag,
 }: {
   row: ScanRow
   choice: Choice
   onChange(c: Partial<Choice>): void
+  /** An extra tag after the name, such as New on a rescan. */
+  tag?: ReactNode
 }) {
   const invalid = choice.checked && choice.name.trim() === ''
   return (
@@ -204,6 +215,7 @@ function Row({
               invalid ? 'border-danger' : 'border-border-strong'
             }`}
           />
+          {tag}
           {row.self && <MonitorOnlyTag />}
         </span>
       </td>

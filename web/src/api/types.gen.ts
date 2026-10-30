@@ -24,6 +24,10 @@ export interface HealthResponse {
 
 
 //////////
+// source: manage.go
+
+
+//////////
 // source: me.go
 
 /**
@@ -67,41 +71,65 @@ export interface ScanStarted {
   id: number /* int64 */;
 }
 /**
- * ScanBusy is the 409 body of POST /api/scans while another scan runs: the
- * running scan, so the client can attach to it.
+ * ScanBusy is the 409 body of POST /api/scans and POST /api/rescans while
+ * another scan runs: the running scan, so the client can attach to it. For a
+ * running rescan, Rescan is true, Path is its target (a workspace path or
+ * "all workspaces") and Depth is 0.
  */
 export interface ScanBusy {
   error: string;
   id: number /* int64 */;
   path: string;
   depth: number /* int */;
+  rescan: boolean;
+}
+/**
+ * RescanRequest is the body of POST /api/rescans: the workspace to rescan, or
+ * 0 for every workspace.
+ */
+export interface RescanRequest {
+  workspaceId: number /* int64 */;
 }
 /**
  * ScanProgress is how far a scan is: folders examined out of the folders
- * listed, and the compose file or folder being examined. It is also the data
- * of the SSE progress event.
+ * listed, and the compose file or folder being examined. For a rescan,
+ * Workspace is the 1-based index of the workspace being scanned and
+ * Workspaces their count; both are 0 for a first-time scan. It is also the
+ * data of the SSE progress event.
  */
 export interface ScanProgress {
   examined: number /* int */;
   total: number /* int */;
   current: string;
+  workspace: number /* int */;
+  workspaces: number /* int */;
 }
 /**
  * ScanJob is the body of GET /api/scans/{id}. State is running, done, failed
- * or interrupted; Result is set when the state is done.
+ * or interrupted; Result is set when the state is done. Rescan is true for a
+ * rescan of stored workspaces: WorkspaceIDs then lists them in scan order (to
+ * retry the same scope), Path is the single workspace's path or "all
+ * workspaces", and Depth is 0. WorkspaceIDs is empty for a first-time scan.
  */
 export interface ScanJob {
   id: number /* int64 */;
   state: string;
   path: string;
   depth: number /* int */;
+  rescan: boolean;
+  workspaceIds: number /* int64 */[];
   progress: ScanProgress;
   error: string;
   result?: ScanResult;
 }
 /**
- * ScanResult is what a finished scan found. AlreadyTracked and Ignored count
- * the projects left out because they are already stored.
+ * ScanResult is what a finished scan found. For a first-time scan,
+ * AlreadyTracked and Ignored count the projects left out because they are
+ * already stored. For a rescan, Rows holds the new and the ignored projects
+ * found; New and IgnoredFound count them, Refreshed counts the tracked
+ * projects found again, NotFound every tracked project not found (marked Not
+ * found), NotFoundPaths the paths newly marked by this rescan, and Workspaces
+ * the workspace paths scanned. A skipped workspace is named in Warnings.
  */
 export interface ScanResult {
   rows: ScanRow[];
@@ -109,10 +137,19 @@ export interface ScanResult {
   alreadyTracked: number /* int */;
   ignored: number /* int */;
   warnings: string[];
+  new: number /* int */;
+  ignoredFound: number /* int */;
+  refreshed: number /* int */;
+  notFound: number /* int */;
+  notFoundPaths: string[];
+  workspaces: string[];
 }
 /**
  * ScanRow is one compose project a scan found. Status is running, partial,
- * stopped, error or unknown. Warning may hold several lines.
+ * stopped, error or unknown. Warning may hold several lines. On a rescan,
+ * WorkspaceID is the workspace the row belongs to, and the row is either New
+ * (a path never stored) or Ignored (a path stored as ignored); on a first-time
+ * scan all three are zero.
  */
 export interface ScanRow {
   path: string;
@@ -123,6 +160,9 @@ export interface ScanRow {
   services: number /* int */;
   databases: Database[];
   warning: string;
+  workspaceId: number /* int64 */;
+  new: boolean;
+  ignored: boolean;
 }
 /**
  * Database is a database a project uses. It holds names only, never values:
@@ -136,8 +176,11 @@ export interface Database {
   sources: string[];
 }
 /**
- * TrackRequest is the body of POST /api/scans/{id}/track: every row of the
- * scan, once, with its display name and whether to track it.
+ * TrackRequest is the body of POST /api/scans/{id}/track. For a first-time
+ * scan it lists every row of the scan, once, with its display name and
+ * whether to track it. For a rescan it lists only the rows to track (a New or
+ * an Ignored row, Track true), once each; the New rows it leaves out are
+ * stored as ignored, and the Ignored rows it leaves out stay ignored.
  */
 export interface TrackRequest {
   projects: TrackItem[];
@@ -152,7 +195,9 @@ export interface TrackItem {
   track: boolean;
 }
 /**
- * TrackResponse is the body of a successful POST /api/scans/{id}/track.
+ * TrackResponse is the body of a successful POST /api/scans/{id}/track: the
+ * workspace stored by a first-time scan (0 for a rescan) and the number of
+ * projects now tracked by it.
  */
 export interface TrackResponse {
   workspaceId: number /* int64 */;
@@ -173,8 +218,12 @@ export interface Workspace {
 /**
  * Project is one element of GET /api/projects and of LiveState: a tracked
  * project with its effective status (running, partial, stopped, error,
- * unknown, or starting, stopping or restarting while a command runs on it)
- * and the actions it allows now (start, stop, restart; [] when none).
+ * unknown, notfound when a rescan could not find its folder, or starting,
+ * stopping or restarting while a command runs on it) and the actions it
+ * allows now: start, stop, restart, untrack, or only remove when Not found;
+ * [] while a command runs on it or it is held for a removal. untrack needs no
+ * Docker, so it is offered even when Docker could not be read. MissingSince is
+ * when a rescan first missed its folder (UTC RFC 3339), "" when it is present.
  */
 export interface Project {
   id: number /* int64 */;
@@ -185,12 +234,13 @@ export interface Project {
   status: string;
   actions: string[];
   databases: Database[];
+  missingSince: string;
 }
 /**
  * ActionResult is the 200 body of POST /api/projects/{id}/{action}: how the
  * command ended (ok, failed or timed_out), the project's status re-read after
- * it, the actions that status allows now (start, stop, restart; [] when none
- * or when Docker could not be read), and the masked reason when it did not
+ * it, the actions it allows now as Project.Actions gives them (with Docker
+ * unreadable that is only untrack), and the masked reason when it did not
  * succeed (empty on ok).
  */
 export interface ActionResult {
@@ -201,14 +251,30 @@ export interface ActionResult {
 }
 /**
  * ActionRefused is the 409 or 503 body of POST /api/projects/{id}/{action}
- * when the command was not run. Code is locked, not_allowed or docker_down;
- * Status is the project's status at the time (its in-flight status when
- * locked, unknown when Docker is down).
+ * when the command was not run, and the 409 body of POST
+ * /api/projects/{id}/untrack (locked) when nothing changed. Code is locked,
+ * not_allowed or docker_down; Status is the project's status at the time (its
+ * in-flight status when locked, unknown when Docker is down).
  */
 export interface ActionRefused {
   error: string;
   code: string;
   status: string;
+}
+/**
+ * UntrackResponse is the 200 body of POST /api/projects/{id}/untrack: the
+ * project left the tracked list (it is ignored now, or deleted when it was
+ * Not found).
+ */
+export interface UntrackResponse {
+  removed: boolean;
+}
+/**
+ * RemoveResponse is the 200 body of POST /api/workspaces/{id}/remove: how
+ * many tracked projects went with the workspace.
+ */
+export interface RemoveResponse {
+  removed: number /* int */;
 }
 /**
  * LiveState is the data of the "state" event of GET /api/events: whether

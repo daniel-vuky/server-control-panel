@@ -1,5 +1,5 @@
 import { ApiError, getJSON, postJSON } from './client'
-import type { ActionResult, DockerCheck, Project } from './types.gen'
+import type { ActionResult, DockerCheck, Project, UntrackResponse } from './types.gen'
 
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   const projects = await getJSON<Project[]>('/api/projects', signal)
@@ -19,4 +19,9 @@ export function runAction(id: number, action: LifecycleAction): Promise<ActionRe
 /** checkDocker asks the server to ping Docker now. */
 export function checkDocker(): Promise<DockerCheck> {
   return postJSON<DockerCheck>('/api/docker/check', {})
+}
+
+/** untrackProject stops tracking a project, or removes a Not found one from the list. */
+export function untrackProject(id: number): Promise<UntrackResponse> {
+  return postJSON<UntrackResponse>(`/api/projects/${id}/untrack`, {})
 }

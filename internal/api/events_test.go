@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,11 +60,11 @@ func TestEventsFirstStateOnConnect(t *testing.T) {
 		t.Fatalf("state = %+v", s)
 	}
 	alpha := s.Projects[0]
-	if alpha.DisplayName != "Alpha" || alpha.Status != "running" || len(alpha.Actions) != 2 ||
+	if alpha.DisplayName != "Alpha" || alpha.Status != "running" || strings.Join(alpha.Actions, ",") != "stop,restart,untrack" ||
 		len(alpha.Databases) != 1 || alpha.Databases[0].Type != "postgresql" {
 		t.Errorf("alpha = %+v", alpha)
 	}
-	if beta := s.Projects[1]; beta.Status != "partial" || !beta.Self || beta.Actions == nil || len(beta.Actions) != 0 {
+	if beta := s.Projects[1]; beta.Status != "partial" || !beta.Self || strings.Join(beta.Actions, ",") != "untrack" {
 		t.Errorf("beta = %+v", beta)
 	}
 }
@@ -114,8 +115,8 @@ func TestEventsPushOnLock(t *testing.T) {
 	if time.Since(start) > 4*time.Second {
 		t.Errorf("the release took %v to arrive, want it without waiting for a tick", time.Since(start))
 	}
-	if s.Projects[0].Status != "stopped" || len(s.Projects[0].Actions) != 1 || s.Projects[0].Actions[0] != "start" {
-		t.Errorf("alpha after stop = %+v, want stopped with start", s.Projects[0])
+	if s.Projects[0].Status != "stopped" || strings.Join(s.Projects[0].Actions, ",") != "start,untrack" {
+		t.Errorf("alpha after stop = %+v, want stopped with start and untrack", s.Projects[0])
 	}
 	if rec := <-done; rec.Code != http.StatusOK {
 		t.Errorf("stop = %d %s", rec.Code, rec.Body.String())
@@ -170,7 +171,7 @@ func TestDockerCheck(t *testing.T) {
 	}
 	s := stateUntil(t, r, "Docker down", func(s LiveState) bool { return !s.DockerUp })
 	for _, p := range s.Projects {
-		if p.Status != "unknown" || len(p.Actions) != 0 {
+		if p.Status != "unknown" || strings.Join(p.Actions, ",") != "untrack" {
 			t.Errorf("%s with Docker down = %+v", p.DisplayName, p)
 		}
 	}

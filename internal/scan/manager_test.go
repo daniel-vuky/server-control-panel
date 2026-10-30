@@ -245,7 +245,8 @@ func TestRowRoundTripsJSON(t *testing.T) {
 		t.Fatalf("round trip\n got %+v\nwant %+v", out, in)
 	}
 	p, _ := json.Marshal(Progress{Examined: 1, Total: 2, Current: "/w"})
-	if string(p) != `{"examined":1,"total":2,"current":"/w"}` {
+	// A first scan sends workspace 0 of 0.
+	if string(p) != `{"examined":1,"total":2,"current":"/w","workspace":0,"workspaces":0}` {
 		t.Fatalf("progress JSON %s", p)
 	}
 }

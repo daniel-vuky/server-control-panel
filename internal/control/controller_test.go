@@ -157,8 +157,8 @@ func TestDoStopOK(t *testing.T) {
 	e.cmd.containers(runningOut("shop"), stoppedOut("shop")).on(runner.ComposeStop, reply{})
 	res := e.do(t, "shop", project.ActionStop)
 	wantResult(t, res, OutcomeOK, project.StatusStopped, "")
-	if !slices.Equal(res.Actions, []project.Action{project.ActionStart}) {
-		t.Errorf("actions = %v, want [start]", res.Actions)
+	if !slices.Equal(res.Actions, []project.Action{project.ActionStart, project.ActionUntrack}) {
+		t.Errorf("actions = %v, want [start untrack]", res.Actions)
 	}
 	wantRow(t, e, "shop", store.ActProjectStop, store.ResultOK, "")
 }
@@ -213,8 +213,8 @@ func TestDoRereadFails(t *testing.T) {
 			msg := "The command finished but Docker could not be read."
 			res := e.do(t, "shop", a)
 			wantResult(t, res, OutcomeFailed, project.StatusUnknown, msg)
-			if len(res.Actions) != 0 {
-				t.Errorf("actions = %v, want none when Docker could not be read", res.Actions)
+			if !slices.Equal(res.Actions, []project.Action{project.ActionUntrack}) {
+				t.Errorf("actions = %v, want only untrack when Docker could not be read", res.Actions)
 			}
 			wantRow(t, e, "shop", "project."+string(a), store.ResultFailed, msg)
 		})
@@ -316,7 +316,7 @@ func TestDoRefusals(t *testing.T) {
 			setup: func(e *env) {
 				e.cmd.containers(stoppedOut("shop"))
 				e.ctl.mu.Lock()
-				e.ctl.locks[e.ids["shop"]] = project.StatusStopping
+				e.ctl.locks[e.ids["shop"]] = projectLock{status: project.StatusStopping}
 				e.ctl.mu.Unlock()
 			},
 			code: CodeLocked, status: project.StatusStopping, msg: "shop is Stopping…; wait for it to finish.",
@@ -346,7 +346,7 @@ func TestDoRefusals(t *testing.T) {
 			setup: func(e *env) {
 				e.cmd.on(runner.DockerContainers, reply{err: errors.New("cannot connect")})
 				e.ctl.mu.Lock()
-				e.ctl.locks[e.ids["shop"]] = project.StatusStopping
+				e.ctl.locks[e.ids["shop"]] = projectLock{status: project.StatusStopping}
 				e.ctl.mu.Unlock()
 			},
 			code: CodeDockerDown, status: project.StatusUnknown, msg: "Docker is not responding. Try again when it is back.",

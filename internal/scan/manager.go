@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,11 +27,15 @@ type Commander interface {
 }
 
 // Progress is how far a scan is: folders examined out of the folders listed,
-// and the compose file or folder being examined.
+// and the compose file or folder being examined. A rescan counts per
+// workspace and adds which one (1-based) out of how many; a first scan
+// leaves both 0.
 type Progress struct {
-	Examined int    `json:"examined"`
-	Total    int    `json:"total"`
-	Current  string `json:"current"`
+	Examined   int    `json:"examined"`
+	Total      int    `json:"total"`
+	Current    string `json:"current"`
+	Workspace  int    `json:"workspace"`
+	Workspaces int    `json:"workspaces"`
 }
 
 // Row is one compose project a scan found. It is stored in the job's result
@@ -47,27 +52,54 @@ type Row struct {
 	Details        project.Details    `json:"details"`
 	Databases      []project.Database `json:"databases"`
 	Warning        string             `json:"warning"`
+	// A rescan sets these: the workspace the row belongs to, and whether the
+	// path is new or stored as ignored. A first scan leaves them zero.
+	WorkspaceID int64 `json:"workspaceId"`
+	New         bool  `json:"new"`
+	Ignored     bool  `json:"ignored"`
 }
 
-// Result is what a finished scan found. AlreadyTracked and Ignored count the
-// projects left out because their path is already stored.
+// Result is what a finished scan found. For a first scan, AlreadyTracked and
+// Ignored count the projects left out because their path is already stored.
+// A rescan leaves those 0 and fills the rest: New and IgnoredFound count its
+// new and ignored rows, Refreshed the tracked projects found again, NotFound
+// the tracked projects of the scanned workspaces that are missing now, and
+// NotFoundPaths the ones this rescan newly marked. Workspaces lists every
+// workspace asked for, skipped ones included.
 type Result struct {
 	Rows           []Row    `json:"rows"`
 	FoldersScanned int      `json:"foldersScanned"`
 	AlreadyTracked int      `json:"alreadyTracked"`
 	Ignored        int      `json:"ignored"`
 	Warnings       []string `json:"warnings"`
+	New            int      `json:"new"`
+	IgnoredFound   int      `json:"ignoredFound"`
+	Refreshed      int      `json:"refreshed"`
+	NotFound       int      `json:"notFound"`
+	NotFoundPaths  []string `json:"notFoundPaths"`
+	Workspaces     []string `json:"workspaces"`
 }
 
-// BusyError is returned by Start while another scan runs.
+// BusyError is returned by Start, Rescan and WhileIdle while a job runs. For
+// a rescan, Path is the job's target and Depth is 0.
 type BusyError struct {
-	ID    int64
-	Path  string
-	Depth int
+	ID     int64
+	Path   string
+	Depth  int
+	Rescan bool
 }
 
 func (e *BusyError) Error() string {
+	if e.Rescan {
+		return fmt.Sprintf("rescan %d of %s is running", e.ID, e.Path)
+	}
 	return fmt.Sprintf("scan %d of %s (depth %d) is running", e.ID, e.Path, e.Depth)
+}
+
+// Guard checks that a workspace path is still allowed and returns its
+// canonical form; *roots.Guard is one.
+type Guard interface {
+	Check(path string) (string, error)
 }
 
 // Job states written by the manager.
@@ -94,8 +126,10 @@ type Manager struct {
 	cmd      Commander
 	log      *slog.Logger
 	interval time.Duration
+	guard    Guard  // nil: no check (tests)
+	onChange func() // called after a rescan's apply; nil: none
 
-	startMu sync.Mutex // serialises Start, so only one job is ever created at a time
+	startMu sync.Mutex // serialises Start, Rescan and WhileIdle, so only one job is ever created at a time
 
 	mu      sync.Mutex // guards running and everything in it
 	running *job
@@ -104,12 +138,15 @@ type Manager struct {
 }
 
 // job is the in-memory state of the running scan. Its fields are guarded by
-// Manager.mu, except id, path and depth, which never change.
+// Manager.mu, except id, path, depth, rescan and workspaces, which never change.
 type job struct {
 	id       int64
-	activity int64 // the activity record of this scan; 0 when it could not be stored
-	path     string
-	depth    int
+	activity int64  // the activity record of this scan; 0 when it could not be stored
+	path     string // the scanned path, or a rescan's target
+	depth    int    // 0 for a rescan
+
+	rescan     bool
+	workspaces []store.Workspace // a rescan's workspaces, in order
 
 	progress Progress
 	subs     *broadcaster
@@ -123,6 +160,41 @@ func NewManager(st *store.Store, cmd Commander, log *slog.Logger) *Manager {
 	return &Manager{st: st, cmd: cmd, log: log, interval: progressInterval}
 }
 
+// SetGuard sets the guard a rescan checks every workspace path with. Call it
+// once, before the first job.
+func (m *Manager) SetGuard(g Guard) { m.guard = g }
+
+// SetOnChange sets the function called after a rescan has written its
+// refreshes and Not found marks. Call it once, before the first job.
+func (m *Manager) SetOnChange(fn func()) { m.onChange = fn }
+
+func (j *job) busy() *BusyError {
+	return &BusyError{ID: j.id, Path: j.path, Depth: j.depth, Rescan: j.rescan}
+}
+
+// busyLocked returns the running job as a *BusyError, or nil. The caller
+// holds startMu.
+func (m *Manager) busyLocked() *BusyError {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if j := m.running; j != nil {
+		return j.busy()
+	}
+	return nil
+}
+
+// WhileIdle runs fn while no job runs, holding the start mutex so none can
+// start meanwhile. It returns a *BusyError without calling fn when a job is
+// running, else fn's error.
+func (m *Manager) WhileIdle(fn func() error) error {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	if busy := m.busyLocked(); busy != nil {
+		return busy
+	}
+	return fn()
+}
+
 // Start creates a scan job for a resolved workspace path and runs it in the
 // background, detached from ctx. It returns the job id, or a *BusyError when
 // a scan is already running.
@@ -132,23 +204,26 @@ func (m *Manager) Start(ctx context.Context, resolvedPath string, depth int, by 
 	}
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
-
-	m.mu.Lock()
-	if j := m.running; j != nil {
-		m.mu.Unlock()
-		return 0, &BusyError{ID: j.id, Path: j.path, Depth: j.depth}
+	if busy := m.busyLocked(); busy != nil {
+		return 0, busy
 	}
-	m.mu.Unlock()
 
 	id, err := m.st.CreateScanJob(ctx, resolvedPath, depth, by)
 	if err != nil {
 		return 0, err
 	}
-	j := &job{id: id, path: resolvedPath, depth: depth, subs: newBroadcaster()}
+	m.launch(ctx, &job{id: id, path: resolvedPath, depth: depth}, by, store.ActScanStart)
+	return id, nil
+}
+
+// launch records the job's activity, makes it the running job and runs it in
+// the background. The caller holds startMu and has stored the job.
+func (m *Manager) launch(ctx context.Context, j *job, by, action string) {
+	j.subs = newBroadcaster()
 	if aid, err := m.st.StartActivity(ctx, store.Activity{
-		Actor: by, ActorKind: store.ActorPerson, Action: store.ActScanStart, Target: resolvedPath,
+		Actor: by, ActorKind: store.ActorPerson, Action: action, Target: j.path,
 	}); err != nil {
-		m.log.Error("scan: store the activity", "job", id, "err", err)
+		m.log.Error("scan: store the activity", "job", j.id, "err", err)
 	} else {
 		j.activity = aid
 	}
@@ -159,7 +234,6 @@ func (m *Manager) Start(ctx context.Context, resolvedPath string, depth int, by 
 	m.wg.Add(1)
 	//nolint:gosec // G118: the scan outlives the request on purpose (ADR 0007); run uses context.Background
 	go m.run(j)
-	return id, nil
 }
 
 // Subscribe attaches to a running job. It returns the latest progress and a
@@ -277,6 +351,9 @@ func (m *Manager) scanSafely(j *job) (res Result, err error) {
 			err = errors.New("the scan stopped on an internal error")
 		}
 	}()
+	if j.rescan {
+		return m.rescanJob(context.Background(), j)
+	}
 	return m.scan(context.Background(), j)
 }
 
@@ -289,16 +366,11 @@ func (m *Manager) scan(ctx context.Context, j *job) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	containers, cerr := ReadContainers(ctx, m.cmd)
-	if cerr != nil {
-		m.log.Warn("scan: cannot read containers; every status is unknown", "job", j.id, "err", cerr)
-	}
-	self := project.SelfProject(containers)
+	dk := m.readDocker(ctx, j)
 
-	res := Result{Rows: []Row{}, FoldersScanned: total, Warnings: warnings}
-	if res.Warnings == nil {
-		res.Warnings = []string{}
-	}
+	res := newResult()
+	res.FoldersScanned = total
+	res.Warnings = append(res.Warnings, warnings...)
 	for i, f := range folders {
 		current := f.Path
 		if f.ComposeFile != "" {
@@ -317,20 +389,46 @@ func (m *Manager) scan(ctx context.Context, j *job) (Result, error) {
 			continue
 		}
 		row, configRead := m.examine(ctx, f)
-		if configRead && cerr == nil {
-			names := make([]string, len(row.Details.Services))
-			for i, s := range row.Details.Services {
-				names[i] = s.Name
-			}
-			row.Status = project.StatusOf(containers, row.ComposeProject, names)
-		}
-		row.Self = self != "" && row.ComposeProject == self
+		dk.fill(&row, configRead)
 		res.Rows = append(res.Rows, row)
 	}
 	m.setProgress(j, Progress{Examined: total, Total: total})
 
 	warnDuplicates(res.Rows, known)
 	return res, nil
+}
+
+// newResult is an empty Result with no nil slice.
+func newResult() Result {
+	return Result{Rows: []Row{}, Warnings: []string{}, NotFoundPaths: []string{}, Workspaces: []string{}}
+}
+
+// docker is one container read, shared by every row of a job.
+type docker struct {
+	containers []project.Container
+	err        error  // nil when the containers were read
+	self       string // the panel's own compose project, "" when unknown
+}
+
+func (m *Manager) readDocker(ctx context.Context, j *job) docker {
+	cs, err := ReadContainers(ctx, m.cmd)
+	if err != nil {
+		m.log.Warn("scan: cannot read containers; every status is unknown", "job", j.id, "err", err)
+	}
+	return docker{containers: cs, err: err, self: project.SelfProject(cs)}
+}
+
+// fill sets a row's status, when its config and the containers were read,
+// and self.
+func (d docker) fill(row *Row, configRead bool) {
+	if configRead && d.err == nil {
+		names := make([]string, len(row.Details.Services))
+		for i, s := range row.Details.Services {
+			names[i] = s.Name
+		}
+		row.Status = project.StatusOf(d.containers, row.ComposeProject, names)
+	}
+	row.Self = d.self != "" && row.ComposeProject == d.self
 }
 
 // examine reads one project's .env and compose config and fills its row,
@@ -444,11 +542,13 @@ func ReadDotenv(path string) map[string]string {
 }
 
 // warnDuplicates adds the duplicate-name warning to every row whose compose
-// project name another row of this scan, or a stored project, also uses.
+// project name another row of this scan, or a stored project at another
+// path, also uses. A rescan's ignored row is stored itself and does not count
+// against its own name.
 func warnDuplicates(rows []Row, known map[string]store.Known) {
-	stored := map[string]bool{}
-	for _, k := range known {
-		stored[k.ComposeProject] = true
+	stored := map[string][]string{} // compose project name -> stored paths
+	for path, k := range known {
+		stored[k.ComposeProject] = append(stored[k.ComposeProject], path)
 	}
 	count := map[string]int{}
 	for _, r := range rows {
@@ -456,7 +556,8 @@ func warnDuplicates(rows []Row, known map[string]store.Known) {
 	}
 	for i := range rows {
 		name := rows[i].ComposeProject
-		if name == "" || (count[name] < 2 && !stored[name]) {
+		elsewhere := slices.ContainsFunc(stored[name], func(p string) bool { return p != rows[i].Path })
+		if name == "" || (count[name] < 2 && !elsewhere) {
 			continue
 		}
 		if rows[i].Warning != "" {

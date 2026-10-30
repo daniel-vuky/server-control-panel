@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ScanJob, ScanRow } from '../../api/types.gen'
+import type { ScanJob, ScanResult, ScanRow } from '../../api/types.gen'
 import { AppRoutes } from '../../app/App'
 
 type Listener = (e: MessageEvent) => void
@@ -75,6 +75,9 @@ const rows: ScanRow[] = [
       },
     ],
     warning: '',
+    workspaceId: 0,
+    new: false,
+    ignored: false,
   },
   {
     path: '/srv/panel',
@@ -85,6 +88,9 @@ const rows: ScanRow[] = [
     services: 1,
     databases: [],
     warning: '',
+    workspaceId: 0,
+    new: false,
+    ignored: false,
   },
   {
     path: '/srv/broken',
@@ -96,17 +102,38 @@ const rows: ScanRow[] = [
     databases: [],
     warning:
       'docker compose config failed: required variable DB_NAME is missing.\nAnother folder uses the compose project name broken; Docker treats them as one project.',
+    workspaceId: 0,
+    new: false,
+    ignored: false,
   },
 ]
+
+/** result is a first-time scan's result: the rescan counts are zero. */
+const result = (over: Partial<ScanResult> = {}): ScanResult => ({
+  rows,
+  foldersScanned: 5,
+  alreadyTracked: 0,
+  ignored: 0,
+  warnings: [],
+  new: 0,
+  ignoredFound: 0,
+  refreshed: 0,
+  notFound: 0,
+  notFoundPaths: [],
+  workspaces: [],
+  ...over,
+})
 
 const job = (over: Partial<ScanJob> = {}): ScanJob => ({
   id: 7,
   state: 'done',
   path: '/srv',
   depth: 1,
-  progress: { examined: 5, total: 5, current: '' },
+  rescan: false,
+  workspaceIds: [],
+  progress: { examined: 5, total: 5, current: '', workspace: 0, workspaces: 0 },
   error: '',
-  result: { rows, foldersScanned: 5, alreadyTracked: 0, ignored: 0, warnings: [] },
+  result: result(),
   ...over,
 })
 
@@ -336,9 +363,7 @@ describe('onboarding, step 2', () => {
   ])(
     'with %i tracked and %i ignored, says what is not shown',
     async (alreadyTracked, ignored, s) => {
-      await scanToResults(
-        job({ result: { rows, foldersScanned: 5, alreadyTracked, ignored, warnings: [] } }),
-      )
+      await scanToResults(job({ result: result({ alreadyTracked, ignored }) }))
       expect(text(s)).toBeInTheDocument()
     },
   )
@@ -346,7 +371,7 @@ describe('onboarding, step 2', () => {
   it('says 1 project for a single row', async () => {
     await scanToResults(
       job({
-        result: { rows: [rows[0]], foldersScanned: 1, alreadyTracked: 0, ignored: 0, warnings: [] },
+        result: result({ rows: [rows[0]], foldersScanned: 1 }),
       }),
     )
     expect(screen.getByRole('heading', { name: 'Found 1 project' })).toBeInTheDocument()
@@ -469,7 +494,7 @@ describe('onboarding, nothing found', () => {
   const empty = (depth: number) =>
     job({
       depth,
-      result: { rows: [], foldersScanned: 4, alreadyTracked: 0, ignored: 0, warnings: [] },
+      result: result({ rows: [], foldersScanned: 4 }),
     })
 
   it('at depth 1 offers Scan again at depth 2, which posts depth 2', async () => {
@@ -497,5 +522,55 @@ describe('onboarding, nothing found', () => {
     expect(pathInput()).toHaveFocus()
     expect(pathInput()).toHaveValue('/srv')
     expect(pathInput()).toBeEnabled()
+  })
+})
+
+describe('onboarding, hand-off from the rescan page and the dashboard', () => {
+  it('starts scanning from state.scanId and fills in the path and depth', async () => {
+    api((c) =>
+      c.method === 'GET' && c.url === '/api/scans/7'
+        ? [200, job({ path: '/srv/busy', depth: 2 })]
+        : undefined,
+    )
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/onboarding', state: { scanId: 7 } }]}>
+        <AppRoutes />
+      </MemoryRouter>,
+    )
+    const es = await eventSource()
+    expect(es.url).toBe('/api/scans/7/events')
+    expect(posts('/api/scans')).toHaveLength(0)
+    await waitFor(() => expect(pathInput()).toHaveValue('/srv/busy'))
+    expect(screen.getByRole('radio', { name: '2 levels' })).toBeChecked()
+    expect(pathInput()).toBeDisabled()
+
+    es.emit('progress', { examined: 1, total: 2, current: '/srv/busy/a' })
+    expect(text('Scanning… 1/2 folders')).toBeInTheDocument()
+    es.emit('end', { state: 'done' })
+    expect(await screen.findByRole('heading', { name: 'Found 3 projects' })).toBeInTheDocument()
+  })
+
+  it('goes to the rescan page on a 409 for a running rescan', async () => {
+    api((c) => {
+      if (c.method === 'POST' && c.url === '/api/scans')
+        return [
+          409,
+          {
+            error: 'A scan is already running.',
+            id: 4,
+            path: 'all workspaces',
+            depth: 0,
+            rescan: true,
+          },
+        ]
+      if (c.method === 'GET' && c.url === '/api/scans/4')
+        return [200, job({ id: 4, rescan: true, state: 'running', result: undefined })]
+      return undefined
+    })
+    renderPage()
+    startScan('/srv/other')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Rescan' })).toBeInTheDocument()
+    const es = await eventSource()
+    expect(es.url).toBe('/api/scans/4/events')
   })
 })

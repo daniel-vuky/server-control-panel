@@ -5,6 +5,7 @@ import DashboardPage from '../pages/DashboardPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import OnboardingPage from '../pages/onboarding/OnboardingPage'
 import PlaceholderPage from '../pages/PlaceholderPage'
+import RescanPage from '../pages/RescanPage'
 import SettingsPage from '../pages/SettingsPage'
 import AppShell from './AppShell'
 import { appRoutes } from './routes'
@@ -13,6 +14,7 @@ import { appRoutes } from './routes'
 const pages: Record<string, ReactNode> = {
   '/': <DashboardPage />,
   '/onboarding': <OnboardingPage />,
+  '/rescan/:id': <RescanPage />,
   '/settings': <SettingsPage />,
 }
 

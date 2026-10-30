@@ -71,3 +71,15 @@ The project lifecycle flow (#33, #39 to #44) built the hub of decision 2, scoped
 - **Retry.** `POST /api/docker/check` asks the hub for one fresh read and returns the result, so the Docker banner can recover without waiting for the next tick.
 - **The action response travels with the action.** `POST /api/projects/{id}/{action}` waits for the command and returns the outcome, the status read from Docker afterwards and the actions now allowed. The toast does not wait for the stream. The stream still carries the in-between status (Starting…, Stopping…, Restarting…) to other tabs while the command runs. This refines the consequence "actions and results travel on different channels": the action's own result comes back on the action request.
 - **Client.** One `EventSource` for the whole app, in `LiveProvider`. It receives the heartbeat of decision 4 and reconnects on its own.
+
+## Note (2026-10-30, #24)
+
+Rescan, workspace removal and Stop tracking (#19, #24, #25) change which projects exist, so the hub's cached list can be wrong until the next 5-second tick. `Hub.Refresh()` asks for a fresh read straight away:
+
+- **No loop running** (nobody subscribed): it only invalidates the cache, so the next subscriber reads fresh.
+- **A tick running:** nothing more; the running tick sees the changed generation, drops its list and ticks again.
+- **Otherwise:** it starts one detached tick.
+
+In every case `Refresh` first bumps the generation (`tsGen`), so a tick that read the tracked projects before the change never publishes.
+
+The API calls it after an untrack, a workspace removal and an add, and the scan manager calls it through `OnChange` when a rescan applies. A write that holds project locks (`Controller.WithLocks`) does not publish on a successful release, since the hub's cached list still holds the rows it changed; the caller refreshes instead.

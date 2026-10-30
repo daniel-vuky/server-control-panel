@@ -89,7 +89,9 @@ func TestProjectsLiveStatus(t *testing.T) {
 	}
 }
 
-func TestProjectsDockerDown(t *testing.T) {
+// TestProjectsDockerDownOnlyUntrack: with Docker down every status is unknown and
+// no lifecycle action is offered; only untrack, which needs no Docker.
+func TestProjectsDockerDownOnlyUntrack(t *testing.T) {
 	d := newTestDeps(t)
 	h := NewRouter(d)
 	addProjects(t, d)
@@ -106,6 +108,9 @@ func TestProjectsDockerDown(t *testing.T) {
 	for _, p := range got {
 		if p.Status != "unknown" {
 			t.Errorf("%s status = %q, want unknown", p.DisplayName, p.Status)
+		}
+		if strings.Join(p.Actions, ",") != "untrack" {
+			t.Errorf("%s actions = %v, want only untrack with Docker down", p.DisplayName, p.Actions)
 		}
 	}
 }
@@ -135,22 +140,26 @@ func TestProjectsIncludeActionsAndInFlight(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("projects = %+v", got)
 	}
-	if got[0].Status != "running" || strings.Join(got[0].Actions, ",") != "stop,restart" {
-		t.Errorf("alpha = %+v, want running with stop and restart", got[0])
+	if got[0].Status != "running" || strings.Join(got[0].Actions, ",") != "stop,restart,untrack" {
+		t.Errorf("alpha = %+v, want running with stop, restart and untrack", got[0])
 	}
-	if got[1].Status != "partial" || got[1].Actions == nil || len(got[1].Actions) != 0 {
-		t.Errorf("beta (self) = %+v, want partial with no actions", got[1])
+	if got[1].Status != "partial" || strings.Join(got[1].Actions, ",") != "untrack" {
+		t.Errorf("beta (self) = %+v, want partial with only untrack", got[1])
 	}
-	if !strings.Contains(rec.Body.String(), `"actions":[]`) {
-		t.Errorf("body = %s, want beta's actions as []", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"actions":["untrack"]`) {
+		t.Errorf("body = %s, want beta's actions as [untrack]", rec.Body.String())
 	}
 
 	f.holdLifecycle(t)
 	done := postAsync(h, actionURL(alpha, "stop"))
 	waitLocked(t, d, alpha)
-	got = decode[[]Project](t, do(h, http.MethodGet, "/api/projects"))
+	rec = do(h, http.MethodGet, "/api/projects")
+	got = decode[[]Project](t, rec)
 	if got[0].Status != "stopping" || len(got[0].Actions) != 0 {
 		t.Errorf("alpha while stopping = %+v, want stopping with no actions", got[0])
+	}
+	if !strings.Contains(rec.Body.String(), `"actions":[]`) {
+		t.Errorf("body = %s, want alpha's actions as [] while stopping", rec.Body.String())
 	}
 	f.releaseLifecycle()
 	<-done
@@ -158,8 +167,8 @@ func TestProjectsIncludeActionsAndInFlight(t *testing.T) {
 	f.set(func(f *fakeDocker) { f.containersErr = errors.New("Cannot connect to the Docker daemon") })
 	got = decode[[]Project](t, do(h, http.MethodGet, "/api/projects"))
 	for _, p := range got {
-		if p.Status != "unknown" || len(p.Actions) != 0 {
-			t.Errorf("%s with Docker down = %+v, want unknown with no actions", p.DisplayName, p)
+		if p.Status != "unknown" || strings.Join(p.Actions, ",") != "untrack" {
+			t.Errorf("%s with Docker down = %+v, want unknown with only untrack", p.DisplayName, p)
 		}
 	}
 }
