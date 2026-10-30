@@ -513,6 +513,17 @@ describe('DashboardPage', () => {
   })
   describe('workspaces, rescan and stop tracking', () => {
     type Handler = () => Response | Promise<Response>
+    /** gone is a Not found project: its folder disappeared. */
+    const gone: Project = {
+      ...projects[0],
+      id: 6,
+      displayName: 'old-api',
+      path: '/srv/work/old-api',
+      status: 'notfound',
+      actions: ['remove'],
+      databases: [],
+      missingSince: '2026-10-30T09:42:00Z',
+    }
     /** route answers by "METHOD path"; anything else is a 404. */
     function route(handlers: Record<string, Handler>) {
       const stub = vi.fn(async (url: string, init?: RequestInit) => {
@@ -679,17 +690,6 @@ describe('DashboardPage', () => {
     })
 
     describe('a Not found row', () => {
-      const gone: Project = {
-        ...projects[0],
-        id: 6,
-        displayName: 'old-api',
-        path: '/srv/work/old-api',
-        status: 'notfound',
-        actions: ['remove'],
-        databases: [],
-        missingSince: '2026-10-30T09:42:00Z',
-      }
-
       it('says since when, and locks the switch', async () => {
         route({
           'GET /api/workspaces': () => json(200, workspaces),
@@ -712,16 +712,6 @@ describe('DashboardPage', () => {
     })
 
     describe('stop tracking and remove from list', () => {
-      const gone: Project = {
-        ...projects[0],
-        id: 6,
-        displayName: 'old-api',
-        path: '/srv/work/old-api',
-        status: 'notfound',
-        actions: ['remove'],
-        databases: [],
-        missingSince: '2026-10-30T09:42:00Z',
-      }
       const tracked: Project = { ...projects[0], actions: ['stop', 'restart', 'untrack'] }
       const list = [tracked, projects[1], gone]
 
@@ -791,6 +781,46 @@ describe('DashboardPage', () => {
         })
         expect(screen.queryByRole('row', { name: /shop/ })).toBeNull()
         expect(screen.getByRole('row', { name: /panel/ })).toBeInTheDocument()
+      })
+
+      it('shows the row again when a live state brings the project back', async () => {
+        setup()
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        openMenu(/shop/, 'shop')
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
+        fireEvent.click(
+          within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
+        )
+        await waitFor(() => expect(screen.queryByRole('row', { name: /shop/ })).toBeNull())
+
+        // A re-tracked project keeps its id; the overlay must not hide it for good.
+        act(() => {
+          FakeEventSource.instances[0].emit('state', {
+            dockerUp: true,
+            projects: [projects[0], projects[1]],
+          })
+        })
+        expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+      })
+
+      it('sends one request however often it is confirmed while it is out', async () => {
+        let release: (r: Response) => void = () => {}
+        const stub = setup(() => new Promise<Response>((res) => (release = res)))
+        renderPage()
+        await screen.findByRole('row', { name: /shop/ })
+        for (let i = 0; i < 2; i++) {
+          openMenu(/shop/, 'shop')
+          fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
+          fireEvent.click(
+            within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
+          )
+        }
+        expect(posts(stub)).toHaveLength(1)
+        await act(async () => release(json(200, { removed: true })))
+        expect(await screen.findByTestId('toast-success')).toHaveTextContent(
+          'Stopped tracking shop',
+        )
       })
 
       it('confirms Remove from list for a Not found row with its own words', async () => {

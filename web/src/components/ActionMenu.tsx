@@ -42,11 +42,14 @@ export default function ActionMenu({
   ]
 
   // The red slot holds the one of untrack or remove the server allows, if any.
-  const danger = actions.includes('untrack')
-    ? 'Stop tracking'
-    : actions.includes('remove')
-      ? 'Remove from list'
-      : null
+  const danger =
+    onUntrack === undefined
+      ? null
+      : actions.includes('untrack')
+        ? 'Stop tracking'
+        : actions.includes('remove')
+          ? 'Remove from list'
+          : null
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false)
@@ -153,7 +156,7 @@ export default function ActionMenu({
           })}
           {danger !== null && (
             <>
-              <hr className="mx-1 my-1 h-px border-0 bg-border" />
+              <hr className="mx-1.5 my-1 h-px border-0 bg-border-strong" />
               <button
                 type="button"
                 role="menuitem"

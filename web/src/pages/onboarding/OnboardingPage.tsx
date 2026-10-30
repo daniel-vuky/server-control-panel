@@ -2,15 +2,8 @@ import { CircleAlert } from 'lucide-react'
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError } from '../../api/client'
-import { getScan, startScan, trackScan, watchScan } from '../../api/scans'
-import type {
-  FieldError,
-  ScanBusy,
-  ScanJob,
-  ScanProgress,
-  ScanResult,
-  TrackItem,
-} from '../../api/types.gen'
+import { getScan, isScanBusy, startScan, trackScan, watchScan } from '../../api/scans'
+import type { FieldError, ScanJob, ScanProgress, ScanResult, TrackItem } from '../../api/types.gen'
 import { useToast } from '../../components/Toast'
 import ScanProgressView from './ScanProgressView'
 import ScanResults, { NothingFound } from './ScanResults'
@@ -39,17 +32,6 @@ function isFieldError(body: unknown): body is FieldError {
     body !== null &&
     typeof (body as FieldError).error === 'string' &&
     typeof (body as FieldError).field === 'string'
-  )
-}
-
-function isScanBusy(body: unknown): body is ScanBusy {
-  const b = body as ScanBusy | null
-  return (
-    typeof b === 'object' &&
-    b !== null &&
-    typeof b.id === 'number' &&
-    typeof b.path === 'string' &&
-    typeof b.depth === 'number'
   )
 }
 

@@ -35,7 +35,7 @@ type Pending = { status: Status; actions: string[] }
 
 type Confirm = { action: 'stop' | 'restart' | 'untrack' | 'remove'; id: number; name: string }
 
-/** untrackWords is the copy of the two ways a project leaves the list. */
+/** UNTRACK is the toast copy of the two ways a project leaves the list. */
 const UNTRACK = {
   untrack: { done: 'Stopped tracking', failed: "Couldn't stop tracking" },
   remove: { done: 'Removed', failed: "Couldn't remove" },
@@ -276,6 +276,8 @@ function useUntrack() {
   const toast = useToast()
   const live = useLive()
   const [removedIds, setRemovedIds] = useState<ReadonlySet<number>>(new Set())
+  // Ids whose request is out, so a second confirm cannot post it again.
+  const inflight = useRef(new Set<number>())
 
   useEffect(() => {
     if (live.projects === null) return
@@ -285,6 +287,8 @@ function useUntrack() {
   const untrack = useCallback(
     async (id: number, name: string, action: 'untrack' | 'remove') => {
       const verb = UNTRACK[action]
+      if (inflight.current.has(id)) return
+      inflight.current.add(id)
       try {
         await untrackProject(id)
       } catch (err) {
@@ -296,6 +300,8 @@ function useUntrack() {
           message,
         )
         return
+      } finally {
+        inflight.current.delete(id)
       }
       setRemovedIds((prev) => new Set(prev).add(id))
       toast.success(
@@ -477,7 +483,7 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntr
                   {p.path}
                 </span>
                 {p.status === 'notfound' && (
-                  <span className="mt-1 block text-[12.5px] text-muted">
+                  <span className="mt-1 block text-[13px] text-muted">
                     {p.missingSince === ''
                       ? 'Folder missing since the last scan.'
                       : `Folder missing since the ${formatLastScan(p.missingSince)} scan.`}{' '}
