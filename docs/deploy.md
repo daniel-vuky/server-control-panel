@@ -6,10 +6,12 @@ This guide installs the panel on your server, keeps it up to date and removes it
 
 Two containers, in one compose project called `server-control-panel`:
 
-- `panel`: the panel itself. It listens on `127.0.0.1:8471` of the server, so only the Cloudflare Tunnel running on the host can reach it. It runs as your user, never as root, with no extra capabilities, and is limited to 200 MB of memory and half a CPU.
+- `panel`: the panel itself. It listens on `127.0.0.1:8471` of the server, so only the Cloudflare Tunnel running on the host can reach it. It runs as your user, never as root, with no extra capabilities, and is limited to 384 MB of memory and half a CPU.
 - `updater`: a small container that checks for a new panel image every 5 minutes and applies it (see section 5).
 
 Nothing runs on the host outside docker compose: no service, no cron job, no extra program.
+
+The memory limit leaves room for the live log views: each one runs a `docker compose logs --follow` that takes about 50 MB, and the panel allows up to 3 at a time, plus a rescan and the panel's own memory.
 
 The files live in `/opt/server-control-panel`:
 

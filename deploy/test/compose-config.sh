@@ -73,6 +73,12 @@ if ! list_has "$panel" security_opt no-new-privileges:true; then
   printf 'panel service lacks security_opt no-new-privileges:true:\n%s\n' "$panel" >&2
   exit 1
 fi
+# The panel's memory limit is 384m (402653184 bytes once rendered): room for 3
+# live log follows (about 50 MB each), a rescan and the panel's own heap.
+if ! grep -qxE '    mem_limit: "?402653184"?' <<<"$panel"; then
+  printf 'panel service lacks mem_limit 384m (402653184 bytes):\n%s\n' "$panel" >&2
+  exit 1
+fi
 # The updater mounts the project directory read-only.
 updater_ro=$(awk '
   function flush() { if (t == "/opt/server-control-panel" && ro) found = 1; t = ""; ro = 0 }
