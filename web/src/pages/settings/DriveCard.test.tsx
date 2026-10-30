@@ -272,38 +272,70 @@ describe('Google Drive card', () => {
     expect(await screen.findByRole('button', { name: 'Connect Google Drive' })).toBeInTheDocument()
     expect(posts(stub, '/api/drive/disconnect')).toHaveLength(1)
   })
-})
 
-describe('coming back from Google', () => {
-  it('?drive=connected toasts the account and clears the query', async () => {
-    route({ 'GET /api/drive/folders': () => json(200, folders) })
-    renderCard(status(), '/settings?drive=connected')
-    expect(await screen.findByTestId('toast-success')).toHaveTextContent(
-      'Connected Google Drive as ops.backup@gmail.com',
-    )
-    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/settings$/))
+  it('a failed folder list shows the Drive words, the code and Retry', async () => {
+    let n = 0
+    route({
+      'GET /api/drive/folders': () =>
+        n++ === 0
+          ? json(502, { error: 'unreachable', message: 'Google Drive is unreachable.' })
+          : json(200, folders),
+    })
+    renderCard(status())
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Google Drive is unreachable.')
+    expect(alert).toHaveTextContent('unreachable')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByRole('option', { name: 'My Drive / archive' })
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('?drive=declined toasts that it was not connected', async () => {
-    route({})
-    renderCard(
-      status({ state: 'not_connected', email: '', folder: null }),
-      '/settings?drive=declined',
+  it('a folder gone from Drive shows the 422 words and code, and reloads the list', async () => {
+    let lists = 0
+    route({
+      'GET /api/drive/folders': () => json(200, ++lists === 1 ? folders : [folders[0]]),
+      'POST /api/drive/folder': () =>
+        json(422, {
+          error: 'The destination folder is missing or in the trash. Choose or create a folder.',
+          field: 'id',
+          code: 'folder_missing',
+        }),
+    })
+    renderCard(status())
+    await screen.findByRole('option', { name: 'My Drive / archive' })
+    fireEvent.change(screen.getByLabelText('Destination folder'), { target: { value: 'f2' } })
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('The destination folder is missing or in the trash.')
+    expect(alert).toHaveTextContent('folder_missing')
+    await waitFor(() =>
+      expect(screen.queryByRole('option', { name: 'My Drive / archive' })).toBeNull(),
     )
-    expect(await screen.findByRole('alert')).toHaveTextContent('Google Drive was not connected.')
-    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/settings$/))
   })
 
-  it('?drive=error shows the code words and the code, and keeps other parameters', async () => {
-    route({})
-    renderCard(
-      status({ state: 'not_connected', email: '', folder: null }),
-      '/settings?drive=error&code=unreachable&x=1',
-    )
-    const toast = await screen.findByRole('alert')
-    expect(toast).toHaveTextContent('Google Drive was not connected.')
-    expect(toast).toHaveTextContent('Google Drive is unreachable.')
-    expect(toast).toHaveTextContent('unreachable')
-    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/settings\?x=1$/))
+  it('choosing the folder already selected closes the create field and posts nothing', async () => {
+    const stub = route({ 'GET /api/drive/folders': () => json(200, folders) })
+    renderCard(status())
+    await screen.findByRole('option', { name: 'My Drive / archive' })
+    const select = screen.getByLabelText('Destination folder')
+    fireEvent.change(select, { target: { value: '__create__' } })
+    expect(screen.getByLabelText('New folder name')).toBeInTheDocument()
+    fireEvent.change(select, { target: { value: 'f1' } })
+    expect(screen.queryByLabelText('New folder name')).toBeNull()
+    expect(posts(stub, '/api/drive/folder')).toHaveLength(0)
+  })
+
+  it('changing the folder clears the test result', async () => {
+    route({
+      'GET /api/drive/folders': () => json(200, folders),
+      'POST /api/drive/test': () => json(200, { ok: true }),
+      'POST /api/drive/folder': () => json(200, status({ folder: folders[1] })),
+    })
+    renderCard(status())
+    await screen.findByRole('option', { name: 'My Drive / archive' })
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    await screen.findByRole('status')
+    fireEvent.change(screen.getByLabelText('Destination folder'), { target: { value: 'f2' } })
+    await waitFor(() => expect(screen.getByLabelText('Destination folder')).toHaveValue('f2'))
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull())
   })
 })

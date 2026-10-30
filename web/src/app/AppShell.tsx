@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import ConnectionBadge from '../components/ConnectionBadge'
 import DockerBanner from '../components/DockerBanner'
+import DriveReturn from './DriveReturn'
 import { LiveProvider, useLive } from './live'
 import { appRoutes } from './routes'
 import UserChip from './UserChip'
@@ -26,6 +27,7 @@ function LiveContent({ children }: { children: ReactNode }) {
 export default function AppShell() {
   return (
     <LiveProvider>
+      <DriveReturn />
       <div className="flex min-h-screen bg-bg text-text">
         <nav
           aria-label="Main navigation"

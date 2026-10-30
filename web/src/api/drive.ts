@@ -6,6 +6,7 @@ import type {
   DriveFolderRequest,
   DriveStatus,
   DriveTestResult,
+  FieldError,
 } from './types.gen'
 
 /** The Testing-mode note of the token_expired words (spec §2). */
@@ -53,17 +54,22 @@ export function driveIssue(err: unknown): DriveIssue {
   }
 }
 
-/** fieldIssue is the words of a 422 field error on field, or null for any other error. */
-export function fieldIssue(err: unknown, field: string): string | null {
+/** fieldError is the 422 body when it is about field, else null. */
+export function fieldError(err: unknown, field: string): FieldError | null {
   if (
     err instanceof ApiError &&
     err.status === 422 &&
     isFieldError(err.body) &&
     err.body.field === field
   ) {
-    return err.body.error
+    return err.body
   }
   return null
+}
+
+/** fieldIssue is the words of a 422 field error on field, or null for any other error. */
+export function fieldIssue(err: unknown, field: string): string | null {
+  return fieldError(err, field)?.error ?? null
 }
 
 export function getDrive(signal?: AbortSignal): Promise<DriveStatus> {

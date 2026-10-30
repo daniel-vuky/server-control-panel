@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { renderApp } from '../test/renderApp'
 
@@ -39,6 +39,12 @@ describe('app shell', () => {
     renderAt('/settings')
     expect(screen.getByRole('region', { name: 'Workspaces' })).toBeInTheDocument()
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load workspaces.')
+  })
+
+  it('shows the Google return toast on any page of the shell', async () => {
+    const { router } = renderAt('/backups?drive=declined')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Google Drive was not connected.')
+    await waitFor(() => expect(router.state.location.search).toBe(''))
   })
 
   it('maps /onboarding to the onboarding page, not its placeholder', () => {

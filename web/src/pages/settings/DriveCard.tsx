@@ -7,6 +7,7 @@ import {
   type DriveIssue,
   disconnectDrive,
   driveIssue,
+  fieldError,
   fieldIssue,
   listDriveFolders,
   selectDriveFolder,
@@ -17,9 +18,7 @@ import type { DriveFolder, DriveStatus } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import FieldMessage from '../../components/FieldMessage'
-import LoadError from '../../components/LoadError'
 import { useToast } from '../../components/Toast'
-import { useDriveReturn } from '../../lib/useDriveReturn'
 import { useLoad } from '../../lib/useLoad'
 
 const buttonBase =
@@ -33,6 +32,18 @@ const INPUT =
 const CREATE = '__create__'
 const DEFAULT_FOLDER_NAME = 'server-backups'
 
+type Folders = { ok: true; folders: DriveFolder[] } | { ok: false; issue: DriveIssue }
+
+/** loadFolders never rejects on a Drive refusal: the words and the code travel with the answer. */
+async function loadFolders(signal: AbortSignal): Promise<Folders> {
+  try {
+    return { ok: true, folders: await listDriveFolders(signal) }
+  } catch (err) {
+    if (signal.aborted) throw err
+    return { ok: false, issue: driveIssue(err) }
+  }
+}
+
 /** Issue shows a Drive refusal: its words, and the code small and muted beside them. */
 function Issue({ issue }: { issue: DriveIssue }) {
   return (
@@ -45,6 +56,22 @@ function Issue({ issue }: { issue: DriveIssue }) {
         <span className="font-mono text-[11.5px] text-muted">{issue.code}</span>
       )}
     </span>
+  )
+}
+
+/** FolderLoadError is the folder list failing: the Drive words, the code, and Retry. */
+function FolderLoadError({ issue, onRetry }: { issue: DriveIssue; onRetry(): void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Issue issue={issue} />
+      <button
+        type="button"
+        onClick={onRetry}
+        className="h-8 cursor-pointer rounded-md border border-border-strong bg-transparent px-3 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      >
+        Retry
+      </button>
+    </div>
   )
 }
 
@@ -68,8 +95,6 @@ export default function DriveCard() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new live state replaces the answer.
   useEffect(() => setAnswer(null), [live])
   const status = answer ?? live
-
-  useDriveReturn(live)
 
   return (
     <section
@@ -171,7 +196,7 @@ function Connected({
 }) {
   const toast = useToast()
   const ids = useId()
-  const { load, retry } = useLoad(listDriveFolders)
+  const { load, retry } = useLoad(loadFolders)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState(DEFAULT_FOLDER_NAME)
   const [nameError, setNameError] = useState<string | null>(null)
@@ -182,15 +207,20 @@ function Connected({
   const [confirm, setConfirm] = useState(false)
   const [leaving, setLeaving] = useState(false)
 
-  const folders: DriveFolder[] = load.state === 'ok' ? load.data : []
+  const loaded = load.state === 'ok' && load.data.ok ? load.data.folders : null
+  // A test result is about the folder it ran against.
+  const folderKey = status.folder?.id ?? ''
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the folder changing clears the result.
+  useEffect(() => setResult(null), [folderKey])
+
+  const folders: DriveFolder[] = loaded ?? []
   // The selected folder always has an option, even before the list arrives.
   const options =
     status.folder && !folders.some((f) => f.id === status.folder?.id)
       ? [status.folder, ...folders]
       : folders
   // With no folder chosen and none to choose from, the name field is the way forward.
-  const showCreate =
-    creating || (status.folder === null && load.state === 'ok' && folders.length === 0)
+  const showCreate = creating || (status.folder === null && loaded !== null && folders.length === 0)
 
   const pick = async (value: string) => {
     if (value === CREATE) {
@@ -198,14 +228,24 @@ function Connected({
       return
     }
     if (value === '' || saving) return
+    if (value === status.folder?.id) {
+      setCreating(false)
+      return
+    }
     setCreating(false)
     setFolderIssue(null)
     setSaving(true)
     try {
       onChange(await selectDriveFolder(value))
     } catch (err) {
-      const words = fieldIssue(err, 'id')
-      setFolderIssue(words === null ? driveIssue(err) : { code: 'folder_missing', message: words })
+      const field = fieldError(err, 'id')
+      if (field === null) {
+        setFolderIssue(driveIssue(err))
+      } else {
+        setFolderIssue({ code: field.code, message: field.error })
+        // The folder is gone: the list still offering it is stale.
+        retry()
+      }
     } finally {
       setSaving(false)
     }
@@ -302,7 +342,10 @@ function Connected({
             <option value={CREATE}>+ Create new folder…</option>
           </select>
           {load.state === 'error' && (
-            <LoadError title="Could not load folders." message={load.message} onRetry={retry} />
+            <FolderLoadError issue={{ code: '', message: load.message }} onRetry={retry} />
+          )}
+          {load.state === 'ok' && !load.data.ok && (
+            <FolderLoadError issue={load.data.issue} onRetry={retry} />
           )}
           {folderIssue && <Issue issue={folderIssue} />}
           {showCreate && (
