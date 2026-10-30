@@ -1,5 +1,5 @@
-import { ApiError, getJSON } from './client'
-import type { Project } from './types.gen'
+import { ApiError, getJSON, postJSON } from './client'
+import type { ActionResult, DockerCheck, Project } from './types.gen'
 
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   const projects = await getJSON<Project[]>('/api/projects', signal)
@@ -7,4 +7,16 @@ export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   if (!Array.isArray(projects))
     throw new ApiError(200, null, 'Unexpected response from the server.')
   return projects
+}
+
+export type LifecycleAction = 'start' | 'stop' | 'restart'
+
+/** runAction runs a lifecycle command; it resolves once the command has ended. */
+export function runAction(id: number, action: LifecycleAction): Promise<ActionResult> {
+  return postJSON<ActionResult>(`/api/projects/${id}/${action}`, {})
+}
+
+/** checkDocker asks the server to ping Docker now. */
+export function checkDocker(): Promise<DockerCheck> {
+  return postJSON<DockerCheck>('/api/docker/check', {})
 }

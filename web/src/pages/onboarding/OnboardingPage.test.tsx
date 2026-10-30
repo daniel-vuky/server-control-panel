@@ -14,7 +14,8 @@ class StubEventSource {
   private listeners = new Map<string, Listener[]>()
   constructor(url: string) {
     this.url = url
-    StubEventSource.instances.push(this)
+    // The app shell's live-state stream is not the scan stream under test.
+    if (url !== '/api/events') StubEventSource.instances.push(this)
   }
   addEventListener(type: string, fn: Listener) {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn])

@@ -1,5 +1,7 @@
 import { Server } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router'
+import DockerBanner from '../components/DockerBanner'
+import { LiveProvider } from './live'
 import { appRoutes } from './routes'
 import UserChip from './UserChip'
 
@@ -47,7 +49,10 @@ export default function AppShell() {
         <UserChip />
       </nav>
       <main className="min-w-0 flex-1 px-8 pt-7 pb-14">
-        <Outlet />
+        <LiveProvider>
+          <DockerBanner />
+          <Outlet />
+        </LiveProvider>
       </main>
     </div>
   )
