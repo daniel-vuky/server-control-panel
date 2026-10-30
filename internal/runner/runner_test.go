@@ -101,14 +101,15 @@ func TestContainersFormatIsOneArg(t *testing.T) {
 		t.Fatalf("argv %q", args)
 	}
 	format := args[len(want)]
-	if n := strings.Count(format, "\t"); n != 5 {
-		t.Fatalf("format has %d tabs, want 5: %q", n, format)
+	if n := strings.Count(format, "\t"); n != 9 {
+		t.Fatalf("format has %d tabs, want 9: %q", n, format)
 	}
-	if n := len(strings.Split(ContainerColumns, ",")); n != 6 {
+	if n := len(strings.Split(ContainerColumns, ",")); n != 10 {
 		t.Fatalf("ContainerColumns has %d columns", n)
 	}
 	if !strings.HasPrefix(format, `{{.Label "com.docker.compose.project"}}`+"\t") ||
-		!strings.HasSuffix(format, `{{.Label "com.docker.compose.oneoff"}}`) ||
+		!strings.HasSuffix(format, "\t{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}") ||
+		!strings.Contains(format, `{{.Label "com.docker.compose.oneoff"}}`+"\t{{.ID}}") ||
 		!strings.Contains(format, `{{.Label "io.github.daniel-vuky.server-control-panel.image"}}`) {
 		t.Fatalf("format = %q", format)
 	}

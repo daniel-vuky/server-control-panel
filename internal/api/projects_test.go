@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -15,7 +17,14 @@ import (
 
 // containerLine is one docker.containers line in runner.ContainerColumns order.
 func containerLine(proj, service, state, status string) string {
-	return strings.Join([]string{proj, service, state, status, "", "False"}, "\t") + "\n"
+	id := containerID(proj, service)
+	return strings.Join([]string{proj, service, state, status, "", "False", id, proj + "-" + service + "-1", "img", ""}, "\t") + "\n"
+}
+
+// containerID is a stable 64-hex id per (project, service), as Docker gives.
+func containerID(proj, service string) string {
+	sum := sha256.Sum256([]byte(proj + "/" + service))
+	return hex.EncodeToString(sum[:])
 }
 
 func services(names ...string) project.Details {

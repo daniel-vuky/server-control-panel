@@ -33,11 +33,17 @@ type Container struct {
 	State       string // running, exited, restarting, paused, dead, created
 	ExitCode    int    // from the Status column; valid when HasExitCode
 	HasExitCode bool
-	PanelImage  bool // carries the panel image label: the panel's own container
-	OneOff      bool // left behind by docker compose run
+	PanelImage  bool   // carries the panel image label: the panel's own container
+	OneOff      bool   // left behind by docker compose run
+	ID          string // full container id
+	Name        string // container name, such as shop-web-1
+	Image       string // image reference the container was created from
+	Ports       string // raw docker ps Ports column; see FormatPorts
 }
 
-var exitedRe = regexp.MustCompile(`^Exited \((\d+)\)`)
+// exitedRe reads the exit code out of "Exited (1) 5 minutes ago" and, for a
+// restarting container, "Restarting (1) 4 seconds ago".
+var exitedRe = regexp.MustCompile(`^(?:Exited|Restarting) \((\d+)\)`)
 
 // Column positions, derived from runner.ContainerColumns so the two cannot drift.
 var (
@@ -48,6 +54,10 @@ var (
 	colStatus  = column("status")
 	colImage   = column("image")
 	colOneOff  = column("oneoff")
+	colID      = column("id")
+	colName    = column("name")
+	colImgRef  = column("imageref")
+	colPorts   = column("ports")
 )
 
 func column(name string) int {
@@ -80,6 +90,10 @@ func ParseContainers(out []byte) []Container {
 			State:      f[colState],
 			PanelImage: f[colImage] == "panel",
 			OneOff:     f[colOneOff] == "True",
+			ID:         f[colID],
+			Name:       f[colName],
+			Image:      f[colImgRef],
+			Ports:      f[colPorts],
 		}
 		if m := exitedRe.FindStringSubmatch(f[colStatus]); m != nil {
 			if code, err := strconv.Atoi(m[1]); err == nil {

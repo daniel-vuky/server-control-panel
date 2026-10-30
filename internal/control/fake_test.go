@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"strings"
@@ -159,13 +161,20 @@ func (f *fakeCmd) waitRunning(t *testing.T, a runner.Action, n int) {
 }
 
 // containerLine is one docker.containers line in runner.ContainerColumns
-// order: project, service, state, status, image, oneoff.
+// order: project, service, state, status, image (panel label), oneoff, id, name, imageref, ports.
 func containerLine(proj, service, state, status string) string {
 	image := "nginx"
 	if proj == "panel" {
 		image = "panel"
 	}
-	return strings.Join([]string{proj, service, state, status, image, "False"}, "\t") + "\n"
+	id := containerID(proj, service)
+	return strings.Join([]string{proj, service, state, status, image, "False", id, proj + "-" + service + "-1", image, ""}, "\t") + "\n"
+}
+
+// containerID is a stable 64-hex id per (project, service), as Docker gives.
+func containerID(proj, service string) string {
+	sum := sha256.Sum256([]byte(proj + "/" + service))
+	return hex.EncodeToString(sum[:])
 }
 
 // Container outputs for a project with the services app and db.

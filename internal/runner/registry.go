@@ -69,7 +69,7 @@ const (
 
 // ContainerColumns is the column order of DockerContainers output, one
 // tab-separated line per container. Parsers refer to the columns by these names.
-const ContainerColumns = "project,service,state,status,image,oneoff"
+const ContainerColumns = "project,service,state,status,image,oneoff,id,name,imageref,ports"
 
 // containersFormat is the --format template of DockerContainers: one fixed
 // argv element, built from the label names and never from input. .Labels is
@@ -82,6 +82,10 @@ var containersFormat = strings.Join([]string{
 	"{{.Status}}",
 	label(labelImage),
 	label(labelOneOff),
+	"{{.ID}}",
+	"{{.Names}}",
+	"{{.Image}}",
+	"{{.Ports}}",
 }, "\t")
 
 func label(name string) string {
