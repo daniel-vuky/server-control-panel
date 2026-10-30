@@ -911,3 +911,23 @@ func TestFollowDropsNonContainerLines(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// A container that logs CRLF: the backlog loses the CR like the runner's
+// follow lines do, so the hand-off still dedupes.
+func TestBacklogCRLFDedupes(t *testing.T) {
+	f := newFake(raw("web-1", t0, "b0") + "\r\n" + raw("web-1", t0.Add(time.Second), "b1") + "\r\n")
+	m := newManager(f, running("shop"))
+	sub, _ := m.Subscribe(context.Background(), tracked(t, 1, "shop"), "")
+	if got := next(t, sub); !slices.Equal(texts(got), []string{"b0", "b1"}) {
+		t.Fatalf("backlog = %q", texts(got))
+	}
+	f.waitStarted(t)
+	// The runner strips the CR from a follow line.
+	f.emit(t, raw("web-1", t0.Add(time.Second), "b1"))
+	f.emit(t, raw("web-1", t0.Add(2*time.Second), "new"))
+	close(f.follow)
+	got, _ := drainEnd(t, sub)
+	if !slices.Equal(texts(got), []string{"new"}) {
+		t.Fatalf("live = %q", texts(got))
+	}
+}

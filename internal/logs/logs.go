@@ -358,7 +358,8 @@ func (s *stream) follow(a runner.Action, v runner.Values, secrets []string) erro
 }
 
 // parseBacklog masks and parses the backlog output, sorts it by time and keeps
-// the newest RingSize lines. A truncated output loses its last line, which may
+// the newest RingSize lines, each without its trailing CR as Stream delivers
+// them. A truncated output loses its last line, which may
 // be cut through a secret the mask cannot recognise.
 func (s *stream) parseBacklog(res runner.Result, secrets []string) []Line {
 	raw := strings.Split(string(res.Stdout), "\n")
@@ -367,6 +368,9 @@ func (s *stream) parseBacklog(res runner.Result, secrets []string) []Line {
 	}
 	lines := make([]Line, 0, len(raw))
 	for _, r := range raw {
+		// Stream drops a line's trailing CR; so does the backlog, or a CRLF
+		// line would differ from its follow copy and the hand-off not dedupe.
+		r = strings.TrimSuffix(r, "\r")
 		if l, ok := ParseLine(runner.Mask(r, secrets), s.t.ComposeProject, s.cs); ok {
 			lines = append(lines, l)
 		}
