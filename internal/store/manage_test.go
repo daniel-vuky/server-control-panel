@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -586,5 +587,44 @@ func TestZeroAndNegativeProjectIDsAreNotFound(t *testing.T) {
 	}
 	if ts, err := s.TrackedProjects(ctx); err != nil || len(ts) != 1 {
 		t.Fatalf("a zero id changed the data: %+v, %v", ts, err)
+	}
+}
+
+func TestCreateRescanJob(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	id, err := s.CreateRescanJob(ctx, "all workspaces", []int64{3, 1}, "a@b.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.Job(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Kind != "scan" || j.Target != "all workspaces" || j.Depth != 0 || j.State != "running" ||
+		j.StartedBy != "a@b.c" || !slices.Equal(j.Rescan, []int64{3, 1}) {
+		t.Fatalf("rescan job %+v", j)
+	}
+	var params string
+	if err := s.db.QueryRow(`SELECT params FROM jobs WHERE id = ?`, id).Scan(&params); err != nil {
+		t.Fatal(err)
+	}
+	if params != `{"depth":0,"rescan":[3,1]}` {
+		t.Fatalf("params %s", params)
+	}
+
+	// The track marker leaves the rescan scope readable; a first scan has none.
+	if _, err := s.AddProjects(ctx, id, nil); err != nil {
+		t.Fatal(err)
+	}
+	if j, err = s.Job(ctx, id); err != nil || !slices.Equal(j.Rescan, []int64{3, 1}) {
+		t.Fatalf("tracked rescan job %+v, %v", j, err)
+	}
+	sid, err := s.CreateScanJob(ctx, "/srv/apps", 2, "a@b.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j, err = s.Job(ctx, sid); err != nil || j.Rescan != nil || j.Depth != 2 {
+		t.Fatalf("scan job %+v, %v", j, err)
 	}
 }

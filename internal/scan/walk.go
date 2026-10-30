@@ -32,9 +32,19 @@ type Folder struct {
 // be read is still listed, as a plain folder, with a "cannot read <path>"
 // warning. List never follows a symlink and opens nothing outside root.
 func List(root string, depth int) (folders []Folder, warnings []string) {
-	entries, err := readDir(root)
+	folders, warnings, err := list(root, depth)
 	if err != nil {
 		return nil, []string{"cannot read " + root}
+	}
+	return folders, warnings
+}
+
+// list is List with the root's own read error returned apart, so a rescan
+// can tell a missing or unreadable root from an unreadable subfolder.
+func list(root string, depth int) (folders []Folder, warnings []string, err error) {
+	entries, err := readDir(root)
+	if err != nil {
+		return nil, nil, err
 	}
 	var walk func(dir string, entries []fs.DirEntry, level int)
 	walk = func(dir string, entries []fs.DirEntry, level int) {
@@ -63,7 +73,7 @@ func List(root string, depth int) (folders []Folder, warnings []string) {
 		}
 	}
 	walk(root, entries, 1)
-	return folders, warnings
+	return folders, warnings, nil
 }
 
 // walkable says whether an entry is a folder the walk lists: a real directory

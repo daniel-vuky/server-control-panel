@@ -11,10 +11,13 @@ import (
 
 // Job is a background job. Progress and Result are nil until set.
 type Job struct {
-	ID         int64
-	Kind       string // scan
-	Target     string // the path being scanned
-	Depth      int
+	ID     int64
+	Kind   string // scan
+	Target string // the path being scanned, or "all workspaces" for a rescan of several
+	Depth  int    // 0 for a rescan
+	// Rescan holds the workspace ids of a rescan job, in scan order; nil for
+	// a first-time scan.
+	Rescan     []int64
 	State      string // running | done | failed | interrupted
 	Error      string
 	StartedBy  string
@@ -32,9 +35,27 @@ func (s *Store) CreateScanJob(ctx context.Context, target string, depth int, by 
 	if err != nil {
 		return 0, err
 	}
+	return s.insertScanJob(ctx, target, string(params), by)
+}
+
+// CreateRescanJob stores a new running rescan of the given workspaces and
+// returns its id. A rescan is a scan job (the jobs.kind CHECK allows only
+// 'scan') whose params are {"depth":0,"rescan":[<workspace ids>]}.
+func (s *Store) CreateRescanJob(ctx context.Context, target string, workspaceIDs []int64, by string) (int64, error) {
+	params, err := json.Marshal(struct {
+		Depth  int     `json:"depth"`
+		Rescan []int64 `json:"rescan"`
+	}{0, nonNil(workspaceIDs)})
+	if err != nil {
+		return 0, err
+	}
+	return s.insertScanJob(ctx, target, string(params), by)
+}
+
+func (s *Store) insertScanJob(ctx context.Context, target, params, by string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO jobs (kind, target, params, state, started_by, started_at) VALUES ('scan', ?, ?, 'running', ?, ?)`,
-		target, string(params), by, formatTime(time.Now()))
+		target, params, by, formatTime(time.Now()))
 	if err != nil {
 		return 0, fmt.Errorf("store: create job: %w", err)
 	}
@@ -80,12 +101,13 @@ func (s *Store) Job(ctx context.Context, id int64) (Job, error) {
 		return Job{}, fmt.Errorf("store: read job: %w", err)
 	}
 	var p struct {
-		Depth int `json:"depth"`
+		Depth  int     `json:"depth"`
+		Rescan []int64 `json:"rescan"`
 	}
 	if err := json.Unmarshal([]byte(params), &p); err != nil {
 		return Job{}, fmt.Errorf("store: job %d params: %w", id, err)
 	}
-	j.Depth = p.Depth
+	j.Depth, j.Rescan = p.Depth, p.Rescan
 	if progress.Valid {
 		j.Progress = json.RawMessage(progress.String)
 	}
