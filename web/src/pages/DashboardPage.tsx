@@ -1,11 +1,9 @@
 import { FolderPlus, RotateCw } from 'lucide-react'
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { ApiError } from '../api/client'
 import { type LifecycleAction, listProjects, runAction, untrackProject } from '../api/projects'
-import { isScanBusy } from '../api/scans'
 import type { Project, Workspace } from '../api/types.gen'
-import { listWorkspaces, startRescan } from '../api/workspaces'
+import { listWorkspaces } from '../api/workspaces'
 import { useLive } from '../app/live'
 import ActionMenu from '../components/ActionMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -18,6 +16,7 @@ import { useToast } from '../components/Toast'
 import { inFlightStatus, type Status } from '../lib/status'
 import { formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
+import { useRescan } from '../lib/useRescan'
 
 /** PENDING_MS is how long a finished command's status outlives it when no state event arrives. */
 const PENDING_MS = 5000
@@ -336,29 +335,8 @@ function latestScan(workspaces: Workspace[]): string {
  * and no button.
  */
 function Header({ workspaces }: { workspaces: Workspace[] | null }) {
-  const navigate = useNavigate()
-  const toast = useToast()
-  const [starting, setStarting] = useState(false)
+  const { starting, rescan } = useRescan()
   const known = workspaces !== null && workspaces.length > 0
-
-  const rescan = async () => {
-    setStarting(true)
-    try {
-      const { id } = await startRescan()
-      navigate(`/rescan/${id}`)
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && isScanBusy(err.body)) {
-        // A scan runs: a rescan has its page, a first scan is shown by onboarding.
-        if (err.body.rescan) navigate(`/rescan/${err.body.id}`)
-        else navigate('/onboarding', { state: { scanId: err.body.id } })
-        return
-      }
-      const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
-      toast.error('Could not start the rescan', message)
-    } finally {
-      setStarting(false)
-    }
-  }
 
   return (
     <header className="flex flex-wrap items-end justify-between gap-4">
