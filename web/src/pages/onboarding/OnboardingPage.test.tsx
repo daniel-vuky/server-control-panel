@@ -524,3 +524,53 @@ describe('onboarding, nothing found', () => {
     expect(pathInput()).toBeEnabled()
   })
 })
+
+describe('onboarding, hand-off from the rescan page and the dashboard', () => {
+  it('starts scanning from state.scanId and fills in the path and depth', async () => {
+    api((c) =>
+      c.method === 'GET' && c.url === '/api/scans/7'
+        ? [200, job({ path: '/srv/busy', depth: 2 })]
+        : undefined,
+    )
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/onboarding', state: { scanId: 7 } }]}>
+        <AppRoutes />
+      </MemoryRouter>,
+    )
+    const es = await eventSource()
+    expect(es.url).toBe('/api/scans/7/events')
+    expect(posts('/api/scans')).toHaveLength(0)
+    await waitFor(() => expect(pathInput()).toHaveValue('/srv/busy'))
+    expect(screen.getByRole('radio', { name: '2 levels' })).toBeChecked()
+    expect(pathInput()).toBeDisabled()
+
+    es.emit('progress', { examined: 1, total: 2, current: '/srv/busy/a' })
+    expect(text('Scanning… 1/2 folders')).toBeInTheDocument()
+    es.emit('end', { state: 'done' })
+    expect(await screen.findByRole('heading', { name: 'Found 3 projects' })).toBeInTheDocument()
+  })
+
+  it('goes to the rescan page on a 409 for a running rescan', async () => {
+    api((c) => {
+      if (c.method === 'POST' && c.url === '/api/scans')
+        return [
+          409,
+          {
+            error: 'A scan is already running.',
+            id: 4,
+            path: 'all workspaces',
+            depth: 0,
+            rescan: true,
+          },
+        ]
+      if (c.method === 'GET' && c.url === '/api/scans/4')
+        return [200, job({ id: 4, rescan: true, state: 'running', result: undefined })]
+      return undefined
+    })
+    renderPage()
+    startScan('/srv/other')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Rescan' })).toBeInTheDocument()
+    const es = await eventSource()
+    expect(es.url).toBe('/api/scans/4/events')
+  })
+})

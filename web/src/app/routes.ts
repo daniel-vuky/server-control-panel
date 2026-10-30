@@ -32,6 +32,7 @@ export const appRoutes: AppRoute[] = [
   },
   { path: '/projects/:id', title: 'Project detail', issues: [4, 5] },
   { path: '/onboarding', title: 'Onboarding', issues: [17, 18, 23, 26] },
+  { path: '/rescan/:id', title: 'Rescan', issues: [24] },
   {
     path: '/backups',
     title: 'Backups',
