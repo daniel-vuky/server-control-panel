@@ -57,6 +57,7 @@ Verified on `postgres:17-alpine` (busybox `sh`), `mysql:9` (bash), `mariadb:11` 
 
 - ADR 5's "no shell" now has an exception, limited to these registry entries; any change to a script needs the same review as a change to the registry.
 - The scripts depend on the official images' variable names, a POSIX `sh`, `cat`, `sed` and `mktemp` in the image, and on the clients' option-file syntax. An image without them fails at Dump with the shell's error.
-- Killing the `docker` client does not kill the process inside the container. A dump that stalls on a lock keeps running there until it next writes (and dies on the broken pipe) or finishes; the trap still removes its temp file.
+- A `*_FILE` secret with an interior newline breaks its line in the option file, `.pgpass` or YAML config, so the dump fails with the client's error; nothing leaks. The official entrypoints have the same limit.
+- Killing the `docker` client does not kill the process inside the container: dockerd keeps draining the exec's stdout. After a stall or the ceiling, the orphaned dump runs to completion inside the container, holding its `--single-transaction` snapshot or `pg_dump` locks, invisible to the panel, and a retry may overlap it. Its trap still removes the credentials file. Bounding it in the script (for example with `timeout` where the image has one) is a possible later mitigation, not done here.
 - MySQL 9.7's `mysqldump` run by a non-root user reports an `Error:` line on stderr about masking policies and still exits 0; the dump is complete apart from those policies.
-- `mongosh` sends its own telemetry by default, as it does for any `mongosh` run in that container (a healthcheck, say); the panel does not change the user's `mongosh` settings.
+- A non-interactive `mongosh --eval` inside a container sends no telemetry on mongosh 2.x; older 1.x images may, and the panel does not change the user's `mongosh` settings.
