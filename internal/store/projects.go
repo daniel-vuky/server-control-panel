@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/daniel-vuky/server-control-panel/internal/project"
+	"github.com/daniel-vuky/server-control-panel/internal/runner"
 )
 
 // Known is what the store remembers of a project path.
@@ -55,6 +57,21 @@ type Tracked struct {
 	StopTemplate    string
 	AlertCPUPercent *int
 	AlertRAMMB      *int
+}
+
+// ComposeValues are the runner values that name the project's compose files:
+// dir, file and, when the project has an override file, override. ok is false
+// when the project has no compose file.
+func (t Tracked) ComposeValues() (v runner.Values, override, ok bool) {
+	if len(t.ComposeFiles) == 0 {
+		return nil, false, false
+	}
+	v = runner.Values{"dir": t.Path, "file": filepath.Join(t.Path, t.ComposeFiles[0])}
+	if len(t.ComposeFiles) > 1 {
+		v["override"] = filepath.Join(t.Path, t.ComposeFiles[1])
+		override = true
+	}
+	return v, override, true
 }
 
 // TrackedProjects lists the tracked projects, oldest first.

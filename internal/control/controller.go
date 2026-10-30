@@ -480,13 +480,9 @@ func (c *Controller) run(ctx context.Context, t store.Tracked, a project.Action,
 // execute runs the command, re-reads Docker and decides the outcome. fresh is
 // the re-read container list, nil when the re-read failed.
 func (c *Controller) execute(ctx context.Context, t store.Tracked, a project.Action) (res Result, fresh []project.Container) {
-	if len(t.ComposeFiles) == 0 {
+	values, override, ok := t.ComposeValues()
+	if !ok {
 		return Result{Outcome: OutcomeFailed, Status: project.StatusUnknown, Message: "The project has no compose file."}, nil
-	}
-	values := runner.Values{"dir": t.Path, "file": filepath.Join(t.Path, t.ComposeFiles[0])}
-	override := len(t.ComposeFiles) > 1
-	if override {
-		values["override"] = filepath.Join(t.Path, t.ComposeFiles[1])
 	}
 	secrets := scan.SecretValues(scan.ReadDotenv(filepath.Join(t.Path, ".env")))
 	_, runErr := c.cmd.Run(ctx, runner.StackCompose, composeAction(a, override, t.StopTemplate), values, secrets)

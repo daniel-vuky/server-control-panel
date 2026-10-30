@@ -490,3 +490,17 @@ func TestTrackedProjectLookup(t *testing.T) {
 		t.Fatalf("unknown project: err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestTrackedComposeValues(t *testing.T) {
+	v, override, ok := Tracked{Path: "/w/shop", ComposeFiles: []string{"compose.yaml"}}.ComposeValues()
+	if !ok || override || len(v) != 2 || v["dir"] != "/w/shop" || v["file"] != "/w/shop/compose.yaml" {
+		t.Fatalf("main only: %v %v %v", v, override, ok)
+	}
+	v, override, ok = Tracked{Path: "/w/shop", ComposeFiles: []string{"compose.yaml", "compose.override.yaml"}}.ComposeValues()
+	if !ok || !override || len(v) != 3 || v["override"] != "/w/shop/compose.override.yaml" {
+		t.Fatalf("with override: %v %v %v", v, override, ok)
+	}
+	if _, _, ok := (Tracked{Path: "/w/shop"}).ComposeValues(); ok {
+		t.Fatal("no compose file must not be ok")
+	}
+}
