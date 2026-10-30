@@ -3,6 +3,8 @@
 package runner
 
 import (
+	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -13,6 +15,11 @@ import (
 func setProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			// The group already ended, as when the command exits at the deadline.
+			return os.ErrProcessDone
+		}
+		return err
 	}
 }

@@ -506,3 +506,67 @@ func TestHubDockerDown(t *testing.T) {
 		t.Fatalf("Check = %+v, want Docker up and shop running", s)
 	}
 }
+
+func TestHubSurvivesAPanicInATick(t *testing.T) {
+	e, h := newHubEnv(t, 10*time.Millisecond)
+	// The second ping panics, on the loop goroutine; the others succeed.
+	e.cmd.on(runner.DockerPing, reply{}, reply{panic: true}, reply{}).containers(runningOut("shop"))
+	cur, _ := subscribe(t, h)
+	if !cur.DockerUp {
+		t.Fatalf("state = %+v, want Docker up", cur)
+	}
+	// The loop keeps ticking after the panic, and a Check still works.
+	waitTicks(t, e.cmd, 3)
+	if s := h.Check(context.Background()); !s.DockerUp || viewOf(t, s, "shop").Status != project.StatusRunning {
+		t.Fatalf("Check after a panic = %+v, want Docker up and shop running", s)
+	}
+}
+
+func TestHubPanicReleasesWaiters(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	gate := make(chan struct{})
+	e.cmd.on(runner.DockerPing, reply{gate: gate, panic: true}, reply{}).containers(runningOut("shop"))
+
+	first := make(chan State, 1)
+	go func() { first <- h.Check(context.Background()) }()
+	e.cmd.waitRunning(t, runner.DockerPing, 1)
+	second := make(chan State, 1)
+	go func() { second <- h.Check(context.Background()) }()
+	time.Sleep(20 * time.Millisecond) // the second Check now waits on the tick
+	close(gate)
+
+	for name, ch := range map[string]chan State{"first": first, "second": second} {
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the %s Check was not released after the panic", name)
+		}
+	}
+	if s := h.Check(context.Background()); !s.DockerUp {
+		t.Fatalf("Check after the panic = %+v, want Docker up", s)
+	}
+}
+
+func TestHubNotReadyWhenTheFirstTickCannotReadTheProjects(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	if err := e.st.Close(); err != nil { // TrackedProjects now fails
+		t.Fatal(err)
+	}
+	cur, _ := subscribe(t, h)
+	if len(cur.Projects) != 0 {
+		t.Fatalf("state = %+v, want no projects", cur)
+	}
+	h.mu.Lock()
+	ready := h.ready
+	h.mu.Unlock()
+	if ready {
+		t.Fatal("the hub is ready though it never read the tracked projects")
+	}
+	// Not ready, so the next subscriber does not reuse that empty state.
+	n := e.cmd.count(runner.DockerPing)
+	subscribe(t, h)
+	if got := e.cmd.count(runner.DockerPing); got <= n {
+		t.Fatalf("the second subscribe ran no tick (%d pings, had %d)", got, n)
+	}
+}

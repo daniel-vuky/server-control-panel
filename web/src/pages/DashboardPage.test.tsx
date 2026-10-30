@@ -167,10 +167,10 @@ describe('DashboardPage', () => {
     const list = [projects[0], projects[1], stoppedShop, brokenShop]
 
     /** serveActions answers GET /api/projects with the list and each POST with next(). */
-    function serveActions(next: () => Promise<Response> | Response) {
+    function serveActions(next: () => Promise<Response> | Response, rows: Project[] = list) {
       const fetchStub = vi.fn(async (_url: string, init?: RequestInit) => {
         if (init?.method === 'POST') return next()
-        return new Response(JSON.stringify(list), { status: 200 })
+        return new Response(JSON.stringify(rows), { status: 200 })
       })
       vi.stubGlobal('fetch', fetchStub)
       return fetchStub
@@ -212,7 +212,7 @@ describe('DashboardPage', () => {
       expect(within(row(/shop/)).getByRole('switch')).toBeDisabled()
 
       await act(async () => release(ok('stopped')))
-      expect(await screen.findByRole('status')).toHaveTextContent('Stopped shop')
+      expect(await screen.findByTestId('toast-success')).toHaveTextContent('Stopped shop')
       expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument()
     })
 
@@ -225,7 +225,7 @@ describe('DashboardPage', () => {
       expect(screen.queryByRole('dialog')).toBeNull()
       await waitFor(() => expect(posts(stub)).toHaveLength(1))
       expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/3/start')
-      expect(await screen.findByRole('status')).toHaveTextContent('Started blog')
+      expect(await screen.findByTestId('toast-success')).toHaveTextContent('Started blog')
     })
 
     it('restarts an error row at once and asks first for a running row', async () => {
@@ -253,6 +253,31 @@ describe('DashboardPage', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Restart' }))
       await waitFor(() => expect(posts(stub)).toHaveLength(2))
       expect((posts(stub)[1] as [string])[0]).toBe('/api/projects/1/restart')
+    })
+
+    it('asks first before restarting a partial row too', async () => {
+      const partialShop: Project = {
+        ...projects[0],
+        id: 5,
+        displayName: 'notes',
+        path: '/srv/work/notes',
+        status: 'partial',
+        actions: ['start', 'stop', 'restart'],
+        databases: [],
+      }
+      const stub = serveActions(() => ok('running'), [partialShop])
+      renderPage()
+      await screen.findByRole('row', { name: /notes/ })
+      expect(within(row(/notes/)).getByText('Partial')).toBeInTheDocument()
+
+      fireEvent.click(within(row(/notes/)).getByRole('button', { name: 'More actions for notes' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByRole('heading')).toHaveTextContent('Restart notes?')
+      expect(posts(stub)).toHaveLength(0)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Restart' }))
+      await waitFor(() => expect(posts(stub)).toHaveLength(1))
+      expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/5/restart')
     })
 
     it('shows a failed result as an alert toast that stays', async () => {

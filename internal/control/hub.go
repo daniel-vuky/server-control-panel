@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -212,12 +213,19 @@ func (h *Hub) shared(ctx context.Context) State {
 	}
 }
 
-// runTick runs the tick of run and always ends it, even on a panic.
+// runTick runs the tick of run and always ends it. A panic in the tick is
+// logged and recovered, so the loop goroutine cannot take the process down;
+// the tick then counts as abandoned (ok false) and waiters run their own.
 func (h *Hub) runTick(ctx context.Context, run *tickRun) {
 	defer func() {
+		r := recover()
 		h.mu.Lock()
 		h.running = nil
 		h.mu.Unlock()
+		if r != nil {
+			h.log.Error("hub tick panicked", "panic", r, "stack", string(debug.Stack()))
+			run.ok = false
+		}
 		close(run.done)
 	}()
 	run.state, run.ok = h.tick(ctx)
@@ -266,7 +274,11 @@ func (h *Hub) tick(ctx context.Context) (State, bool) {
 		if tsErr == nil {
 			h.ts = ts
 		}
-		h.ready = true
+		// Without the tracked projects the first state would be an empty list,
+		// so the hub is not ready until a tick has read them.
+		if tsErr == nil || h.ready {
+			h.ready = true
+		}
 		h.dockerUp = up
 		if !stale {
 			h.cs, h.csOK, h.at = cs, up && readErr == nil, time.Now()

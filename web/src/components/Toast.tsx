@@ -83,12 +83,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="pointer-events-none fixed right-6 bottom-6 z-50 flex flex-col items-end gap-2.5">
+      <div
+        aria-live="polite"
+        data-testid="toast-region"
+        className="pointer-events-none fixed right-6 bottom-6 z-50 flex flex-col items-end gap-2.5"
+      >
         {toasts.map((t) =>
           t.kind === 'success' ? (
             <div
               key={t.id}
-              role="status"
+              data-testid="toast-success"
               className="pointer-events-auto flex items-center gap-2.5 rounded-[10px] border border-[#1e3a2d] bg-surface-2 px-4 py-3 text-text shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
             >
               <span aria-hidden="true" className="size-2 flex-none rounded-full bg-success" />

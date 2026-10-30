@@ -41,8 +41,8 @@ func (s *server) projectAction(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		actions := make([]string, 0, len(res.Actions))
-		for _, a := range res.Actions {
-			actions = append(actions, string(a))
+		for _, act := range res.Actions {
+			actions = append(actions, string(act))
 		}
 		writeJSON(w, http.StatusOK, ActionResult{Outcome: string(res.Outcome), Status: string(res.Status), Actions: actions, Message: res.Message})
 	case errors.Is(err, store.ErrNotFound):

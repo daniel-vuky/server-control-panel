@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ActionMenu from './ActionMenu'
 import ConfirmDialog from './ConfirmDialog'
 
@@ -161,5 +161,59 @@ describe('ActionMenu', () => {
       'title',
       'Not allowed while Running',
     )
+  })
+
+  describe('placement', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    function openAt(rect: Partial<DOMRect>) {
+      const { trigger } = setup(['start', 'restart'])
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        left: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+        ...rect,
+      } as DOMRect)
+      open(trigger)
+      return screen.getByRole('menu')
+    }
+
+    it('is fixed under the trigger, so a table overflow cannot clip it', () => {
+      vi.stubGlobal('innerWidth', 1000)
+      const menu = openAt({ bottom: 120, right: 940 })
+      expect(menu.style.position).toBe('fixed')
+      expect(menu.style.top).toBe('124px')
+      expect(menu.style.right).toBe('60px')
+      vi.unstubAllGlobals()
+    })
+
+    it('closes on a window scroll', () => {
+      const menu = openAt({ bottom: 120, right: 940 })
+      expect(menu).toBeInTheDocument()
+      act(() => {
+        window.dispatchEvent(new Event('scroll'))
+      })
+      expect(screen.queryByRole('menu')).toBeNull()
+    })
+
+    it('closes on a scroll of an inner container (capture phase)', () => {
+      openAt({ bottom: 120, right: 940 })
+      act(() => {
+        screen.getByRole('button', { name: 'outside' }).dispatchEvent(new Event('scroll'))
+      })
+      expect(screen.queryByRole('menu')).toBeNull()
+    })
+
+    it('closes on a window resize', () => {
+      openAt({ bottom: 120, right: 940 })
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+      expect(screen.queryByRole('menu')).toBeNull()
+    })
   })
 })

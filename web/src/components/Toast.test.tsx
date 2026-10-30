@@ -37,20 +37,33 @@ describe('Toast', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('shows a message in a status region, then removes it after 4000 ms', () => {
+  it('shows a message in a polite live region, then removes it after 4000 ms', () => {
     render(
       <ToastProvider>
         <Trigger message="3 projects added" />
       </ToastProvider>,
     )
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByTestId('toast-success')).toBeNull()
     act(() => screen.getByRole('button', { name: 'go' }).click())
-    expect(screen.getByRole('status')).toHaveTextContent('3 projects added')
+    expect(screen.getByTestId('toast-success')).toHaveTextContent('3 projects added')
 
     advance(3999)
-    expect(screen.getByRole('status')).toHaveTextContent('3 projects added')
+    expect(screen.getByTestId('toast-success')).toHaveTextContent('3 projects added')
     advance(1)
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByTestId('toast-success')).toBeNull()
+  })
+
+  it('keeps a persistent polite live region, with errors as alerts', () => {
+    setup()
+    const region = screen.getByTestId('toast-region')
+    expect(region).toHaveAttribute('aria-live', 'polite')
+    expect(region).not.toHaveAttribute('role')
+    act(() => api.success('Started blog'))
+    expect(screen.getByTestId('toast-success')).not.toHaveAttribute('role')
+    expect(region).toContainElement(screen.getByTestId('toast-success'))
+    act(() => api.error('Couldn’t stop shop'))
+    expect(region).toContainElement(screen.getByRole('alert'))
+    expect(screen.getByTestId('toast-region')).toBe(region)
   })
 
   it('show is success', () => {
@@ -63,19 +76,19 @@ describe('Toast', () => {
     act(() => api.success('first'))
     advance(3000)
     act(() => api.success('second'))
-    expect(screen.getAllByRole('status')).toHaveLength(2)
+    expect(screen.getAllByTestId('toast-success')).toHaveLength(2)
     advance(1000)
-    expect(screen.getAllByRole('status')).toHaveLength(1)
-    expect(screen.getByRole('status')).toHaveTextContent('second')
+    expect(screen.getAllByTestId('toast-success')).toHaveLength(1)
+    expect(screen.getByTestId('toast-success')).toHaveTextContent('second')
     advance(3000)
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByTestId('toast-success')).toBeNull()
   })
 
   it('stacks the newest last', () => {
     setup()
     act(() => api.success('one'))
     act(() => api.success('two'))
-    const all = screen.getAllByRole('status')
+    const all = screen.getAllByTestId('toast-success')
     expect(all[0]).toHaveTextContent('one')
     expect(all[1]).toHaveTextContent('two')
   })
@@ -105,7 +118,7 @@ describe('Toast', () => {
     act(() => api.success('Started blog'))
     advance(4000)
     expect(screen.getByRole('alert')).toBeInTheDocument()
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByTestId('toast-success')).toBeNull()
   })
 
   it('a fifth toast drops the oldest success, keeping errors', () => {
@@ -116,7 +129,7 @@ describe('Toast', () => {
     act(() => api.success('s3'))
     act(() => api.success('s4'))
     expect(screen.getByRole('alert')).toBeInTheDocument()
-    const texts = screen.getAllByRole('status').map((e) => e.textContent)
+    const texts = screen.getAllByTestId('toast-success').map((e) => e.textContent)
     expect(texts).toEqual(['s2', 's3', 's4'])
   })
 
@@ -134,7 +147,7 @@ describe('Toast', () => {
     setup()
     for (const n of ['e1', 'e2', 'e3', 'e4']) act(() => api.error(n))
     act(() => api.success('ok'))
-    expect(screen.getByRole('status')).toHaveTextContent('ok')
+    expect(screen.getByTestId('toast-success')).toHaveTextContent('ok')
     const errs = screen.getAllByRole('alert').map((e) => e.textContent)
     expect(errs).toHaveLength(3)
     expect(errs.join()).not.toContain('e1')

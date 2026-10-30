@@ -12,10 +12,15 @@ const eventState = "state"
 // It sends a state event on connect and then each time the state changes,
 // plus a ": ping" comment every sseHeartbeat, until the request ends.
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
+	// Start the stream first: Subscribe may run a fresh tick, which can take
+	// a while when Docker hangs.
+	sw := startSSE(w)
+	if sw.rc.Flush() != nil {
+		return
+	}
 	current, updates, cancel := s.Hub.Subscribe()
 	defer cancel()
 
-	sw := startSSE(w)
 	if sw.send(eventState, toLiveState(current)) != nil {
 		return
 	}
