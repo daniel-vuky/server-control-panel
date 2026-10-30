@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -118,43 +117,11 @@ func (s *Store) AddWorkspace(ctx context.Context, w NewWorkspace, ps []NewProjec
 	}
 
 	for _, p := range ps {
-		files, err := json.Marshal(nonNil(p.ComposeFiles))
-		if err != nil {
+		if _, err := insertProject(ctx, tx, workspaceID, p, now); err != nil {
 			return 0, 0, err
 		}
-		details, err := json.Marshal(normalizeDetails(p.Details))
-		if err != nil {
-			return 0, 0, err
-		}
-		state := "ignored"
 		if p.Tracked {
-			state = "tracked"
-		}
-		res, err := tx.ExecContext(ctx,
-			`INSERT INTO projects (workspace_id, path, compose_files, compose_project, display_name, state, self, details, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, p.Path, string(files), p.ComposeProject, p.DisplayName, state, p.Self, string(details), now)
-		if err != nil {
-			return 0, 0, fmt.Errorf("store: add project %s: %w", p.Path, err)
-		}
-		if !p.Tracked {
-			continue
-		}
-		added++
-		projectID, err := res.LastInsertId()
-		if err != nil {
-			return 0, 0, err
-		}
-		for _, d := range p.Databases {
-			sources, err := json.Marshal(nonNil(d.Sources))
-			if err != nil {
-				return 0, 0, err
-			}
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO databases (project_id, type, name, location_kind, location, sources) VALUES (?, ?, ?, ?, ?, ?)`,
-				projectID, d.Type, d.Name, d.LocationKind, d.Location, string(sources)); err != nil {
-				return 0, 0, fmt.Errorf("store: add database of %s: %w", p.Path, err)
-			}
+			added++
 		}
 	}
 	if err := tx.Commit(); err != nil {

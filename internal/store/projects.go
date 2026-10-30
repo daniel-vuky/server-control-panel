@@ -59,6 +59,9 @@ func (s *Store) TrackedProjects(ctx context.Context) ([]Tracked, error) {
 // TrackedProject returns one tracked project, or ErrNotFound when the id is
 // unknown or the project is ignored.
 func (s *Store) TrackedProject(ctx context.Context, id int64) (Tracked, error) {
+	if id <= 0 { // 0 means "all" to tracked
+		return Tracked{}, ErrNotFound
+	}
 	ts, err := s.tracked(ctx, id)
 	if err != nil {
 		return Tracked{}, err

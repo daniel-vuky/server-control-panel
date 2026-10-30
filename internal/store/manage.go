@@ -62,6 +62,9 @@ func (s *Store) RemoveWorkspace(ctx context.Context, id int64) (Workspace, error
 // rescan could not find (missing_since set) is deleted, so a gone folder does
 // not linger as an ignored row. An unknown or ignored id gives ErrNotFound.
 func (s *Store) UntrackProject(ctx context.Context, id int64) (Tracked, error) {
+	if id <= 0 { // 0 would list every tracked project in trackedIn
+		return Tracked{}, ErrNotFound
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Tracked{}, fmt.Errorf("store: untrack project: %w", err)
@@ -143,9 +146,11 @@ func (s *Store) ApplyRescan(ctx context.Context, r RescanApply, now time.Time) e
 				return err
 			}
 		}
+		// Found is matched by path in any workspace: a project seen by any
+		// scanned workspace is present. Missing stays scoped to the reporter.
 		for _, path := range w.Found {
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE projects SET missing_since = NULL WHERE workspace_id = ? AND path = ? AND state = 'tracked'`, w.ID, path); err != nil {
+				`UPDATE projects SET missing_since = NULL WHERE path = ? AND state = 'tracked'`, path); err != nil {
 				return fmt.Errorf("store: apply rescan: %w", err)
 			}
 		}
@@ -174,6 +179,10 @@ func refreshProject(ctx context.Context, tx *sql.Tx, p ProjectRefresh) error {
 		return nil // untracked or removed meanwhile
 	}
 	if err != nil {
+		return fmt.Errorf("store: apply rescan: %w", err)
+	}
+	// A refreshed project was seen, so it is present.
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET missing_since = NULL WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("store: apply rescan: %w", err)
 	}
 	if p.Self != nil {
@@ -207,6 +216,36 @@ func encodeConfig(files []string, d project.Details) (filesJSON, detailsJSON str
 		return "", "", err
 	}
 	return string(f), string(dj), nil
+}
+
+// insertProject stores a new project of workspaceID with a NULL missing_since,
+// and its databases when it is tracked. It returns the project id.
+func insertProject(ctx context.Context, tx *sql.Tx, workspaceID int64, p NewProject, now string) (int64, error) {
+	files, details, err := encodeConfig(p.ComposeFiles, p.Details)
+	if err != nil {
+		return 0, err
+	}
+	state := "ignored"
+	if p.Tracked {
+		state = "tracked"
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO projects (workspace_id, path, compose_files, compose_project, display_name, state, self, details, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		workspaceID, p.Path, files, p.ComposeProject, p.DisplayName, state, p.Self, details, now)
+	if err != nil {
+		return 0, fmt.Errorf("store: add project %s: %w", p.Path, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if p.Tracked {
+		if err := replaceDatabases(ctx, tx, id, p.Databases); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
 }
 
 func replaceDatabases(ctx context.Context, tx *sql.Tx, projectID int64, dbs []project.Database) error {
@@ -278,29 +317,14 @@ func (s *Store) AddProjects(ctx context.Context, jobID int64, items []AddItem) (
 		if exists == 0 {
 			return 0, ErrWorkspaceGone
 		}
-		files, details, err := encodeConfig(it.ComposeFiles, it.Details)
-		if err != nil {
-			return 0, err
-		}
-		state := "ignored"
-		if it.Tracked {
-			state = "tracked"
-		}
 		var (
 			id       int64
 			oldState string
 		)
-		err = tx.QueryRowContext(ctx, `SELECT id, state FROM projects WHERE path = ?`, it.Path).Scan(&id, &oldState)
+		err := tx.QueryRowContext(ctx, `SELECT id, state FROM projects WHERE path = ?`, it.Path).Scan(&id, &oldState)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			res, err := tx.ExecContext(ctx,
-				`INSERT INTO projects (workspace_id, path, compose_files, compose_project, display_name, state, self, details, created_at, missing_since)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-				it.WorkspaceID, it.Path, files, it.ComposeProject, it.DisplayName, state, it.Self, details, now)
-			if err != nil {
-				return 0, fmt.Errorf("store: add project %s: %w", it.Path, err)
-			}
-			if id, err = res.LastInsertId(); err != nil {
+			if _, err := insertProject(ctx, tx, it.WorkspaceID, it.NewProject, now); err != nil {
 				return 0, err
 			}
 		case err != nil:
@@ -308,19 +332,29 @@ func (s *Store) AddProjects(ctx context.Context, jobID int64, items []AddItem) (
 		case oldState == "tracked":
 			return 0, ErrAddedMeanwhile
 		default:
+			files, details, err := encodeConfig(it.ComposeFiles, it.Details)
+			if err != nil {
+				return 0, err
+			}
+			state := "ignored"
+			if it.Tracked {
+				state = "tracked"
+			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE projects SET workspace_id = ?, compose_files = ?, compose_project = ?, display_name = ?, state = ?, self = ?, details = ?, missing_since = NULL WHERE id = ?`,
 				it.WorkspaceID, files, it.ComposeProject, it.DisplayName, state, it.Self, details, id); err != nil {
 				return 0, fmt.Errorf("store: add project %s: %w", it.Path, err)
 			}
+			var dbs []project.Database
+			if it.Tracked {
+				dbs = it.Databases
+			}
+			if err := replaceDatabases(ctx, tx, id, dbs); err != nil {
+				return 0, err
+			}
 		}
-		var dbs []project.Database
 		if it.Tracked {
 			added++
-			dbs = it.Databases
-		}
-		if err := replaceDatabases(ctx, tx, id, dbs); err != nil {
-			return 0, err
 		}
 	}
 	if err := tx.Commit(); err != nil {

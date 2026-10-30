@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,16 +38,15 @@ func seedApps(t *testing.T, s *Store) (wsID, shopID, blogID int64) {
 func TestMigration0003OnPopulatedDB(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "panel.db")
-	u := url.URL{Scheme: "file", Path: path}
-	u.RawQuery = "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	for v, name := range map[int]string{1: "0001_init.sql", 2: "0002_activity.sql"} {
+	for i, name := range []string{"0001_init.sql", "0002_activity.sql"} {
+		v := i + 1
 		body, err := migrationFS.ReadFile("migrations/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -240,9 +238,9 @@ func TestApplyRescanRefreshKeepsName(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE projects SET display_name = 'My Shop' WHERE id = ?`, shopID); err != nil {
 		t.Fatal(err)
 	}
-	selfTrue := false
+	selfOff := false
 	r := refreshOf("/srv/apps/shop", "api", "cache")
-	r.Self = &selfTrue
+	r.Self = &selfOff
 	apply := RescanApply{Workspaces: []WorkspaceApply{{ID: wsID, LastScanAt: laterTime, Refresh: []ProjectRefresh{r}, Found: []string{"/srv/apps/shop"}}}}
 	if err := s.ApplyRescan(ctx, apply, laterTime); err != nil {
 		t.Fatal(err)
@@ -512,5 +510,81 @@ func TestAddProjectsSecondTrackRefused(t *testing.T) {
 	}
 	if _, err := s.AddProjects(ctx, 9999, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown job: %v", err)
+	}
+}
+
+func TestApplyRescanRefreshClearsMissing(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	wsID, shopID, _ := seedApps(t, s)
+	otherID, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "other", Path: "/srv/other", Depth: 1, LastScanAt: scanTime}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyRescan(ctx, RescanApply{Workspaces: []WorkspaceApply{{ID: wsID, LastScanAt: rescanTime, Missing: []string{"/srv/apps/shop"}}}}, rescanTime); err != nil {
+		t.Fatal(err)
+	}
+	// Refreshed by a different workspace than its owner, with no Found entry.
+	apply := RescanApply{Workspaces: []WorkspaceApply{{ID: otherID, LastScanAt: laterTime, Refresh: []ProjectRefresh{refreshOf("/srv/apps/shop", "api")}}}}
+	if err := s.ApplyRescan(ctx, apply, laterTime); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.TrackedProject(ctx, shopID)
+	if err != nil || got.MissingSince != nil || got.ComposeProject != "renamed" {
+		t.Fatalf("after refresh: %+v, %v", got, err)
+	}
+}
+
+func TestApplyRescanFoundMatchesAnyWorkspace(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	wsID, shopID, _ := seedApps(t, s)
+	otherID, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "other", Path: "/srv/other", Depth: 1, LastScanAt: scanTime}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyRescan(ctx, RescanApply{Workspaces: []WorkspaceApply{{ID: wsID, LastScanAt: rescanTime, Missing: []string{"/srv/apps/shop"}}}}, rescanTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyRescan(ctx, RescanApply{Workspaces: []WorkspaceApply{{ID: otherID, LastScanAt: laterTime, Found: []string{"/srv/apps/shop"}}}}, laterTime); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.TrackedProject(ctx, shopID)
+	if err != nil || got.MissingSince != nil {
+		t.Fatalf("missing_since = %v, %v", got.MissingSince, err)
+	}
+}
+
+func TestApplyRescanMissingScopedToReporter(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	_, shopID, _ := seedApps(t, s)
+	otherID, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "other", Path: "/srv/other", Depth: 1, LastScanAt: scanTime}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyRescan(ctx, RescanApply{Workspaces: []WorkspaceApply{{ID: otherID, LastScanAt: laterTime, Missing: []string{"/srv/apps/shop"}}}}, laterTime); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.TrackedProject(ctx, shopID)
+	if err != nil || got.MissingSince != nil {
+		t.Fatalf("a foreign workspace marked the project missing: %v, %v", got.MissingSince, err)
+	}
+}
+
+func TestZeroAndNegativeProjectIDsAreNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	seedApps(t, s)
+	for _, id := range []int64{0, -1} {
+		if _, err := s.UntrackProject(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("UntrackProject(%d): %v", id, err)
+		}
+		if _, err := s.TrackedProject(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("TrackedProject(%d): %v", id, err)
+		}
+	}
+	if ts, err := s.TrackedProjects(ctx); err != nil || len(ts) != 1 {
+		t.Fatalf("a zero id changed the data: %+v, %v", ts, err)
 	}
 }
