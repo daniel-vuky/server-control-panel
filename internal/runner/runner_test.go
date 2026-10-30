@@ -399,3 +399,189 @@ func alive(pid int) bool {
 	}
 	return true
 }
+
+var followVals = Values{"dir": "/w/a", "file": "/w/a/compose.yaml", "since": "2026-10-30T10:00:00Z"}
+
+// collect returns an onLine that appends to a slice, and a getter. It is
+// not guarded, so a concurrent call shows up as a race under -race.
+func collect() (func(string), func() []string) {
+	var got []string
+	return func(l string) { got = append(got, l) }, func() []string { return got }
+}
+
+func TestStreamDeliversMaskedLines(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_STDOUT='a secret b'\nFAKE_STDERR='warn secret'\n")
+	onLine, got := collect()
+	err := r.Stream(context.Background(), StackCompose, ComposeLogs, followVals, []string{"secret"}, onLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := got()
+	if len(lines) != 2 {
+		t.Fatalf("lines = %q", lines)
+	}
+	have := map[string]bool{lines[0]: true, lines[1]: true}
+	if !have["a •••• b"] || !have["warn ••••"] {
+		t.Fatalf("lines = %q", lines)
+	}
+}
+
+func TestStreamArgv(t *testing.T) {
+	r := newRunner(t, "")
+	onLine, got := collect()
+	if err := r.Stream(context.Background(), StackCompose, ComposeLogs, followVals, nil, onLine); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"compose", "--project-directory", "/w/a", "-f", "/w/a/compose.yaml",
+		"logs", "--no-color", "--timestamps", "--follow", "--since", "2026-10-30T10:00:00Z"}
+	var args []string
+	for _, l := range got() {
+		if rest, ok := strings.CutPrefix(l, "ARG:"); ok {
+			args = append(args, rest)
+		}
+	}
+	if !equal(args, want) {
+		t.Fatalf("argv\n got %q\nwant %q", args, want)
+	}
+}
+
+func TestStreamCutsLongLine(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_LONGLINE=20480\n")
+	onLine, got := collect()
+	if err := r.Stream(context.Background(), StackCompose, ComposeLogs, followVals, nil, onLine); err != nil {
+		t.Fatal(err)
+	}
+	lines := got()
+	if len(lines) != 2 || len(lines[0]) != 16<<10 || lines[0] != strings.Repeat("x", 16<<10) || lines[1] != "after" {
+		var sizes []int
+		for _, l := range lines {
+			sizes = append(sizes, len(l))
+		}
+		t.Fatalf("line sizes = %v, last = %q", sizes, lines[len(lines)-1])
+	}
+}
+
+func TestStreamExitError(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_STDERR='no such service secret'\nFAKE_EXIT=1\n")
+	onLine, _ := collect()
+	err := r.Stream(context.Background(), StackCompose, ComposeLogs, followVals, []string{"secret"}, onLine)
+	var ee *ExitError
+	if !errors.As(err, &ee) || ee.Code != 1 || ee.Stderr != "no such service ••••" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStreamKillsGroupOnCancel(t *testing.T) {
+	r := newRunner(t, "FAKE_QUIET=1\nFAKE_GRANDCHILD=1\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	onLine, _ := collect()
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Stream(ctx, StackCompose, ComposeLogs, followVals, nil, onLine)
+	}()
+
+	pidFile := filepath.Join(r.DataDir, "docker", "grandchild")
+	var pid int
+	deadline := time.Now().Add(3 * time.Second)
+	for pid == 0 {
+		if raw, err := os.ReadFile(pidFile); err == nil { //nolint:gosec // G304: a path under the test's temp dir.
+			pid, _ = strconv.Atoi(strings.TrimSpace(string(raw)))
+		}
+		if pid == 0 && time.Now().After(deadline) {
+			t.Fatal("grandchild pid not recorded")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stream did not return after cancel")
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for alive(pid) {
+		if time.Now().After(deadline) {
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Kill()
+			}
+			t.Fatalf("grandchild %d is still alive after cancel", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestStreamRefusesReadAction(t *testing.T) {
+	r := newRunner(t, "")
+	onLine, got := collect()
+	for _, tc := range []struct {
+		stack  Stack
+		action Action
+		values Values
+	}{
+		{StackCompose, ComposeLogsTail, Values{"dir": "/w/a", "file": "/w/a/compose.yaml"}},
+		{StackCompose, ComposeUp, Values{"dir": "/w/a", "file": "/w/a/compose.yaml"}},
+		{StackDocker, DockerContainers, nil},
+	} {
+		err := r.Stream(context.Background(), tc.stack, tc.action, tc.values, nil, onLine)
+		if !errors.Is(err, ErrUnknownCommand) {
+			t.Errorf("%s: err = %v, want ErrUnknownCommand", tc.action, err)
+		}
+	}
+	if len(got()) != 0 {
+		t.Fatalf("lines = %q", got())
+	}
+	if _, err := os.Stat(filepath.Join(r.DataDir, "docker", "started")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the fake docker was started (stat: %v)", err)
+	}
+}
+
+func TestRunRefusesFollowAction(t *testing.T) {
+	for _, a := range []Action{ComposeLogs, ComposeLogsOverride, ComposeLogsService, ComposeLogsServiceOverride} {
+		r := newRunner(t, "")
+		_, err := r.Run(context.Background(), StackCompose, a, followVals, nil)
+		if !errors.Is(err, ErrUnknownCommand) {
+			t.Errorf("%s: err = %v, want ErrUnknownCommand", a, err)
+		}
+		if _, err := os.Stat(filepath.Join(r.DataDir, "docker", "started")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s: the fake docker was started (stat: %v)", a, err)
+		}
+	}
+}
+
+func TestDownUsesLifecycleTimeout(t *testing.T) {
+	var asked time.Duration
+	old := timeoutFor
+	timeoutFor = func(a Action, fallback time.Duration) time.Duration {
+		d := old(a, fallback)
+		asked = d
+		return 200 * time.Millisecond
+	}
+	t.Cleanup(func() { timeoutFor = old })
+
+	r := newRunner(t, "FAKE_SLEEP=5\n")
+	_, err := r.Run(context.Background(), StackCompose, ComposeDown,
+		Values{"dir": "/w/a", "file": "/w/a/compose.yaml"}, nil)
+	var te *TimeoutError
+	if !errors.As(err, &te) || te.After != 200*time.Millisecond {
+		t.Fatalf("err = %v, want *TimeoutError", err)
+	}
+	if asked != LifecycleTimeout {
+		t.Fatalf("timeoutFor gave %v for compose.down, want %v", asked, LifecycleTimeout)
+	}
+}
+
+func TestRunTailAndInspectRun(t *testing.T) {
+	r := newRunner(t, "")
+	res, err := r.Run(context.Background(), StackDocker, DockerInspect, Values{"ids": id1 + " " + id2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := lines(res.Stdout, "ARG:")
+	if len(args) != 5 || args[3] != id1 || args[4] != id2 {
+		t.Fatalf("argv = %q", args)
+	}
+}

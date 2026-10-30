@@ -8,12 +8,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,7 +23,7 @@ const (
 	defaultBin     = "docker"
 	defaultTimeout = 15 * time.Second
 	defaultPath    = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	// LifecycleTimeout is the deadline of a compose up, stop or restart.
+	// LifecycleTimeout is the deadline of a compose up, down, stop or restart.
 	LifecycleTimeout = 60 * time.Second
 	// PingTimeout is the deadline of docker.ping.
 	PingTimeout = 5 * time.Second
@@ -31,6 +33,9 @@ const (
 	waitDelay = 2 * time.Second
 	// mask replaces every secret in stderr.
 	mask = "••••"
+	// maxLine is the most bytes of one log line Stream delivers; the rest of an
+	// over-long line is dropped.
+	maxLine = 16 << 10
 	// minSecret is the shortest secret that is masked, so that masking never
 	// shreds common short text.
 	minSecret = 4
@@ -49,7 +54,7 @@ var (
 var timeoutFor = func(a Action, fallback time.Duration) time.Duration {
 	switch a {
 	case ComposeUp, ComposeUpOverride, ComposeStop, ComposeStopOverride,
-		ComposeRestart, ComposeRestartOverride:
+		ComposeRestart, ComposeRestartOverride, ComposeDown, ComposeDownOverride:
 		return LifecycleTimeout
 	case DockerPing:
 		return PingTimeout
@@ -98,30 +103,17 @@ type Runner struct {
 // placeholders; secrets are masked out of stderr. A non-zero exit gives both
 // the Result and an *ExitError; a missed deadline gives a *TimeoutError.
 func (r *Runner) Run(ctx context.Context, s Stack, a Action, v Values, secrets []string) (Result, error) {
-	args, err := argv(s, a, v)
+	if isFollow(a) {
+		return Result{}, fmt.Errorf("%w: %s only runs through Stream", ErrUnknownCommand, a)
+	}
+	bin, args, env, timeout, err := r.prepare(s, a, v)
 	if err != nil {
 		return Result{}, err
-	}
-	env, err := r.childEnv()
-	if err != nil {
-		return Result{}, err
-	}
-	bin, timeout := r.Bin, r.Timeout
-	if bin == "" {
-		bin = defaultBin
-	}
-	if timeout <= 0 {
-		timeout = defaultTimeout
 	}
 
-	timeout = timeoutFor(a, timeout)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	//nolint:gosec // G204: the program is configuration and args come from the registry, one element per value, with no shell.
-	cmd := exec.CommandContext(runCtx, bin, args...)
-	cmd.Env = env
-	setProcessGroup(cmd)
-	cmd.WaitDelay = waitDelay
+	cmd := r.command(runCtx, bin, args, env)
 	var stdout, stderr capWriter
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 
@@ -148,6 +140,129 @@ func (r *Runner) Run(ctx context.Context, s Stack, a Action, v Values, secrets [
 		return res, &ExitError{Code: res.ExitCode, Stderr: strings.TrimRight(string(res.Stderr), "\n")}
 	}
 	return res, fmt.Errorf("docker %s: %s", a, Mask(runErr.Error(), secrets))
+}
+
+// prepare checks the call against the registry and returns what a command
+// needs: the program, the argument list, the child's environment and the
+// deadline for a. Both Run and Stream start from it.
+func (r *Runner) prepare(s Stack, a Action, v Values) (bin string, args, env []string, timeout time.Duration, err error) {
+	args, err = argv(s, a, v)
+	if err != nil {
+		return "", nil, nil, 0, err
+	}
+	env, err = r.childEnv()
+	if err != nil {
+		return "", nil, nil, 0, err
+	}
+	bin, timeout = r.Bin, r.Timeout
+	if bin == "" {
+		bin = defaultBin
+	}
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	return bin, args, env, timeoutFor(a, timeout), nil
+}
+
+// command builds the process: the minimal environment, its own process group
+// that ctx kills whole, and a bound on the wait for its output pipes.
+func (r *Runner) command(ctx context.Context, bin string, args, env []string) *exec.Cmd {
+	//nolint:gosec // G204: the program is configuration and args come from the registry, one element per value, with no shell.
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = env
+	setProcessGroup(cmd)
+	cmd.WaitDelay = waitDelay
+	return cmd
+}
+
+// Stream runs the follow action a (compose logs --follow) and calls onLine for
+// each line of stdout and stderr, masked of secrets, until the command ends or
+// ctx is cancelled. onLine is never called concurrently. A line longer than
+// 16 KiB is cut and the rest of it dropped. There is no timeout: cancelling ctx
+// kills the whole process group. It returns nil on exit 0, an *ExitError on a
+// non-zero exit and an error wrapping ctx.Err() on cancel. Any other action is
+// ErrUnknownCommand; Run is the way to run those.
+func (r *Runner) Stream(ctx context.Context, s Stack, a Action, v Values, secrets []string, onLine func(string)) error {
+	if !isFollow(a) {
+		return fmt.Errorf("%w: %s does not run through Stream", ErrUnknownCommand, a)
+	}
+	bin, args, env, _, err := r.prepare(s, a, v)
+	if err != nil {
+		return err
+	}
+	cmd := r.command(ctx, bin, args, env)
+
+	var mu sync.Mutex
+	deliver := func(line string) {
+		line = Mask(line, secrets)
+		mu.Lock()
+		defer mu.Unlock()
+		onLine(line)
+	}
+	var stderrKept capWriter
+	outLines := &lineWriter{emit: deliver}
+	errLines := &lineWriter{emit: deliver}
+	cmd.Stdout = outLines
+	cmd.Stderr = io.MultiWriter(errLines, &stderrKept)
+
+	runErr := cmd.Run()
+	outLines.flush()
+	errLines.flush()
+	if runErr == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("docker %s: %w", a, ctx.Err())
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		stderr := strings.TrimRight(Mask(stderrKept.buf.String(), secrets), "\n")
+		return &ExitError{Code: cmd.ProcessState.ExitCode(), Stderr: stderr}
+	}
+	return fmt.Errorf("docker %s: %s", a, Mask(runErr.Error(), secrets))
+}
+
+// lineWriter splits what is written into lines and hands each to emit. It keeps
+// at most maxLine bytes of a line and drops the rest of that line.
+type lineWriter struct {
+	emit    func(string)
+	buf     []byte
+	dropped bool
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	for len(p) > 0 {
+		i := bytes.IndexByte(p, '\n')
+		chunk := p
+		if i >= 0 {
+			chunk = p[:i]
+		}
+		if room := maxLine - len(w.buf); len(chunk) > room {
+			chunk = chunk[:room]
+			w.dropped = true
+		}
+		w.buf = append(w.buf, chunk...)
+		if i < 0 {
+			break
+		}
+		w.emitLine()
+		p = p[i+1:]
+	}
+	return n, nil
+}
+
+// flush emits the unfinished last line, if there is one.
+func (w *lineWriter) flush() {
+	if len(w.buf) > 0 || w.dropped {
+		w.emitLine()
+	}
+}
+
+// emitLine emits the line in progress, empty or not, and starts a new line.
+func (w *lineWriter) emitLine() {
+	w.emit(strings.TrimSuffix(string(w.buf), "\r"))
+	w.buf, w.dropped = w.buf[:0], false
 }
 
 // childEnv is the whole environment of the child. It is never the panel's own,

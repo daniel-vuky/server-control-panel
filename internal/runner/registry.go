@@ -3,7 +3,9 @@ package runner
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
 
 // Stack is the kind of thing a command works on. v1 manages docker compose
@@ -32,10 +34,28 @@ const (
 	ComposeRestart         Action = "compose.restart"
 	ComposeRestartOverride Action = "compose.restart.override"
 	DockerPing             Action = "docker.ping"
+
+	DockerInspect       Action = "docker.inspect"
+	DockerStats         Action = "docker.stats"
+	ComposeDown         Action = "compose.down"
+	ComposeDownOverride Action = "compose.down.override"
+
+	// The compose.logs actions that follow run only through Stream.
+	ComposeLogs                Action = "compose.logs"
+	ComposeLogsOverride        Action = "compose.logs.override"
+	ComposeLogsService         Action = "compose.logs.service"
+	ComposeLogsServiceOverride Action = "compose.logs.service.override"
+	// The compose.logs.tail actions read a backlog and end; they run through Run.
+	ComposeLogsTail                Action = "compose.logs.tail"
+	ComposeLogsTailOverride        Action = "compose.logs.tail.override"
+	ComposeLogsTailService         Action = "compose.logs.tail.service"
+	ComposeLogsTailServiceOverride Action = "compose.logs.tail.service.override"
 )
 
 // Values are the arguments of one call, keyed by placeholder name without
-// braces: "dir" for {dir}, "file" for {file}, "override" for {override}.
+// braces: "dir" for {dir}, "file" for {file}, "override" for {override},
+// "service" for {service}, "since" for {since}. "ids" holds container ids
+// joined by single spaces; argv expands it into one element per id.
 type Values map[string]string
 
 // Labels that docker compose and the panel put on containers.
@@ -68,11 +88,33 @@ func label(name string) string {
 	return `{{.Label "` + name + `"}}`
 }
 
+// slotKind says how a placeholder's value is checked.
+type slotKind int
+
+const (
+	kindPath  slotKind = iota // an absolute, clean path
+	kindIDs                   // 1 to maxIDs full container ids, space-joined, one element each
+	kindName                  // a service name
+	kindSince                 // an RFC 3339 UTC timestamp
+)
+
+// maxIDs is the most container ids one call may carry.
+const maxIDs = 1000
+
+var (
+	idPattern   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+	// sincePattern is RFC 3339 in UTC with an optional fraction, which docker
+	// compose logs --since accepts.
+	sincePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$`)
+)
+
 // arg is one argv element: a fixed literal, or a placeholder that is replaced,
 // whole, by one value.
 type arg struct {
 	literal string
 	slot    string
+	kind    slotKind
 }
 
 func lit(elements ...string) []arg {
@@ -85,6 +127,15 @@ func lit(elements ...string) []arg {
 
 // pathArg is a placeholder whose value must be an absolute, clean path.
 func pathArg(slot string) arg { return arg{slot: slot} }
+
+// idsArg is a placeholder that becomes one argv element per container id.
+func idsArg() arg { return arg{slot: "ids", kind: kindIDs} }
+
+// nameArg is a placeholder whose value must be a service name.
+func nameArg(slot string) arg { return arg{slot: slot, kind: kindName} }
+
+// sinceArg is a placeholder whose value must be a UTC RFC 3339 timestamp.
+func sinceArg(slot string) arg { return arg{slot: slot, kind: kindSince} }
 
 func join(parts ...[]arg) []arg {
 	var all []arg
@@ -125,6 +176,49 @@ var registry = map[key][]arg{
 		"--filter", "label="+labelProject,
 		"--format", containersFormat,
 	),
+	{StackDocker, DockerInspect}: join(
+		lit("inspect", "--format", inspectFormat), []arg{idsArg()},
+	),
+	{StackDocker, DockerStats}: lit(
+		"stats", "--no-stream", "--no-trunc",
+		"--format", statsFormat,
+	),
+	{StackCompose, ComposeDown}:         join(composeBase, lit("down")),
+	{StackCompose, ComposeDownOverride}: join(composeBaseOverride, lit("down")),
+
+	{StackCompose, ComposeLogs}:                join(composeBase, followLogs),
+	{StackCompose, ComposeLogsOverride}:        join(composeBaseOverride, followLogs),
+	{StackCompose, ComposeLogsService}:         join(composeBase, followLogs, []arg{nameArg("service")}),
+	{StackCompose, ComposeLogsServiceOverride}: join(composeBaseOverride, followLogs, []arg{nameArg("service")}),
+
+	{StackCompose, ComposeLogsTail}:                join(composeBase, tailLogs),
+	{StackCompose, ComposeLogsTailOverride}:        join(composeBaseOverride, tailLogs),
+	{StackCompose, ComposeLogsTailService}:         join(composeBase, tailLogs, []arg{nameArg("service")}),
+	{StackCompose, ComposeLogsTailServiceOverride}: join(composeBaseOverride, tailLogs, []arg{nameArg("service")}),
+}
+
+// inspectFormat is the --format template of DockerInspect. docker inspect runs
+// templates on the JSON map, so the id key is .Id; docker ps and docker stats
+// use {{.ID}}.
+const inspectFormat = "{{.Id}}\t{{.RestartCount}}\t{{json .State}}"
+
+// statsFormat is the --format template of DockerStats.
+const statsFormat = "{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+
+// The log tails of compose logs. followLogs never ends by itself and is run
+// only by Stream; tailLogs reads the last lines and exits.
+var (
+	followLogs = join(lit("logs", "--no-color", "--timestamps", "--follow", "--since"), []arg{sinceArg("since")})
+	tailLogs   = lit("logs", "--no-color", "--timestamps", "--tail", "500")
+)
+
+// isFollow says whether a is a log action that follows, which only Stream runs.
+func isFollow(a Action) bool {
+	switch a {
+	case ComposeLogs, ComposeLogsOverride, ComposeLogsService, ComposeLogsServiceOverride:
+		return true
+	}
+	return false
 }
 
 // composeBase is the start of every compose command on a project folder and its
@@ -146,10 +240,10 @@ func argv(s Stack, a Action, v Values) ([]string, error) {
 		return nil, fmt.Errorf("%w: %s on %s", ErrUnknownCommand, a, s)
 	}
 	used := map[string]bool{}
-	out := make([]string, len(tpl))
-	for i, el := range tpl {
+	out := make([]string, 0, len(tpl))
+	for _, el := range tpl {
 		if el.slot == "" {
-			out[i] = el.literal
+			out = append(out, el.literal)
 			continue
 		}
 		used[el.slot] = true
@@ -157,10 +251,28 @@ func argv(s Stack, a Action, v Values) ([]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("%w: %s needs {%s}", ErrBadValue, a, el.slot)
 		}
-		if err := checkPath(el.slot, val); err != nil {
-			return nil, err
+		switch el.kind {
+		case kindIDs:
+			ids, err := checkIDs(el.slot, val)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, ids...)
+			continue
+		case kindName:
+			if err := checkName(el.slot, val); err != nil {
+				return nil, err
+			}
+		case kindSince:
+			if err := checkSince(el.slot, val); err != nil {
+				return nil, err
+			}
+		default:
+			if err := checkPath(el.slot, val); err != nil {
+				return nil, err
+			}
 		}
-		out[i] = val
+		out = append(out, val)
 	}
 	for name := range v {
 		if !used[name] {
@@ -182,6 +294,41 @@ func checkPath(slot, val string) error {
 		return fmt.Errorf("%w: {%s} is not an absolute path", ErrBadValue, slot)
 	case filepath.Clean(val) != val:
 		return fmt.Errorf("%w: {%s} is not a clean path", ErrBadValue, slot)
+	}
+	return nil
+}
+
+// checkIDs splits the space-joined ids and accepts 1 to 1,000 full container
+// ids. An id is 64 lowercase hex digits, so it cannot start with "-".
+func checkIDs(slot, val string) ([]string, error) {
+	ids := strings.Split(val, " ")
+	if len(ids) > maxIDs {
+		return nil, fmt.Errorf("%w: {%s} has %d ids, at most %d", ErrBadValue, slot, len(ids), maxIDs)
+	}
+	for _, id := range ids {
+		if !idPattern.MatchString(id) {
+			return nil, fmt.Errorf("%w: {%s} has an id that is not 64 lowercase hex digits", ErrBadValue, slot)
+		}
+	}
+	return ids, nil
+}
+
+// checkName accepts a compose service name: it starts with a letter or digit,
+// so it cannot be read as a flag.
+func checkName(slot, val string) error {
+	if !namePattern.MatchString(val) {
+		return fmt.Errorf("%w: {%s} is not a valid name", ErrBadValue, slot)
+	}
+	return nil
+}
+
+// checkSince accepts an RFC 3339 UTC timestamp with an optional fraction.
+func checkSince(slot, val string) error {
+	if !sincePattern.MatchString(val) {
+		return fmt.Errorf("%w: {%s} is not an RFC 3339 UTC timestamp", ErrBadValue, slot)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, val); err != nil {
+		return fmt.Errorf("%w: {%s} is not a valid timestamp", ErrBadValue, slot)
 	}
 	return nil
 }
