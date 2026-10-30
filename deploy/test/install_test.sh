@@ -20,7 +20,7 @@ export PATH="$T/bin:$PATH"
 # fresh_case: forget every fake-docker setting, pick a new install directory
 # that does not exist yet, and set the answers in the environment.
 fresh_case() {
-  unset "${!FAKE_DOCKER_@}" SCP_HEALTH_TIMEOUT
+  unset "${!FAKE_DOCKER_@}" SCP_HEALTH_TIMEOUT PANEL_PUBLIC_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
   export FAKE_DOCKER_LOG="$T/docker.log"
   SCP_DIR="$(mktemp -d -p "$T")/scp"
   export SCP_DIR SCP_SOURCE="$here/.." SUDO_UID=1000 SUDO_GID=1000 DOCKER_GID=998 SCP_TTY=/nonexistent
@@ -178,6 +178,117 @@ export CF_ACCESS_TEAM_DOMAIN=evil.com
 run_install --no-start
 assert_nonzero "$RC" "env: invalid team domain fails"
 assert_contains "$ERR" "CF_ACCESS_TEAM_DOMAIN" "env: names the variable"
+
+# --- secret key and optional Drive settings
+# key_of <panel.env>: the PANEL_SECRET_KEY value(s), one per line.
+key_of() { sed -n 's/^PANEL_SECRET_KEY=//p' "$1"; }
+# count_key <panel.env>: how many PANEL_SECRET_KEY= lines the file has.
+count_key() { grep -c '^PANEL_SECRET_KEY=' "$1" || true; }
+hex64='^[0-9a-f]{64}$'
+
+fresh_case
+run_install --no-start
+assert_eq 0 "$RC" "key: fresh install without a tty exits 0"
+key=$(key_of "$SCP_DIR/panel.env")
+assert_eq 1 "$(count_key "$SCP_DIR/panel.env")" "key: one PANEL_SECRET_KEY line"
+assert_eq yes "$([[ "$key" =~ $hex64 ]] && echo yes || echo no)" "key: 64 lower-case hex characters"
+assert_line "$SCP_DIR/panel.env" "PANEL_PUBLIC_URL=" "key: public URL empty without an answer"
+assert_line "$SCP_DIR/panel.env" "GOOGLE_CLIENT_ID=" "key: client ID empty without an answer"
+assert_line "$SCP_DIR/panel.env" "GOOGLE_CLIENT_SECRET=" "key: client secret empty without an answer"
+assert_file_mode 600 "$SCP_DIR/panel.env"
+assert_lacks "$OUT$ERR" "$key" "key: never printed on a fresh install"
+fresh_case
+run_install --no-start
+assert_eq no "$([[ "$(key_of "$SCP_DIR/panel.env")" == "$key" ]] && echo yes || echo no)" "key: a second install gets a different key"
+
+fresh_case
+export PANEL_PUBLIC_URL=' HTTPS://Panel.Example.com/ ' GOOGLE_CLIENT_ID=' id-1.apps.googleusercontent.com ' GOOGLE_CLIENT_SECRET=GOCSPX-sec_ret
+run_install --no-start
+assert_eq 0 "$RC" "drive env: exit 0"
+assert_line "$SCP_DIR/panel.env" "PANEL_PUBLIC_URL=https://panel.example.com" "drive env: URL normalised"
+assert_line "$SCP_DIR/panel.env" "GOOGLE_CLIENT_ID=id-1.apps.googleusercontent.com" "drive env: client ID trimmed"
+assert_line "$SCP_DIR/panel.env" "GOOGLE_CLIENT_SECRET=GOCSPX-sec_ret" "drive env: client secret written"
+assert_lacks "$OUT$ERR" "GOCSPX-sec_ret" "drive env: the secret is never echoed"
+for u in http://panel.example.com https://panel.example.com/app 'https://panel.example.com?x=1' \
+  'https://panel.example.com#f' https://user@panel.example.com ftp://panel.example.com panel.example.com \
+  https://panel.example.com:port 'https://pa nel.example.com'; do
+  fresh_case
+  export PANEL_PUBLIC_URL=$u
+  run_install --no-start
+  assert_nonzero "$RC" "invalid PANEL_PUBLIC_URL '$u': dies"
+  assert_contains "$ERR" "PANEL_PUBLIC_URL" "invalid PANEL_PUBLIC_URL '$u': names the variable"
+  assert_eq no "$([[ -e "$SCP_DIR/panel.env" ]] && echo yes || echo no)" "invalid PANEL_PUBLIC_URL '$u': no panel.env written"
+done
+for u in http://localhost:5173 http://127.0.0.1:8471/ https://panel.example.com:8443; do
+  fresh_case
+  export PANEL_PUBLIC_URL=$u
+  run_install --no-start
+  assert_eq 0 "$RC" "PANEL_PUBLIC_URL '$u': accepted"
+  assert_line "$SCP_DIR/panel.env" "PANEL_PUBLIC_URL=${u%/}" "PANEL_PUBLIC_URL '$u': written without a trailing slash"
+done
+fresh_case
+export GOOGLE_CLIENT_ID=only-an-id
+run_install --no-start
+assert_nonzero "$RC" "client ID without a secret: dies"
+assert_contains "$ERR" "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET" "client ID without a secret: says both or neither"
+assert_eq no "$([[ -e "$SCP_DIR/panel.env" ]] && echo yes || echo no)" "client ID without a secret: no panel.env written"
+fresh_case
+export GOOGLE_CLIENT_ID='bad id'  GOOGLE_CLIENT_SECRET=x
+run_install --no-start
+assert_nonzero "$RC" "invalid GOOGLE_CLIENT_ID: dies"
+assert_contains "$ERR" "GOOGLE_CLIENT_ID" "invalid GOOGLE_CLIENT_ID: names the variable"
+
+# Interactive: the three optional prompts take values, and an empty line skips them.
+fresh_case
+unset CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD WORKSPACE_ROOTS
+printf '%s\n' myteam.cloudflareaccess.com abc123 "$T/ws1" http://nope.example.com panel.example.com/ https://panel.example.com/ cid-9 sec-9 >"$T/tty"
+export SCP_TTY="$T/tty"
+run_install --no-start
+assert_eq 0 "$RC" "optional prompts: exit 0"
+assert_line "$SCP_DIR/panel.env" "PANEL_PUBLIC_URL=https://panel.example.com" "optional prompts: URL asked again after bad answers"
+assert_line "$SCP_DIR/panel.env" "GOOGLE_CLIENT_ID=cid-9" "optional prompts: client ID"
+assert_line "$SCP_DIR/panel.env" "GOOGLE_CLIENT_SECRET=sec-9" "optional prompts: client secret"
+assert_contains "$ERR" "panel.example.com/" "optional prompts: a bad URL is reported"
+assert_lacks "$OUT$ERR" "sec-9" "optional prompts: the secret is never echoed"
+fresh_case
+unset CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD WORKSPACE_ROOTS
+printf '%s\n' myteam.cloudflareaccess.com abc123 "$T/ws1" '' '' '' >"$T/tty"
+export SCP_TTY="$T/tty"
+run_install --no-start
+assert_eq 0 "$RC" "optional prompts: empty lines are accepted"
+assert_line "$SCP_DIR/panel.env" "PANEL_PUBLIC_URL=" "optional prompts: empty URL"
+assert_line "$SCP_DIR/panel.env" "GOOGLE_CLIENT_ID=" "optional prompts: empty client ID"
+
+# Re-runs: a panel.env without a key gets exactly one line; one with a key is kept.
+fresh_case
+run_install --no-start
+D=$SCP_DIR
+grep -v '^PANEL_SECRET_KEY=' "$D/panel.env" >"$T/edit" && cat "$T/edit" >"$D/panel.env"
+cp "$D/panel.env" "$T/panel.env.nokey"
+unset CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD WORKSPACE_ROOTS
+run_install --no-start
+assert_eq 0 "$RC" "append key: exit 0"
+assert_eq 1 "$(count_key "$D/panel.env")" "append key: exactly one key line"
+assert_eq yes "$([[ "$(key_of "$D/panel.env")" =~ $hex64 ]] && echo yes || echo no)" "append key: 64 hex"
+assert_eq "$(wc -l <"$T/panel.env.nokey" | tr -d ' ')" "$(($(wc -l <"$D/panel.env") - 1))" "append key: one line added"
+assert_eq same "$(same_file "$T/panel.env.nokey" <(head -n -1 "$D/panel.env"))" "append key: the rest of the file is untouched"
+assert_file_mode 600 "$D/panel.env"
+assert_eq 1000:1000 "$(stat -c %u:%g "$D/panel.env")" "append key: owner kept"
+assert_contains "$OUT" "Added PANEL_SECRET_KEY" "append key: says so"
+assert_lacks "$OUT$ERR" "$(key_of "$D/panel.env")" "append key: the key is never printed"
+cp "$D/panel.env" "$T/panel.env.keyed"
+run_install --no-start
+assert_eq same "$(same_file "$T/panel.env.keyed" "$D/panel.env")" "keep key: a re-run with a key leaves panel.env byte for byte"
+# A file whose last line has no newline: the key goes on its own line.
+printf 'CF_ACCESS_TEAM_DOMAIN=myteam.cloudflareaccess.com\nCF_ACCESS_AUD=abc123\nWORKSPACE_ROOTS=%s' "$T/ws1" >"$D/panel.env"
+run_install --no-start
+assert_eq 0 "$RC" "append key, no final newline: exit 0"
+assert_line "$D/panel.env" "WORKSPACE_ROOTS=$T/ws1" "append key, no final newline: the last line is intact"
+assert_eq 1 "$(count_key "$D/panel.env")" "append key, no final newline: one key line"
+# An empty PANEL_SECRET_KEY= counts as no key.
+printf 'CF_ACCESS_TEAM_DOMAIN=myteam.cloudflareaccess.com\nCF_ACCESS_AUD=abc123\nWORKSPACE_ROOTS=%s\nPANEL_SECRET_KEY=\n' "$T/ws1" >"$D/panel.env"
+run_install --no-start
+assert_eq yes "$([[ "$(key_of "$D/panel.env" | tail -n 1)" =~ $hex64 ]] && echo yes || echo no)" "empty key: a real key is appended after it"
 
 # --- compose version
 for v in 5.6.1 v2.20.0 2.20.0-desktop.1; do
