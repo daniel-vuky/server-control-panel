@@ -156,7 +156,7 @@ export function BackUpAllButton({ all }: { all: BackupAll }) {
       aria-busy={all.posting || undefined}
       title={all.reason || undefined}
       onClick={() => void all.start()}
-      className="flex h-[38px] flex-none cursor-pointer items-center gap-2 rounded-lg border-0 bg-text px-4 font-semibold text-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:bg-[#262c35] disabled:text-muted"
+      className="flex h-[38px] flex-none cursor-pointer items-center gap-2 rounded-lg border-0 bg-text px-4 font-semibold text-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:bg-selected disabled:text-muted"
     >
       <CloudUploadIcon size={15} strokeWidth={2} />
       Back up all now
@@ -179,7 +179,7 @@ export function BackupAllBar({ all }: { all: BackupAll }) {
       <div
         role="status"
         data-testid="backup-all"
-        className="flex flex-col gap-2 rounded-[10px] border border-[#22344a] bg-[#0f141b] px-4 py-3"
+        className="flex flex-col gap-2 rounded-[10px] border border-info-border bg-info-surface px-4 py-3"
       >
         <span className="flex items-center gap-2.5 text-[13px]">
           <span
@@ -215,7 +215,7 @@ export function BackupAllBar({ all }: { all: BackupAll }) {
     <div
       role="status"
       data-testid="backup-all"
-      className={`flex items-start gap-3 rounded-[10px] border px-4 py-3 text-[13px] ${failed ? 'border-error-border bg-[#1a1012]' : 'border-[#1e3a2d] bg-[#0f1813]'}`}
+      className={`flex items-start gap-3 rounded-[10px] border px-4 py-3 text-[13px] ${failed ? 'border-error-border bg-error-soft' : 'border-success-bg bg-[#0f1813]'}`}
     >
       <Icon
         aria-hidden="true"

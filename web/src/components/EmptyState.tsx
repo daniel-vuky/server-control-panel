@@ -22,7 +22,7 @@ export default function EmptyState({
 }) {
   return (
     <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
-      <Icon aria-hidden="true" size={44} strokeWidth={1.4} className="text-[#4a515c]" />
+      <Icon aria-hidden="true" size={44} strokeWidth={1.4} className="text-icon-muted" />
       <Title className="m-0 text-sm font-semibold">{title}</Title>
       {children ? <p className="m-0 text-[13px] leading-normal text-muted">{children}</p> : null}
       {action}
@@ -41,5 +41,5 @@ export function EmptyStateButton({
 
 /** EmptyStateLink is the same button as a router link. */
 export function EmptyStateLink({ className = '', ...rest }: LinkProps) {
-  return <Link className={`${secondary} no-underline ${className}`} {...rest} />
+  return <Link className={`${secondary} ${className}`} {...rest} />
 }

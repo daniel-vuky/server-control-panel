@@ -15,7 +15,7 @@ type Props = {
 /** NewTag is the "New" tag of design 10. */
 function NewTag() {
   return (
-    <span className="flex-none rounded-[4px] bg-[#1E3A2D] px-[7px] py-px text-[11.5px] text-[#8FE3B9]">
+    <span className="flex-none rounded-[4px] bg-success-bg px-[7px] py-px text-[11.5px] text-success-text">
       New
     </span>
   )

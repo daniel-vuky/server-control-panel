@@ -22,11 +22,11 @@ const LINK =
 /** The colour of a status, from designs 02 and 04: text, then its dot. */
 const TONE: Record<string, [string, string]> = {
   ok: ['text-success', 'bg-success'],
-  failed: ['text-[#ff8c8f]', 'bg-[#ff6b6e]'],
-  refused: ['text-[#ff8c8f]', 'bg-[#ff6b6e]'],
+  failed: ['text-danger-text', 'bg-danger'],
+  refused: ['text-danger-text', 'bg-danger'],
   interrupted: ['text-warning', 'bg-warning'],
-  running: ['text-[#7fb8ff]', 'bg-accent'],
-  queued: ['text-[#7fb8ff]', 'bg-accent'],
+  running: ['text-accent-text', 'bg-accent'],
+  queued: ['text-accent-text', 'bg-accent'],
 }
 
 /** byNewest sorts backups newest first (ids grow with time). */
@@ -69,7 +69,7 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
   const retrying = flow.retryingId === b.id
   const removed = b.prunedAt !== null && b.prunedAt !== undefined && b.prunedAt !== ''
   return (
-    <tr data-id={b.id} className="border-b border-[#1a1e24] last:border-b-0">
+    <tr data-id={b.id} className="border-b border-divider last:border-b-0">
       <td className={CELL}>{formatWhen(b.createdAt)}</td>
       {withProject && (
         <td className={`${CELL} break-all`}>
@@ -101,7 +101,7 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
           <span className="break-words">{backupLine(b)}</span>
         </button>
       </td>
-      <td className={`${CELL} font-sans break-all text-[#c9ced6]`}>{triggeredBy(b)}</td>
+      <td className={`${CELL} font-sans break-all text-text-2`}>{triggeredBy(b)}</td>
       {/* w-px: the actions take their whole width; Time and Triggered by wrap instead. */}
       <td className={`${CELL} w-px whitespace-nowrap`}>
         <span className="flex items-center justify-end gap-3 whitespace-nowrap">

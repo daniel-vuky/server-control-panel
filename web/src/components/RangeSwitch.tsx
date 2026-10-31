@@ -20,7 +20,7 @@ export default function RangeSwitch({
             aria-pressed={on}
             onClick={() => onChange(r.key)}
             className={`h-7 cursor-pointer rounded-md border-0 px-3 font-sans text-[13px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-              on ? 'bg-[#262c35] text-white' : 'bg-transparent text-muted hover:text-text'
+              on ? 'bg-selected text-white' : 'bg-transparent text-muted hover:text-text'
             }`}
           >
             {r.label}

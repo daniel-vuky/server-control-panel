@@ -23,7 +23,7 @@ export default function UserChip() {
     <div className="mt-auto flex items-center gap-2.5 border-t border-border px-2 pt-3">
       <div
         aria-hidden="true"
-        className="flex size-7 flex-none items-center justify-center rounded-full bg-border-strong text-[11px] font-semibold text-text"
+        className="flex size-7 flex-none items-center justify-center rounded-full bg-selected text-[11px] font-semibold text-text"
       >
         {initials(email)}
       </div>

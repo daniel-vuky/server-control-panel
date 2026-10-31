@@ -19,6 +19,7 @@ describe('EmptyState', () => {
     expect(screen.getByText('Try a deeper scan.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Scan again' })).toBeTruthy()
     expect(container.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('svg')).toHaveClass('text-icon-muted')
   })
 
   it('renders the title as a level 1 heading when asked', () => {
@@ -43,5 +44,6 @@ describe('EmptyState', () => {
       </MemoryRouter>,
     )
     expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe('/')
+    expect(screen.getByRole('link', { name: 'Back' })).not.toHaveClass('no-underline')
   })
 })

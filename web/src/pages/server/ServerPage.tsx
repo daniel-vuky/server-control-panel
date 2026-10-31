@@ -137,7 +137,7 @@ function ChartsLoading() {
 /** NotAvailable replaces the charts when the host's /proc is not mounted (no server metrics). */
 function NotAvailable({ reason }: { reason?: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5 text-[13px] text-text-2">
+    <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-notice px-4 py-3.5 text-[13px] text-text-2">
       <CircleAlert aria-hidden="true" size={18} strokeWidth={1.8} className="flex-none" />
       {reason || "Server metrics are not available: the host's /proc is not mounted."}
     </div>

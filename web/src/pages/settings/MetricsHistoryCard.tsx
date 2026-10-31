@@ -115,8 +115,8 @@ function RetentionForm({ days }: { days: number }) {
           Keep metrics for
         </label>
         <span
-          className={`flex h-[38px] w-[150px] items-center gap-2 rounded-[7px] border bg-[#0f1215] px-3 text-[13px] text-muted focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent ${
-            error ? 'border-danger' : 'border-border-strong'
+          className={`flex h-[38px] w-[150px] items-center gap-2 rounded-[7px] border bg-field px-3 text-[13px] text-muted focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent ${
+            error ? 'border-field-error' : 'border-border-strong'
           }`}
         >
           <input

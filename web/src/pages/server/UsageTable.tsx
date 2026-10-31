@@ -145,7 +145,7 @@ export default function UsageTable({
             {rows.map(({ row, values }) => (
               <tr
                 key={row.projectId ?? `self-${row.name}`}
-                className="border-b border-[#1A1E24] last:border-b-0"
+                className="border-b border-divider last:border-b-0"
               >
                 <th scope="row" className="px-4 py-3 font-normal">
                   <AppName row={row} />
@@ -243,7 +243,7 @@ function Share({
           </span>
         )}
       </span>
-      <span aria-hidden="true" className="flex h-1.5 rounded-[3px] bg-[#1A1E24]">
+      <span aria-hidden="true" className="flex h-1.5 rounded-[3px] bg-divider">
         {share !== null && (
           <span
             data-bar=""

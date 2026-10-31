@@ -257,7 +257,7 @@ function NoBackups({ project, flow }: Props) {
   const dbs = project.databases
   return (
     <div className="flex flex-col items-center gap-3 px-5 py-8 text-center">
-      <CloudUpload aria-hidden="true" size={30} strokeWidth={1.4} className="text-[#4a515c]" />
+      <CloudUpload aria-hidden="true" size={30} strokeWidth={1.4} className="text-icon-muted" />
       <p className="m-0 text-[13px] text-text-2">No backup yet.</p>
       {dbs.length === 1 && <BackUpButton project={project} db={dbs[0]} flow={flow} />}
       {dbs.length > 1 && (
@@ -265,7 +265,7 @@ function NoBackups({ project, flow }: Props) {
           {dbs.map((d) => (
             <li
               key={d.key}
-              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-[#0f1215] px-3 py-2"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-field px-3 py-2"
             >
               <span className="min-w-0 font-mono text-[13px] break-all">{d.name}</span>
               <BackUpButton project={project} db={d} flow={flow} />

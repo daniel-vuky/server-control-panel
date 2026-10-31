@@ -160,7 +160,7 @@ function SettingsForm({ project, raw, actions }: ProjectOutlet) {
       'aria-describedby': described.length > 0 ? described.join(' ') : undefined,
     }
   }
-  const border = (f: FieldName) => (errors[f] ? 'border-danger' : 'border-border-strong')
+  const border = (f: FieldName) => (errors[f] ? 'border-field-error' : 'border-border-strong')
   const error = (f: FieldName) =>
     errors[f] && <FieldMessage id={`${idOf(f)}-error`} message={errors[f]} />
 
@@ -279,7 +279,7 @@ function SettingsForm({ project, raw, actions }: ProjectOutlet) {
           <button
             type="submit"
             disabled={!dirty || saving}
-            className="h-[38px] cursor-pointer rounded-[7px] border-0 bg-text px-[18px] font-semibold text-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:bg-border disabled:text-[#5e6672]"
+            className="h-[38px] cursor-pointer rounded-[7px] border-0 bg-text px-[18px] font-semibold text-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:bg-border disabled:text-disabled-text"
           >
             Save changes
           </button>
@@ -291,7 +291,7 @@ function SettingsForm({ project, raw, actions }: ProjectOutlet) {
         className="flex flex-wrap items-center gap-3.5 rounded-[10px] border border-[#4a1d22] bg-[#160d0f] px-5 py-[18px]"
       >
         <div className="flex min-w-0 flex-[1_1_320px] flex-col gap-1">
-          <h2 id={cardTitle} className="m-0 font-semibold text-[#ffd7d8]">
+          <h2 id={cardTitle} className="m-0 font-semibold text-error-fg">
             Stop tracking project
           </h2>
           <p className="m-0 text-[13px] text-[#d4a3a6]">
@@ -304,7 +304,7 @@ function SettingsForm({ project, raw, actions }: ProjectOutlet) {
           disabled={!canLeave}
           title={canLeave ? undefined : disabledReason(project.status)}
           onClick={() => actions.leave(raw)}
-          className="h-[38px] cursor-pointer rounded-[7px] border border-[#8a2b33] bg-transparent px-4 font-semibold text-[#ff8c8f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-[#3a2226] disabled:text-[#7a5458]"
+          className="h-[38px] cursor-pointer rounded-[7px] border border-[#8a2b33] bg-transparent px-4 font-semibold text-danger-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-[#3a2226] disabled:text-[#7a5458]"
         >
           {leaveLabel}
         </button>
@@ -331,7 +331,7 @@ function SettingsForm({ project, raw, actions }: ProjectOutlet) {
 }
 
 const INPUT =
-  'box-border h-[38px] w-full min-w-0 rounded-[7px] border bg-[#0f1215] px-3 text-sm text-text outline-none placeholder:text-muted/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+  'box-border h-[38px] w-full min-w-0 rounded-[7px] border bg-field px-3 text-sm text-text outline-none placeholder:text-muted/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 type FieldProps = {
   id: string

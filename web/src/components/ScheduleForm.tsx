@@ -10,7 +10,7 @@ import {
 import FieldMessage from './FieldMessage'
 
 const INPUT =
-  'box-border h-9 rounded-[7px] border bg-[#0f1215] px-2.5 font-mono text-[13px] text-text [color-scheme:dark] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
+  'box-border h-9 rounded-[7px] border bg-field px-2.5 font-mono text-[13px] text-text [color-scheme:dark] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 
 /** scheduleFieldId is the id of a field's control in a ScheduleForm with this prefix. */
 export const scheduleFieldId = (prefix: string, f: ScheduleField) => `${prefix}-${f}`
@@ -51,7 +51,7 @@ export default function ScheduleForm({
     const all = [...notes, ...(errors[f] ? [errorId(f)] : [])]
     return all.length > 0 ? all.join(' ') : undefined
   }
-  const border = (f: ScheduleField) => (errors[f] ? 'border-danger' : 'border-border-strong')
+  const border = (f: ScheduleField) => (errors[f] ? 'border-field-error' : 'border-border-strong')
   const error = (f: ScheduleField) =>
     errors[f] ? <FieldMessage id={errorId(f)} message={errors[f]} /> : null
   const zoneNote = `${p}-zone`
@@ -64,7 +64,7 @@ export default function ScheduleForm({
           role="radiogroup"
           aria-label="Frequency"
           aria-describedby={describe('frequency')}
-          className="flex w-fit rounded-lg border border-border-strong bg-[#0f1215] p-[3px]"
+          className="flex w-fit rounded-lg border border-border-strong bg-field p-[3px]"
         >
           {FREQUENCIES.map((f) => {
             const checked = value.frequency === f.value
@@ -72,7 +72,7 @@ export default function ScheduleForm({
               <label
                 key={f.value}
                 className={`flex h-[30px] cursor-pointer items-center rounded-md px-3.5 text-[13px] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-accent ${
-                  checked ? 'bg-[#262c35] text-white' : 'text-muted'
+                  checked ? 'bg-selected text-white' : 'text-muted'
                 }`}
               >
                 <input
@@ -152,7 +152,7 @@ export default function ScheduleForm({
         </Field>
       </div>
 
-      <div className="flex items-center gap-4 border-t border-[#1a1e24] pt-3">
+      <div className="flex items-center gap-4 border-t border-divider pt-3">
         <div className="flex flex-1 flex-col gap-[3px]">
           <label htmlFor={id('compress')} className="font-medium">
             Gzip compression

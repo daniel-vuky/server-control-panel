@@ -76,14 +76,14 @@ export default function ContainersTable({
                   <tr
                     key={`${c.service}|${c.name}`}
                     data-tone={tone}
-                    className={`border-b border-[#1a1e24] last:border-b-0 ${ROW_TINT[tone]}`}
+                    className={`border-b border-divider last:border-b-0 ${ROW_TINT[tone]}`}
                   >
                     <td className={CELL}>
                       <span className="block break-all text-white">{c.name}</span>
                       {tone !== 'ok' && c.exitReason !== '' && (
                         <span
                           className={`mt-0.5 block font-sans text-xs ${
-                            tone === 'failed' ? 'text-[#ff8c8f]' : 'text-muted'
+                            tone === 'failed' ? 'text-danger-text' : 'text-muted'
                           }`}
                         >
                           {c.exitReason}

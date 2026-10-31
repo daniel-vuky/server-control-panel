@@ -25,9 +25,9 @@ import { usePageRestore } from '../../lib/usePageRestore'
 const buttonBase =
   'flex h-9 cursor-pointer items-center gap-2 rounded-[7px] px-3.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 const neutralButton = `${buttonBase} border border-border-strong bg-surface-2 text-text`
-const dangerButton = `${buttonBase} border border-[#6B262C] bg-transparent text-[#FF8C8F]`
+const dangerButton = `${buttonBase} border border-danger-border bg-transparent text-danger-text`
 const INPUT =
-  'box-border h-[38px] w-full min-w-0 rounded-[7px] border border-border-strong bg-[#0f1215] px-2.5 font-mono text-[13px] text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+  'box-border h-[38px] w-full min-w-0 rounded-[7px] border border-border-strong bg-field px-2.5 font-mono text-[13px] text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 /** The select value of "+ Create new folder…". */
 const CREATE = '__create__'
@@ -367,7 +367,7 @@ function Connected({
                     setName(e.target.value)
                     setNameError(null)
                   }}
-                  className={`${INPUT} ${nameError ? 'border-danger' : ''}`}
+                  className={`${INPUT} ${nameError ? 'border-field-error' : ''}`}
                 />
                 <button
                   type="submit"

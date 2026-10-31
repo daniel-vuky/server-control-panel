@@ -154,7 +154,7 @@ describe('ProjectCard', () => {
       const { card } = setup({}, { latest: { text: 'No backups yet', tone: 'none' } })
       expect(lastLine(card)).toHaveTextContent('No backups yet')
       expect(lastLine(card)).not.toHaveTextContent('—')
-      expect(within(lastLine(card)).getByTestId('backup-dot')).toHaveClass('bg-[#4a515c]')
+      expect(within(lastLine(card)).getByTestId('backup-dot')).toHaveClass('bg-icon-muted')
     })
 
     it('shows a dash with no dot when the read failed', () => {

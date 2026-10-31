@@ -151,7 +151,7 @@ function WorkspaceRow({ workspace: w, onRemove }: { workspace: Workspace; onRemo
           type="button"
           aria-label={`Remove ${w.path}`}
           onClick={onRemove}
-          className={`${rowButton} border-[#6B262C] text-[#FF8C8F]`}
+          className={`${rowButton} border-danger-border text-danger-text`}
         >
           Remove
         </button>

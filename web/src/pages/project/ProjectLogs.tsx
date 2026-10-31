@@ -15,7 +15,7 @@ import { useProjectOutlet } from './projectContext'
 const PAUSE_DISTANCE_PX = 24
 
 const BUTTON =
-  'flex h-[34px] cursor-pointer items-center gap-[7px] rounded-[7px] border border-border-strong bg-surface-2 px-3 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:text-[#5e6672]'
+  'flex h-[34px] cursor-pointer items-center gap-[7px] rounded-[7px] border border-border-strong bg-surface-2 px-3 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:text-disabled-text'
 
 /**
  * ProjectLogs is the Logs tab: a live view of the project's container output,
@@ -222,10 +222,10 @@ function StreamStatus({ state, paused, newLines, hasContainers }: StatusProps) {
     tone = 'ended'
     text = 'Stream ended'
   }
-  const colour = { live: 'text-[#8fe3b9]', muted: 'text-muted', ended: 'text-[#ff8c8f]' }[tone]
+  const colour = { live: 'text-success-text', muted: 'text-muted', ended: 'text-danger-text' }[tone]
   const dot = {
     live: 'animate-pulse bg-success',
-    muted: 'bg-[#5e6672]',
+    muted: 'bg-disabled-text',
     ended: 'bg-danger',
   }[tone]
   return (
@@ -298,10 +298,10 @@ const Line = memo(function Line({ line, showService, matcher, focused }: LinePro
       data-testid="log-line"
       aria-current={focused ? 'true' : undefined}
       className={`flex gap-[14px] px-4 whitespace-pre ${
-        focused ? 'bg-[#2a1215] shadow-[inset_2px_0_0_#ff8c8f]' : ''
+        focused ? 'bg-error-bg shadow-[inset_2px_0_0_var(--color-danger-text)]' : ''
       }`}
     >
-      <span className="flex-none text-[#5e6672]">{clock(line.time)}</span>
+      <span className="flex-none text-disabled-text">{clock(line.time)}</span>
       <span
         data-testid="log-level"
         className="w-[5ch] flex-none"

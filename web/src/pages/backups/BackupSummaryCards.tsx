@@ -88,7 +88,7 @@ export default function BackupSummaryCards({ summary, zone, error, onRetry }: Pr
         <DayStrip days={summary.days} />
       </Card>
       <Card label="Failed · 7 days" alarm={summary.failed7d > 0}>
-        <span className={`${VALUE} ${summary.failed7d > 0 ? 'text-[#ff8c8f]' : ''}`}>
+        <span className={`${VALUE} ${summary.failed7d > 0 ? 'text-danger-text' : ''}`}>
           {summary.failed7d}
         </span>
         <span className={SUB}>{failures === '' ? 'No failures' : failures}</span>

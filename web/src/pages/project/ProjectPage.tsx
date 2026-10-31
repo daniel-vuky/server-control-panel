@@ -190,9 +190,9 @@ function Breadcrumb({ name }: { name: string }) {
 }
 
 const BUTTON =
-  'flex h-9 cursor-pointer items-center gap-[7px] rounded-[7px] border px-3.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-[#22272e] disabled:bg-transparent disabled:text-[#5e6672]'
+  'flex h-9 cursor-pointer items-center gap-[7px] rounded-[7px] border px-3.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-disabled-border disabled:bg-transparent disabled:text-disabled-text'
 const NEUTRAL = `${BUTTON} border-border-strong bg-surface-2 text-text`
-const DANGER = `${BUTTON} border-[#6b262c] bg-[#1e0f11] text-[#ff8c8f]`
+const DANGER = `${BUTTON} border-danger-border bg-error-deep text-danger-text`
 
 type HeaderProps = {
   /** project is what the header shows: the live project with any in-between status. */
@@ -387,7 +387,7 @@ function Tabs({
               onKeyDown={(e) => onKeyDown(e, i)}
               className={`flex h-[42px] flex-none items-center gap-2 px-3.5 text-sm whitespace-nowrap no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${
                 selected
-                  ? 'font-semibold text-white shadow-[inset_0_-2px_0_#e7e9ec]'
+                  ? 'font-semibold text-white shadow-[inset_0_-2px_0_var(--color-text)]'
                   : 'text-muted hover:text-text'
               }`}
             >

@@ -61,7 +61,7 @@ export default function WorkspaceStep({
           </label>
           <span
             className={`flex h-11 items-center gap-2 rounded-lg border bg-bg px-3 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent ${
-              errors.path ? 'border-danger' : 'border-border-strong'
+              errors.path ? 'border-field-error' : 'border-border-strong'
             } ${locked ? 'opacity-60' : ''}`}
           >
             <Folder
@@ -92,7 +92,7 @@ export default function WorkspaceStep({
           <legend className="mb-2 text-[13px] text-text-2">Scan depth</legend>
           <div
             className={`flex w-fit rounded-lg border bg-bg p-[3px] ${
-              errors.depth ? 'border-danger' : 'border-border-strong'
+              errors.depth ? 'border-field-error' : 'border-border-strong'
             }`}
           >
             {DEPTHS.map((d) => (

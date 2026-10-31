@@ -159,7 +159,7 @@ export default function BackupsPage() {
 function NoBackups({ all }: { all: BackupAll }) {
   return (
     <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
-      <CloudUploadIcon size={44} strokeWidth={1.4} stroke="#4A515C" />
+      <CloudUploadIcon size={44} strokeWidth={1.4} className="text-icon-muted" />
       <p className="m-0 font-semibold">No backups yet</p>
       <p className="m-0 text-[13px] leading-normal text-muted">
         Run the first one now or set up a daily schedule.
@@ -186,7 +186,7 @@ function DriveBanner({ drive }: { drive: DriveStatus }) {
     return (
       <div
         role="alert"
-        className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5"
+        className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border-strong bg-notice px-4 py-3.5"
       >
         <DriveGlyph />
         <div className="flex flex-col gap-0.5">
@@ -203,7 +203,7 @@ function DriveBanner({ drive }: { drive: DriveStatus }) {
   }
   if (drive.state === 'not_configured') {
     return (
-      <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5 text-[13px] text-text-2">
+      <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-notice px-4 py-3.5 text-[13px] text-text-2">
         <CircleAlert aria-hidden="true" size={18} strokeWidth={1.8} className="flex-none" />
         {DRIVE_NOT_SET_UP}
       </div>
@@ -226,7 +226,7 @@ function DriveBanner({ drive }: { drive: DriveStatus }) {
   return (
     <div
       role="alert"
-      className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5"
+      className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border-strong bg-notice px-4 py-3.5"
     >
       <DriveGlyph />
       <div className="flex flex-col gap-0.5">
@@ -257,10 +257,10 @@ function DriveGlyph() {
       height="20"
       viewBox="0 0 24 24"
       fill="none"
-      stroke="#C9CED6"
+      stroke="currentColor"
       strokeWidth="1.8"
       strokeLinejoin="round"
-      className="flex-none"
+      className="flex-none text-text-2"
     >
       <path d="M8.5 3h7l6 10.5-3.5 6h-12L2.5 13.5z" />
       <path d="M8.5 3l6.5 11.5M15.5 3 9 14.5M2.5 13.5h19" />
@@ -279,7 +279,7 @@ function ActiveCard({ backup: b }: { backup: Backup }) {
   return (
     <section
       aria-labelledby={titleId}
-      className="flex flex-col gap-3.5 rounded-[10px] border border-[#22344a] bg-[#0f141b] p-4"
+      className="flex flex-col gap-3.5 rounded-[10px] border border-info-border bg-info-surface p-4"
     >
       <div className="flex flex-wrap items-center gap-2.5">
         {running ? (
@@ -290,7 +290,7 @@ function ActiveCard({ backup: b }: { backup: Backup }) {
         ) : (
           <span
             aria-hidden="true"
-            className="box-border size-3 flex-none rounded-full border-2 border-[#3a414b]"
+            className="box-border size-3 flex-none rounded-full border-2 border-step-idle"
           />
         )}
         <h2 id={titleId} className="m-0 text-[14px] font-semibold">

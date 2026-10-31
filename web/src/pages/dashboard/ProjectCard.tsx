@@ -115,7 +115,7 @@ export function Domain({ project: p }: { project: Project }) {
 const DOT: Record<LastBackup['tone'], string> = {
   ok: 'bg-success',
   bad: 'bg-danger',
-  none: 'bg-[#4a515c]',
+  none: 'bg-icon-muted',
 }
 
 /** LastBackupLine is the dot and words of D18, or "—" when the read failed. */

@@ -5,7 +5,7 @@ import { databaseRule } from '../../lib/backup'
 import type { BackupFlow } from '../../lib/useBackup'
 
 const BUTTON =
-  'flex h-8 flex-none cursor-pointer items-center gap-[7px] rounded-[7px] border border-border-strong bg-surface-2 px-3 text-[13px] text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-[#22272e] disabled:bg-transparent disabled:text-[#5e6672]'
+  'flex h-8 flex-none cursor-pointer items-center gap-[7px] rounded-[7px] border border-border-strong bg-surface-2 px-3 text-[13px] text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:border-disabled-border disabled:bg-transparent disabled:text-disabled-text'
 
 /**
  * BackUpButton is Back up now for one database (the Database & Backup tab):

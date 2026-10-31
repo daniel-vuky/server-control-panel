@@ -230,7 +230,7 @@ export function BackupFilters({ filters: f, projects, zone, set }: FilterProps) 
               type="button"
               aria-pressed={on}
               onClick={() => set('result', value)}
-              className={`h-7 cursor-pointer rounded-md border-0 px-3 font-sans text-[13px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${on ? 'bg-[#262c35] text-white' : 'bg-transparent text-muted'}`}
+              className={`h-7 cursor-pointer rounded-md border-0 px-3 font-sans text-[13px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${on ? 'bg-selected text-white' : 'bg-transparent text-muted'}`}
             >
               {label}
             </button>

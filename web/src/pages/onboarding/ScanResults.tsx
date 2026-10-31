@@ -212,7 +212,7 @@ export function Row({
             aria-label={`Display name for ${row.path}`}
             aria-invalid={invalid ? true : undefined}
             className={`h-8 w-full min-w-0 rounded-md border bg-bg px-2 font-mono font-semibold text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
-              invalid ? 'border-danger' : 'border-border-strong'
+              invalid ? 'border-field-error' : 'border-border-strong'
             }`}
           />
           {tag}
