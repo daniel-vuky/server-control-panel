@@ -189,3 +189,48 @@ func TestLoadZone(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigCloudflaredMetrics(t *testing.T) {
+	load := func(v string) (Config, error) {
+		return Load(func(k string) string {
+			if k == "CLOUDFLARED_METRICS" {
+				return v
+			}
+			return ""
+		})
+	}
+	for _, v := range []string{"", "127.0.0.1:20241", "localhost:60123", "[::1]:20245", "127.0.0.1:1", "127.0.0.1:65535"} {
+		t.Run("ok "+v, func(t *testing.T) {
+			cfg, err := load(v)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.CloudflaredMetrics != v {
+				t.Errorf("CloudflaredMetrics = %q, want %q", cfg.CloudflaredMetrics, v)
+			}
+		})
+	}
+	for _, v := range []string{
+		"10.0.0.1:20241",
+		":20241",
+		"localhost",
+		"127.0.0.1",
+		"0.0.0.0:20241",
+		"::1:20241",
+		"127.0.0.1:0",
+		"127.0.0.1:65536",
+		"127.0.0.1:+80",
+		"http://127.0.0.1:20241",
+		"example.com:20241",
+	} {
+		t.Run("bad "+v, func(t *testing.T) {
+			_, err := load(v)
+			if err == nil {
+				t.Fatalf("Load() with CLOUDFLARED_METRICS=%q: want an error", v)
+			}
+			if !strings.Contains(err.Error(), "CLOUDFLARED_METRICS") {
+				t.Errorf("error %q does not name CLOUDFLARED_METRICS", err)
+			}
+		})
+	}
+}

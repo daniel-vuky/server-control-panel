@@ -52,6 +52,10 @@ type Config struct {
 	// Zone is the server time zone (TZ). It is never nil: UTC when TZ is empty.
 	// Backup schedules and their displayed times use it.
 	Zone *time.Location
+	// CloudflaredMetrics is cloudflared's metrics server (CLOUDFLARED_METRICS),
+	// pinned by the owner: empty (the panel tries cloudflared's default ports),
+	// or 127.0.0.1, localhost or [::1] with a port. It is only ever on loopback.
+	CloudflaredMetrics string
 }
 
 // Load reads configuration through getenv (usually os.Getenv). It refuses any
@@ -97,6 +101,10 @@ func Load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	cloudflared := strings.TrimSpace(getenv("CLOUDFLARED_METRICS"))
+	if err := validateCloudflared(cloudflared); err != nil {
+		return Config{}, err
+	}
 	return Config{
 		Addr:               addr,
 		AccessTeamDomain:   getenv("CF_ACCESS_TEAM_DOMAIN"),
@@ -109,6 +117,7 @@ func Load(getenv func(string) string) (Config, error) {
 		GoogleClientSecret: clientSecret,
 		DevBackupMinFree:   minFree,
 		Zone:               zone,
+		CloudflaredMetrics: cloudflared,
 	}, nil
 }
 
@@ -153,6 +162,27 @@ func validateAddr(addr string) error {
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 {
+		return bad()
+	}
+	return nil
+}
+
+// validateCloudflared accepts an empty CLOUDFLARED_METRICS or a loopback
+// host:port (127.0.0.1, localhost or [::1], port 1 to 65535): the panel's probe
+// of cloudflared never leaves the host.
+func validateCloudflared(addr string) error {
+	if addr == "" {
+		return nil
+	}
+	bad := func() error {
+		return fmt.Errorf("CLOUDFLARED_METRICS %q: use 127.0.0.1:<port>, localhost:<port> or [::1]:<port> (cloudflared's metrics address on this host)", addr)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
+		return bad()
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || n < 1 {
 		return bad()
 	}
 	return nil
