@@ -1,5 +1,7 @@
+import { CloudUpload, ExternalLink, Play, RotateCw, ScrollText, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router'
 import { disabledReason } from '../lib/status'
 
 type Props = {
@@ -15,7 +17,18 @@ type Props = {
   status?: string
   self?: boolean
   dockerDown?: boolean
+  /** logsHref is the View logs link; with logsDisabledReason it is shown but goes nowhere. */
+  logsHref?: string
+  logsDisabledReason?: string
+  /** detailsHref is the Open details link. */
+  detailsHref?: string
 }
+
+const itemClass =
+  'flex h-9 items-center gap-2.5 rounded-md border-0 bg-transparent px-2.5 text-left no-underline hover:bg-menu-hover focus-visible:bg-menu-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent'
+
+/** icon is design 09's 15 px menu icon. */
+const icon = (Icon: typeof Play) => <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
 
 /**
  * ActionMenu is the ⋯ button of design 01 and its menu of design 09. An item
@@ -34,6 +47,9 @@ export default function ActionMenu({
   status,
   self,
   dockerDown,
+  logsHref,
+  logsDisabledReason,
+  detailsHref,
 }: Props) {
   const [open, setOpen] = useState(false)
   // Where the open menu sits: fixed, so the table's overflow cannot clip it.
@@ -49,9 +65,16 @@ export default function ActionMenu({
     run(): void
     allowed: boolean
     reason?: string
+    icon: typeof Play
   }> = [
-    { key: 'start', label: 'Start', run: onStart, allowed: actions.includes('start') },
-    { key: 'restart', label: 'Restart', run: onRestart, allowed: actions.includes('restart') },
+    { key: 'start', label: 'Start', run: onStart, allowed: actions.includes('start'), icon: Play },
+    {
+      key: 'restart',
+      label: 'Restart',
+      run: onRestart,
+      allowed: actions.includes('restart'),
+      icon: RotateCw,
+    },
   ]
   if (backup !== undefined) {
     items.push({
@@ -60,6 +83,7 @@ export default function ActionMenu({
       run: backup.onRun,
       allowed: backup.enabled,
       reason: backup.reason,
+      icon: CloudUpload,
     })
   }
 
@@ -114,7 +138,8 @@ export default function ActionMenu({
       return
     }
     if (event.key === 'Tab') {
-      close(false)
+      // Focus goes back to the trigger and the default Tab moves on from it.
+      close(true)
       return
     }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
@@ -154,7 +179,7 @@ export default function ActionMenu({
               tabIndex={-1}
               onKeyDown={onKeyDown}
               style={{ position: 'fixed', top: pos.top, right: pos.right }}
-              className="z-10 flex w-[220px] flex-col gap-0.5 rounded-[9px] border border-border-strong bg-[#181c22] p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+              className="z-10 flex w-[220px] flex-col gap-0.5 rounded-[9px] border border-border-strong bg-menu p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
             >
               {items.map((item) => {
                 const { allowed } = item
@@ -173,12 +198,49 @@ export default function ActionMenu({
                       close(true)
                       item.run()
                     }}
-                    className={`h-9 rounded-md border-0 bg-transparent px-2.5 text-left text-text hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${allowed ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                    className={`${itemClass} text-text ${allowed ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
                   >
+                    {icon(item.icon)}
                     {item.label}
                   </button>
                 )
               })}
+              {logsHref !== undefined || logsDisabledReason !== undefined ? (
+                logsDisabledReason !== undefined || logsHref === undefined ? (
+                  // Not a link, so there is nothing to follow; still focusable for the arrows.
+                  <span
+                    role="menuitem"
+                    tabIndex={-1}
+                    aria-disabled="true"
+                    title={logsDisabledReason}
+                    className={`${itemClass} cursor-not-allowed text-text opacity-50`}
+                  >
+                    {icon(ScrollText)}
+                    View logs
+                  </span>
+                ) : (
+                  <Link
+                    to={logsHref}
+                    role="menuitem"
+                    onClick={() => close(true)}
+                    className={`${itemClass} cursor-pointer text-text`}
+                  >
+                    {icon(ScrollText)}
+                    View logs
+                  </Link>
+                )
+              ) : null}
+              {detailsHref !== undefined && (
+                <Link
+                  to={detailsHref}
+                  role="menuitem"
+                  onClick={() => close(true)}
+                  className={`${itemClass} cursor-pointer text-text`}
+                >
+                  {icon(ExternalLink)}
+                  Open details
+                </Link>
+              )}
               {danger !== null && (
                 <>
                   <hr className="mx-1.5 my-1 h-px border-0 bg-border-strong" />
@@ -189,8 +251,9 @@ export default function ActionMenu({
                       close(true)
                       onUntrack?.()
                     }}
-                    className="h-9 cursor-pointer rounded-md border-0 bg-transparent px-2.5 text-left text-danger hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+                    className={`${itemClass} cursor-pointer text-danger`}
                   >
+                    {icon(Trash2)}
                     {danger}
                   </button>
                 </>
