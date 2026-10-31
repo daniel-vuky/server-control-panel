@@ -75,7 +75,7 @@ describe('summaryTiles', () => {
     expect(t.values[0]).toBeNull() // 09:50 is before the boot
     expect(t.values[1]).toBeCloseTo(3 / 60, 5)
     expect(t.values[2]).toBeCloseTo(8 / 60, 5)
-    expect(t.max).toBeCloseTo(8 / 60, 5)
+    expect(t.max).toBeCloseTo(16 / 60, 5) // twice the last value: the line rises through the lower half
     expect(t.value).toBe('8 min')
     expect(t.sub).toBe('')
   })
@@ -148,6 +148,7 @@ describe('summaryTiles', () => {
     ])
     expect(t('connected', null).sub).toBe('cloudflared')
     expect(t('connected', 5).sub).toBe('5 hostnames')
+    expect(t('connected', 1).sub).toBe('1 hostname')
   })
 
   it('shows five dashes and Not available without the host /proc, keeping the tunnel', () => {

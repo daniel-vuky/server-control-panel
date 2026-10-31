@@ -36,14 +36,15 @@ afterEach(() => {
 describe('ServerSummary', () => {
   it('shows six skeleton tiles until both reads answered, then the six labelled tiles', async () => {
     let answerSeries: (r: Response) => void = () => {}
-    serve({ series: () => new Promise<Response>((r) => (answerSeries = r)) })
+    const stub = serve({ series: () => new Promise<Response>((r) => (answerSeries = r)) })
     const { container } = render(<ServerSummary />)
     const section = screen.getByRole('region', { name: 'Server summary' })
     expect(section.getAttribute('aria-busy')).toBe('true')
     expect(container.querySelectorAll('[data-skeleton-tile]').length).toBe(6)
-    // info alone is not enough
+    // info alone is not enough: let the /api/server answer land first
+    await waitFor(() => expect(stub).toHaveBeenCalledWith('/api/server', expect.anything()))
     await act(async () => {
-      await Promise.resolve()
+      await new Promise((r) => setTimeout(r, 50))
     })
     expect(container.querySelectorAll('[data-skeleton-tile]').length).toBe(6)
     expect(screen.queryByText('Load avg')).toBeNull()

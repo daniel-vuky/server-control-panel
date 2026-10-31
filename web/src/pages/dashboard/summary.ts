@@ -1,5 +1,6 @@
 import type { ServerInfo, ServerPoint, ServerSeries } from '../../api/types.gen'
 import { formatPercent, formatSince, formatUsedOfTotal } from '../../lib/format'
+import { plural } from '../../lib/plural'
 
 /** Tile colours (spec decision D8). */
 const ACCENT = '#5AA7FF'
@@ -156,8 +157,9 @@ function uptimeTile(info: ServerInfo | null, points: ServerPoint[], now: Date): 
     const t = Date.parse(p.t)
     return Number.isNaN(t) || t < boot ? null : (t - boot) / HOUR_MS
   })
-  const top = Math.max(0, ...values.map((v) => v ?? 0))
-  return { ...base, ...formatSince(info.bootTime, now), values, max: top > 0 ? top : 1 }
+  // The scale tops at twice the newest value, so the rising line sits in the lower half (design 01).
+  const last = values.reduce<number>((acc, v) => v ?? acc, 0)
+  return { ...base, ...formatSince(info.bootTime, now), values, max: last > 0 ? 2 * last : 1 }
 }
 
 /** tunnelTile words cloudflared's state (spec decision D6): connected is green, down is red, unknown is neutral. */
@@ -170,7 +172,10 @@ function tunnelTile(info: ServerInfo | null, points: ServerPoint[]): Tile {
   } as const
   if (!info) return { ...base, value: '—', sub: '', flag: null, over: false, color: ACCENT }
   const { state, hostnames } = info.cloudflared
-  const sub = state === 'connected' && hostnames !== null ? `${hostnames} hostnames` : 'cloudflared'
+  const sub =
+    state === 'connected' && hostnames !== null
+      ? plural(hostnames, 'hostname', 'hostnames')
+      : 'cloudflared'
   switch (state) {
     case 'connected':
       return {
