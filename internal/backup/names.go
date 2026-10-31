@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/daniel-vuky/server-control-panel/internal/store"
 )
 
 // FileName is the Drive file name of a backup taken at at:
@@ -145,4 +147,16 @@ func formatSpan(d time.Duration) string {
 		return plural(int64(d/time.Minute), "minute")
 	}
 	return d.String()
+}
+
+// Compressed says whether a backup's file is gzipped: false only when its
+// Compress step was skipped as "Compression off" (the database's compress
+// setting was off when it was queued).
+func Compressed(b store.Backup) bool {
+	for _, st := range b.Steps {
+		if st.Step == StepCompress {
+			return st.State != stepSkipped || st.Detail != wordsCompressionOff
+		}
+	}
+	return true
 }

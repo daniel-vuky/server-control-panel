@@ -137,17 +137,16 @@ func (s *server) backupSchedule(w http.ResponseWriter, r *http.Request) {
 		s.record(r, store.Activity{Action: store.ActBackupSchedule, ProjectID: id, Target: t.DisplayName + " · " + db.Name},
 			store.ResultOK, scheduleChanges(old, f))
 		s.Hub.Refresh()
+		// Re-read for the stored schedule's updated_at; a no-op save keeps t.
+		if t, err = s.Store.TrackedProject(ctx, id); errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, msgNotTracked)
+			return
+		} else if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
 	}
-	after, err := s.Store.TrackedProject(ctx, id)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, msgNotTracked)
-		return
-	case err != nil:
-		s.internalError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, s.toProjects(s.readViews(r.Context(), []store.Tracked{after}))[0])
+	writeJSON(w, http.StatusOK, s.toProjects(s.readViews(r.Context(), []store.Tracked{t}))[0])
 }
 
 // findDatabase is the detected database of t with key.
@@ -165,6 +164,8 @@ func findDatabase(t store.Tracked, key string) (project.Database, bool) {
 // unresolved service), over the hub's recent containers, as the scheduler
 // decides it. With Docker down the stored services still resolve it.
 func (s *server) supported(ctx context.Context, t store.Tracked, d project.Database) bool {
+	// The hub's cache is warm while the page holds /api/events open; otherwise
+	// this is one Docker read, bounded like every read.
 	cs, up := s.Hub.RecentContainers(ctx, recentContainers)
 	_, reason := project.BackupReason(d, t.ComposeProject, t.ServiceDetails, cs, up)
 	return reason != project.ReasonNotSupported
@@ -246,6 +247,8 @@ func (s *server) summaryNextRun(ctx context.Context, now time.Time) (*SummaryNex
 	for _, t := range ts {
 		byID[t.ID] = t
 	}
+	// Warm while the Backups page holds /api/events open; otherwise one
+	// bounded Docker read.
 	cs, up := s.Hub.RecentContainers(ctx, recentContainers)
 	var earliest time.Time
 	var names []string

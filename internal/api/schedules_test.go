@@ -462,6 +462,19 @@ func TestBackupSummaryRoute(t *testing.T) {
 	if got.NextRun == nil || got.NextRun.At != "2030-01-16T02:00:00+07:00" || !slices.Equal(got.NextRun.Projects, []string{"Alpha", "Ledger"}) {
 		t.Errorf("next run = %+v", got.NextRun)
 	}
+	// The project tab agrees: the SQLite file keeps its daily row but has no
+	// next run, since the scheduler never runs it.
+	for _, p := range decode[[]Project](t, do(h, http.MethodGet, "/api/projects")) {
+		if p.ID != ledger {
+			continue
+		}
+		if db := databaseOf(t, p, "sqlite:/data/app.db:app.db"); db.Schedule == nil || db.Schedule.Frequency != "daily" || db.Schedule.NextRunAt != nil {
+			t.Errorf("sqlite schedule = %+v, want daily with no next run", db.Schedule)
+		}
+		if db := databaseOf(t, p, booksKey); db.Schedule == nil || db.Schedule.NextRunAt == nil || *db.Schedule.NextRunAt != got.NextRun.At {
+			t.Errorf("books schedule = %+v, want the summary's next run", db.Schedule)
+		}
+	}
 
 	// An earlier time on one project wins alone.
 	saveSchedule(t, h, ledger, BackupScheduleInput{Database: booksKey, Frequency: "daily", Time: "01:00", Keep: 14, Compress: false})

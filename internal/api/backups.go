@@ -38,9 +38,6 @@ const (
 // dateLayout is the from and to query dates and the summary's day dates.
 const dateLayout = "2006-01-02"
 
-// stepSkipped is a step's state when it did not run (BackupStep.State).
-const stepSkipped = "skipped"
-
 // pathID is the positive {id} of r's path.
 func pathID(r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -411,7 +408,7 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 		s.downloadFailed(w, r, err, b.ProjectID)
 		return
 	}
-	name := safeFileName(b.FileName, compressed(b))
+	name := safeFileName(b.FileName, backup.Compressed(b))
 	h := w.Header()
 	h.Set("Content-Type", contentTypeOf(name))
 	h.Set("Content-Disposition", `attachment; filename="`+name+`"`)
@@ -481,17 +478,6 @@ func safeFileName(name string, compressed bool) string {
 	default:
 		return "backup.sql"
 	}
-}
-
-// compressed says whether a backup's file is gzipped: its Compress step was
-// not skipped ("Compression off").
-func compressed(b store.Backup) bool {
-	for _, st := range b.Steps {
-		if st.Step == backup.StepCompress {
-			return st.State != stepSkipped
-		}
-	}
-	return true
 }
 
 // contentTypeOf is the download's type: gzip for a .gz name, else raw bytes.

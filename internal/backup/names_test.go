@@ -3,6 +3,8 @@ package backup
 import (
 	"testing"
 	"time"
+
+	"github.com/daniel-vuky/server-control-panel/internal/store"
 )
 
 func TestFileName(t *testing.T) {
@@ -109,6 +111,26 @@ func TestFileNameCompressedAndRaw(t *testing.T) {
 	for _, tc := range cases {
 		if got := fileName("shop", "db", tc.typ, tc.compressed, at, time.UTC); got != tc.want {
 			t.Errorf("fileName(%s, %v) = %q, want %q", tc.typ, tc.compressed, got, tc.want)
+		}
+	}
+}
+
+func TestCompressed(t *testing.T) {
+	steps := func(state, detail string) store.Backup {
+		return store.Backup{Steps: []store.BackupStep{{Step: StepDump, State: "done"}, {Step: StepCompress, State: state, Detail: detail}}}
+	}
+	for _, tc := range []struct {
+		name string
+		b    store.Backup
+		want bool
+	}{
+		{"compressed", steps("done", "1.0 MB → 200 KB"), true},
+		{"compression off", steps(stepSkipped, wordsCompressionOff), false},
+		{"skipped after a failed dump", steps(stepSkipped, ""), true},
+		{"no steps", store.Backup{}, true},
+	} {
+		if got := Compressed(tc.b); got != tc.want {
+			t.Errorf("%s: Compressed = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

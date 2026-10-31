@@ -88,7 +88,9 @@ func (s *server) toProjectDatabases(ds []control.DatabaseView, now time.Time) []
 		db.Key = d.Key
 		db.Backup = &BackupRule{Allowed: d.Backup.Allowed, Reason: d.Backup.Reason, Service: d.Backup.Service}
 		if d.Schedule != nil {
-			db.Schedule = s.toSchedule(*d.Schedule, now)
+			// The scheduler never runs a database that cannot be backed up at
+			// all, so it has no next run, whatever its frequency.
+			db.Schedule = s.toSchedule(*d.Schedule, now, d.Backup.Reason != project.ReasonNotSupported)
 		}
 		out = append(out, db)
 	}
@@ -97,12 +99,13 @@ func (s *server) toProjectDatabases(ds []control.DatabaseView, now time.Time) []
 
 // toSchedule maps a stored schedule with its next run: the first occurrence
 // after max(now, updated_at) in the server zone (so a time already passed
-// when it was saved is not shown), null when off.
-func (s *server) toSchedule(sc store.Schedule, now time.Time) *DatabaseSchedule {
+// when it was saved is not shown), null when off or when runs is false (the
+// database can never be backed up, so the scheduler skips it).
+func (s *server) toSchedule(sc store.Schedule, now time.Time, runs bool) *DatabaseSchedule {
 	out := &DatabaseSchedule{
 		Frequency: sc.Frequency, Time: sc.Time, Weekday: sc.Weekday, Keep: sc.Keep, Compress: sc.Compress,
 	}
-	if next, ok := s.nextRun(sc, now); ok {
+	if next, ok := s.nextRun(sc, now); ok && runs {
 		v := next.In(s.Zone).Format(time.RFC3339)
 		out.NextRunAt = &v
 	}
