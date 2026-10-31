@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -430,5 +431,45 @@ func TestCloseDuringPruneKeepsBackupOK(t *testing.T) {
 	acts := e.activity(t)
 	if len(acts) != 1 || acts[0].Result != store.ResultOK {
 		t.Errorf("activity = %+v", acts)
+	}
+}
+
+// A panic in Prune (here in a Drive delete) fails only step 4: the copy is on
+// Drive, so the backup stays ok and its activity finishes ok.
+func TestPrunePanicKeepsBackupOK(t *testing.T) {
+	e, h := newPruneEnv(t)
+	var logs lockedBuffer
+	e.m.log = slog.New(slog.NewTextHandler(&logs, nil))
+	e.setSchedule(t, keyPG, 1, true)
+	e.seed(t, e.shop.ID, keyPG, "ok")
+	h.setDelete(func(context.Context, int, string) error {
+		panic("boom " + devPass)
+	})
+	b := e.waitDone(t, e.enqueue(t, keyPG))
+	if b.State != "ok" || b.FailedStep != "" || b.Error != "" {
+		t.Fatalf("row = %q %q %q", b.State, b.FailedStep, b.Error)
+	}
+	want := "Could not remove old copies: internal error. It is retried after the next backup."
+	if b.Steps[iPrune].State != "failed" || b.Steps[iPrune].Detail != want {
+		t.Errorf("prune = %+v, want failed %q", b.Steps[iPrune], want)
+	}
+	if b.DriveFileID == "" || !e.onDrive(t, b.DriveFileID) {
+		t.Error("the new copy is not on Drive")
+	}
+	acts := e.activity(t)
+	if len(acts) != 1 || acts[0].Result != store.ResultOK {
+		t.Errorf("activity = %+v", acts)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "prune panicked") {
+		t.Errorf("log = %q", out)
+	}
+	assertNoSecret(t, "log", out)
+
+	// The worker goes on: the next backup removes the leftover.
+	h.setDelete(nil)
+	b2 := e.waitDone(t, e.enqueue(t, keyPG))
+	if b2.State != "ok" || b2.Steps[iPrune].State != "done" {
+		t.Fatalf("next = %q, prune = %+v", b2.State, b2.Steps[iPrune])
 	}
 }

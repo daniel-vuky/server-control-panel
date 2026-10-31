@@ -162,15 +162,10 @@ func dueAt(sc store.Schedule, now time.Time, loc *time.Location) (time.Time, boo
 	return due, true
 }
 
-// supported is false only when the database can never be backed up as it is
-// (not_supported: SQLite, outside a container, an unresolved service), by
-// project.BackupReason over the hub's cached containers. The scheduler and
-// Back up all skip such a database without a row.
-func (m *Manager) supported(t store.Tracked, d project.Database) bool {
-	cs, up := m.cs(context.Background())
-	return supportedWith(t, d, cs, up)
-}
-
+// supportedWith is false only when the database can never be backed up as it
+// is (not_supported: SQLite, outside a container, an unresolved service), by
+// project.BackupReason over the given containers. The scheduler and Back up
+// all skip such a database without a row.
 func supportedWith(t store.Tracked, d project.Database, cs []project.Container, up bool) bool {
 	_, reason := project.BackupReason(d, t.ComposeProject, t.ServiceDetails, cs, up)
 	return reason != project.ReasonNotSupported

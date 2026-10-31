@@ -177,16 +177,21 @@ func (m *Manager) recordAllRefused(ctx context.Context, by Actor, words string) 
 }
 
 // runBatch queues the candidates one at a time. Once the Manager is closed the
-// candidates left count as failed, with no row.
+// candidates left count as failed, with no row. After a panic the candidate in
+// hand counts as left only when nothing counted it yet (its slot).
 func (m *Manager) runBatch(ctx context.Context, bs *batchState, by Actor, cands []target) {
 	defer m.wg.Done()
 	left := len(cands)
+	var cur *slot
 	defer func() {
 		if p := recover(); p != nil {
 			m.log.Error("backup: back up all panicked", "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
 		}
 		bs.cancel()
 		m.mu.Lock()
+		if cur != nil && cur.counted {
+			left--
+		}
 		bs.b.Done += left
 		bs.b.Failed += left
 		bs.enqueuing = false
@@ -199,7 +204,9 @@ func (m *Manager) runBatch(ctx context.Context, bs *batchState, by Actor, cands 
 		if ctx.Err() != nil || m.isClosed() {
 			return
 		}
-		m.enqueueOne(ctx, bs, by, c)
+		cur = &slot{batch: bs.b.ID}
+		m.enqueueOne(ctx, bs, by, c, cur)
+		cur = nil
 		left--
 	}
 }
@@ -208,15 +215,15 @@ func (m *Manager) runBatch(ctx context.Context, bs *batchState, by Actor, cands 
 // the batch did not register (the backup it queued or joined, a refusal it
 // stored) is counted here: skipped when the project or database is gone or
 // no longer supported, failed otherwise (ErrClosed, a cancelled or failed
-// Enqueue).
-func (m *Manager) enqueueOne(ctx context.Context, bs *batchState, by Actor, c target) {
+// Enqueue). s is the candidate's slot, marked counted once anything counts it.
+func (m *Manager) enqueueOne(ctx context.Context, bs *batchState, by Actor, c target, s *slot) {
 	ectx, cancel := context.WithTimeout(ctx, enqueueWait)
 	defer cancel()
 	t := c.t
 	fresh, err := m.st.TrackedProject(ectx, t.ID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		m.countDirect(bs, true)
+		m.countDirect(bs, s, true)
 		return
 	case err != nil:
 		if ectx.Err() == nil {
@@ -225,8 +232,10 @@ func (m *Manager) enqueueOne(ctx context.Context, bs *batchState, by Actor, c ta
 	default:
 		t = fresh
 	}
-	s := &slot{batch: bs.b.ID}
 	_, err = m.enqueue(ectx, t, c.key, by, s)
+	if m.enqueuedHook != nil {
+		m.enqueuedHook(c.key)
+	}
 	if s.counted {
 		return
 	}
@@ -236,13 +245,15 @@ func (m *Manager) enqueueOne(ctx context.Context, bs *batchState, by Actor, c ta
 	if err != nil && !skip && !errors.Is(err, ErrClosed) && ectx.Err() == nil {
 		m.log.Warn("backup: back up all could not queue a backup", "project", t.ID, "db", c.key, "err", err)
 	}
-	m.countDirect(bs, skip)
+	m.countDirect(bs, s, skip)
 }
 
-// countDirect counts an outcome the enqueue goroutine decides: skipped or
-// failed. The batch cannot end here, since its goroutine still runs.
-func (m *Manager) countDirect(bs *batchState, skipped bool) {
+// countDirect counts an outcome the enqueue goroutine decides for slot s:
+// skipped or failed. The batch cannot end here, since its goroutine still
+// runs.
+func (m *Manager) countDirect(bs *batchState, s *slot, skipped bool) {
 	m.mu.Lock()
+	s.counted = true
 	bs.b.Done++
 	if skipped {
 		bs.b.Skipped++

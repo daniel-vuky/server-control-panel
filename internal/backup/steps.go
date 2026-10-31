@@ -93,8 +93,25 @@ func (m *Manager) run(ctx context.Context, j *job) {
 
 	if m.dump(ctx, j, tmp) && m.upload(ctx, j, tmp) {
 		// The new copy is on Drive: the backup is ok whatever Prune meets.
-		m.prune(ctx, j)
+		m.safePrune(ctx, j)
 	}
+}
+
+// wordsPruneInternal is Prune's failure when it panicked.
+const wordsPruneInternal = "Could not remove old copies: internal error. It is retried after the next backup."
+
+// safePrune runs Prune with its own recover: a panic there (the copy is on
+// Drive already) fails step 4 only, so the backup still ends ok. The panic
+// value is masked like stderr and goes only to the log.
+func (m *Manager) safePrune(ctx context.Context, j *job) {
+	defer func() {
+		if p := recover(); p != nil {
+			m.log.Error("backup: prune panicked", "backup", j.b.ID,
+				"panic", runner.Mask(fmt.Sprint(p), j.plan.secrets), "stack", string(debug.Stack()))
+			m.setStep(j, iPrune, stepFailed, wordsPruneInternal)
+		}
+	}()
+	m.prune(ctx, j)
 }
 
 // recheckProject re-reads a queued backup's project from the store: one

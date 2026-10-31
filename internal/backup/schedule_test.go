@@ -617,10 +617,13 @@ func TestSchedulerNotSupportedSkippedNoRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cctx, cancel := context.WithTimeout(context.Background(), containersWait)
+	cs, up := se.m.cs(cctx)
+	cancel()
 	for _, d := range tr.Databases {
 		k := project.DatabaseKey(d)
 		want := k != keySQLite && k != keyHost && k != keyGhost
-		if got := se.m.supported(tr, d); got != want {
+		if got := supportedWith(tr, d, cs, up); got != want {
 			t.Errorf("supported(%s) = %v, want %v", k, got, want)
 		}
 	}

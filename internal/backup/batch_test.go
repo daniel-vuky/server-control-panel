@@ -466,3 +466,27 @@ func TestStartAllRunsOneAtATime(t *testing.T) {
 		t.Errorf("at most %d dumps ran at once", most.Load())
 	}
 }
+
+// A panic in the batch goroutine after a candidate was registered counts that
+// candidate once (by its backup's end), and only the candidates not yet
+// queued as failed.
+func TestStartAllPanicAfterRegisterCountsOnce(t *testing.T) {
+	e := newEnv(t)
+	e.m.enqueuedHook = func(key string) {
+		if key == keyPG {
+			panic("boom")
+		}
+	}
+	e.startAll(t, Person(actor), e.shopWith(keyPG, keyMongo))
+	b, act := e.waitBatch(t)
+	if countsOf(b) != "total 2 done 2 ok 1 failed 1 skipped 0" {
+		t.Errorf("batch = %s", countsOf(b))
+	}
+	if act.Result != store.ResultFailed || act.Reason != "1 succeeded, 1 failed" {
+		t.Errorf("backup.all activity = %+v", act)
+	}
+	rows := e.shopBackups(t)
+	if len(rows) != 1 || rows[0].DBKey != keyPG || rows[0].State != StateOK {
+		t.Errorf("rows = %+v", rows)
+	}
+}

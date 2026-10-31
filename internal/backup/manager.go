@@ -226,6 +226,9 @@ type Manager struct {
 	// joinHook, when set, runs before a batch Enqueue that waited on another
 	// Enqueue of the same database attaches to the backup it queued (id).
 	joinHook func(id int64)
+	// enqueuedHook, when set, runs in a batch's enqueueOne right after its
+	// Enqueue returns, with the database key.
+	enqueuedHook func(key string)
 
 	mu       sync.Mutex
 	jobs     map[int64]*job
