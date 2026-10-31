@@ -494,10 +494,10 @@ func TestHubRefreshRepublishesWithoutStaleTs(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	gate := make(chan struct{})
 	e.cmd.on(runner.DockerPing, reply{}).
-		containers(runningOut("shop")).                                             // the subscribe tick
+		containers(runningOut("shop"), runningOut("shop")).                         // the Check and the loop's first tick
 		on(runner.DockerContainers, reply{stdout: stoppedOut("shop"), gate: gate}). // the stale tick
 		containers(stoppedOut("shop"))                                              // the tick after
-	cur, updates := subscribe(t, h)
+	cur, updates := settledSubscribe(t, e, h)
 	if viewOf(t, cur, "shop").Status != project.StatusRunning {
 		t.Fatalf("state = %+v", cur)
 	}
@@ -537,7 +537,7 @@ func TestHubRefreshRepublishesWithoutStaleTs(t *testing.T) {
 func TestHubUntrackThenRefresh(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
-	_, updates := subscribe(t, h)
+	_, updates := settledSubscribe(t, e, h)
 
 	if _, err := e.ctl.Untrack(context.Background(), e.ids["shop"], actor); err != nil {
 		t.Fatalf("Untrack: %v", err)
@@ -592,10 +592,12 @@ func TestHubRefreshNoLoopInvalidates(t *testing.T) {
 		t.Fatal("the cache is still ready after Refresh")
 	}
 
-	// The next subscriber reads fresh instead of reusing the cache.
+	// The next subscriber reads fresh instead of reusing the cache. Its new
+	// loop's first tick may add one more ping at any time after Subscribe's
+	// own tick; the 4 projects show the fresh read.
 	cur, _ := subscribe(t, h)
-	if n := e.cmd.count(runner.DockerPing); n != pings+1 {
-		t.Fatalf("subscribe ran %d ticks, want 1", n-pings)
+	if n := e.cmd.count(runner.DockerPing) - pings; n < 1 || n > 2 {
+		t.Fatalf("subscribe ran %d ticks, want 1 (plus the loop's first)", n)
 	}
 	if len(cur.Projects) != 4 {
 		t.Fatalf("state = %+v, want 4 projects without shop", cur)
