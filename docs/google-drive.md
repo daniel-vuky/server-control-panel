@@ -85,10 +85,10 @@ After this, **Back up now** works on the databases the panel can dump. Without a
 
 Drive access can end for these reasons: you revoked the panel under your Google account's third-party access, the grant went unused for 6 months, the panel's `PANEL_SECRET_KEY` changed, or the Google Cloud app is still in Testing (7 days, see step 3).
 
-When it happens, the panel shows "The Google Drive token has expired" on Settings and on the Backups page, backups fail until you fix it (a refused backup stays in the history), and nothing already uploaded is lost. To recover:
+When it happens, the panel shows "The Google Drive token has expired" on Settings and a banner with **Reconnect Google Drive** on every page, backups (scheduled ones included) fail until you fix it (a refused backup stays in the history), and nothing already uploaded is lost. To recover:
 
 1. If the cause is Testing, publish the app as in step 3. A token issued in Testing stays short-lived, so reconnect afterwards.
-2. In Settings choose **Reconnect Google Drive** and allow access again. The folder you chose is kept when you reconnect with the same Google account.
+2. In Settings (or in the banner) choose **Reconnect Google Drive** and allow access again. The folder you chose is kept when you reconnect with the same Google account.
 
 If `PANEL_SECRET_KEY` changes, the saved token cannot be read and the card shows the expired state: reconnect. If the key is missing from `panel.env`, the card shows "PANEL_SECRET_KEY is not set": run the install command again to append a new key, restart the panel, then reconnect. No backup is lost either way.
 
