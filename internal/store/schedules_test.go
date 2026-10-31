@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -171,6 +172,69 @@ func TestMigrationSeedsOffSchedules(t *testing.T) {
 	}
 	if n := count(t, s.db, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'backups_db_idx'`); n != 1 {
 		t.Fatal("index backups_db_idx is missing")
+	}
+}
+
+// The seed's db_key is project.DatabaseKey for a database whose name came
+// from a variable or a URL (name_explicit), so the scheduler and the API find
+// the seeded row.
+func TestMigrationSeedKeyMatchesExplicitName(t *testing.T) {
+	ctx := context.Background()
+	const now = "2026-10-01T00:00:00Z"
+	path := storeAt0006(t, func(db *sql.DB) {
+		mustExec(t, db, `INSERT INTO workspaces (id, name, path, depth, created_at, last_scan_at) VALUES (1, 'apps', '/srv/apps', 2, ?, ?)`, now, now)
+		mustExec(t, db, `INSERT INTO projects (id, workspace_id, path, compose_files, compose_project, display_name, state, self, details, created_at)
+			VALUES (1, 1, '/srv/apps/shop', '["compose.yaml"]', 'shop', 'Shop', 'tracked', 0, '{}', ?)`, now)
+		for _, q := range []string{
+			// A name from a URL path, and one from a variable on a service named
+			// like the placeholder.
+			`INSERT INTO databases (project_id, type, name, name_explicit, location_kind, location, sources) VALUES (1, 'postgresql', 'orders', 1, 'container', 'pg', '["DATABASE_URL"]')`,
+			`INSERT INTO databases (project_id, type, name, name_explicit, location_kind, location, sources) VALUES (1, 'mysql', 'db', 1, 'container', 'db', '["MYSQL_DATABASE"]')`,
+		} {
+			mustExec(t, db, q)
+		}
+	})
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open on a v6 database: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	got, err := s.TrackedProject(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Databases) != 2 {
+		t.Fatalf("databases = %+v", got.Databases)
+	}
+	want := map[string]bool{}
+	for _, d := range got.Databases {
+		if !d.NameExplicit {
+			t.Fatalf("database %+v is not name_explicit", d)
+		}
+		want[project.DatabaseKey(d)] = true
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT db_key FROM backup_schedules WHERE project_id = 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	seeded := map[string]bool{}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			t.Fatal(err)
+		}
+		seeded[k] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(seeded) != fmt.Sprint(want) {
+		t.Fatalf("seeded keys = %v, want %v", seeded, want)
+	}
+	if !want["postgresql:pg:orders"] || !want["mysql:db:db"] {
+		t.Fatalf("keys = %v", want)
 	}
 }
 
