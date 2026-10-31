@@ -1,13 +1,24 @@
-import { CircleAlert, CloudUpload } from 'lucide-react'
-import { useId, useState } from 'react'
-import { Link } from 'react-router'
+import { CircleAlert } from 'lucide-react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
+import { getBackupSettings, getBackupSummary } from '../api/backups'
 import { connectDrive, type DriveIssue, driveIssue } from '../api/drive'
-import type { Backup, DriveStatus } from '../api/types.gen'
+import type { Backup, BackupSummary, DriveStatus } from '../api/types.gen'
 import { useLive } from '../app/live'
 import { BackupSteps } from '../components/BackupProgress'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
 import { formatClock } from '../lib/time'
+import { useBackup } from '../lib/useBackup'
+import { useLoad } from '../lib/useLoad'
 import { usePageRestore } from '../lib/usePageRestore'
+import { BackUpAllButton, type BackupAll, BackupAllBar, useBackupAll } from './backups/BackupAllBar'
+import BackupSummaryCards from './backups/BackupSummaryCards'
+import BackupsTable, {
+  BackupFilters,
+  filtersOf,
+  isFiltered,
+  useAllBackups,
+} from './backups/BackupsTable'
 
 const BUTTON =
   'flex h-9 flex-none cursor-pointer items-center rounded-[7px] px-4 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
@@ -19,43 +30,145 @@ const byQueue = (a: Backup, b: Backup) =>
   a.id - b.id
 
 /**
- * BackupsPage is /backups, minimal in this flow (design 04): the Drive
- * folder, the Drive banners, and one card per running or waiting backup.
+ * useSummary is GET /api/backups/summary, read on mount and again whenever
+ * `changed` changes; a failed re-read keeps the last summary.
+ */
+function useSummary(changed: string) {
+  const [summary, setSummary] = useState<BackupSummary | null>(null)
+  const [error, setError] = useState('')
+  const ctl = useRef<AbortController | null>(null)
+
+  const read = useCallback(() => {
+    ctl.current?.abort()
+    const c = new AbortController()
+    ctl.current = c
+    setError('')
+    getBackupSummary(c.signal).then(
+      (s) => {
+        if (!c.signal.aborted) setSummary(s)
+      },
+      (err: unknown) => {
+        if (c.signal.aborted) return
+        setError(err instanceof Error && err.message ? err.message : 'Something went wrong.')
+      },
+    )
+  }, [])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: changed re-reads the summary.
+  useEffect(() => {
+    read()
+  }, [changed, read])
+  useEffect(() => () => ctl.current?.abort(), [])
+
+  return { summary, error, retry: read }
+}
+
+/**
+ * BackupsPage is /backups (design 04, spec decisions 17 to 23): Back up all
+ * now with its progress and result, the Drive banner, the summary cards, the
+ * running and waiting backups, then every backup, filtered by the URL query,
+ * 50 at a time; or the empty state when there is no backup at all.
  */
 export default function BackupsPage() {
   const live = useLive()
   const drive = live.drive
   const folder = drive?.state === 'connected' ? drive.folder : null
   const active = [...live.backups].sort(byQueue)
+  const flow = useBackup()
+  const all = useBackupAll()
+  const zone = useLoad(getBackupSettings).load
+  const [params, setParams] = useSearchParams()
+  const filters = filtersOf(params)
+
+  // What the summary and the table re-read on: a backup queued, started or
+  // ended, the batch moved, or a refusal stored a row (never mere progress).
+  const b = live.batch
+  const changed = [
+    live.backups.map((x) => `${x.id}:${x.state}`).join(','),
+    b ? `${b.id}:${b.done}:${b.finishedAt ?? ''}` : '',
+    flow.refusals,
+  ].join('|')
+  const summary = useSummary(changed)
+  const table = useAllBackups(filters, changed)
+
+  const setFilter = (key: 'project' | 'result' | 'from' | 'to', value: string) => {
+    const next = new URLSearchParams(params)
+    if (value === '') next.delete(key)
+    else next.set(key, value)
+    setParams(next, { replace: true })
+  }
+
+  const empty =
+    table.loaded && table.error === '' && table.rows.length === 0 && !isFiltered(filters)
 
   return (
-    <div className="flex max-w-[1040px] flex-col gap-5">
-      <header className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Backups</h1>
-        {folder && (
+    <div className="flex max-w-[1240px] flex-col gap-5">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-col gap-1.5">
+          <h1 className="m-0 text-2xl font-semibold tracking-tight">Backups</h1>
           <p className="m-0 text-[13px] text-muted">
-            Stored in <span className="font-mono text-text-2">Drive/{folder.name}</span>
+            All project database backups
+            {folder && (
+              <>
+                {' · stored in '}
+                <span className="font-mono text-text-2">Drive/{folder.name}</span>
+              </>
+            )}
           </p>
-        )}
+        </div>
+        <BackUpAllButton all={all} />
       </header>
 
       {drive && <DriveBanner drive={drive} />}
+      <BackupAllBar all={all} />
 
-      {live.projects === null ? (
-        <p role="status" className="m-0 text-[13px] text-muted">
-          Loading backups…
-        </p>
-      ) : active.length === 0 ? (
-        <div className="flex flex-col items-center gap-2.5 rounded-[10px] border border-dashed border-border-strong px-5 py-8 text-center">
-          <CloudUpload aria-hidden="true" size={32} strokeWidth={1.4} className="text-[#4a515c]" />
-          <p className="m-0 text-[15px] font-semibold">No backup is running.</p>
-          <p className="m-0 text-[13px] text-muted">
-            The list of all backups arrives with the next backup flow.
-          </p>
-        </div>
+      <BackupSummaryCards
+        summary={summary.summary}
+        zone={zone.state === 'ok' ? zone.data.timeZone : null}
+        error={summary.error}
+        onRetry={summary.retry}
+      />
+
+      {active.map((x) => (
+        <ActiveCard key={x.id} backup={x} />
+      ))}
+
+      {empty ? (
+        <NoBackups all={all} />
       ) : (
-        active.map((b) => <ActiveCard key={b.id} backup={b} />)
+        <>
+          <BackupFilters filters={filters} projects={live.projects ?? []} set={setFilter} />
+          <BackupsTable all={table} flow={flow} projects={live.projects ?? []} />
+        </>
       )}
+      {flow.dialogs}
+    </div>
+  )
+}
+
+/** NoBackups is design 10's empty Backups page, with Back up all now. */
+function NoBackups({ all }: { all: BackupAll }) {
+  return (
+    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
+      <svg
+        aria-hidden="true"
+        width="44"
+        height="44"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#4A515C"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 7 4.5 4.5 0 0 1 18 18z" />
+        <path d="M12 11v6M9.5 13.5 12 11l2.5 2.5" />
+      </svg>
+      <p className="m-0 font-semibold">No backups yet</p>
+      <p className="m-0 text-[13px] leading-normal text-muted">
+        Run the first one now or set up a daily schedule.
+      </p>
+      <BackUpAllButton all={all} />
     </div>
   )
 }
@@ -176,7 +289,8 @@ function ActiveCard({ backup: b }: { backup: Backup }) {
           </span>
         </h2>
         <span className="text-[12.5px] text-muted">
-          Triggered by {b.startedBy || 'someone'} · {formatClock(b.createdAt)}
+          Triggered by {b.startedBy === 'schedule' ? 'Schedule' : b.startedBy || 'someone'} ·{' '}
+          {formatClock(b.createdAt)}
         </span>
         {!running && <span className="text-[12.5px] text-muted">{waitingLine(b)}</span>}
       </div>

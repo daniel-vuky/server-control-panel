@@ -1,5 +1,6 @@
 import { CloudUpload, RotateCw } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { downloadUrl, listProjectBackups } from '../../api/backups'
 import type { Backup, BackupHistory as Page, Project } from '../../api/types.gen'
 import { useLive } from '../../app/live'
@@ -10,9 +11,9 @@ import { formatWhen } from '../../lib/time'
 import type { BackupFlow } from '../../lib/useBackup'
 import BackUpButton from './BackUpButton'
 
-const HEAD = 'px-3 py-2.5 font-normal first:pl-4 last:pr-4'
+export const HEAD = 'px-3 py-2.5 font-normal first:pl-4 last:pr-4'
 const CELL = 'px-3 py-2.5 align-middle first:pl-4 last:pr-4'
-const ROW_BUTTON =
+export const ROW_BUTTON =
   'h-7 cursor-pointer rounded-md border border-border-strong bg-transparent px-2.5 font-sans text-[12.5px] text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 const LINK =
   'font-sans text-[13px] text-accent no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
@@ -38,7 +39,11 @@ const byNewest = (a: Backup, b: Backup) => b.id - a.id
  * older than the page are kept (with their `more`), so a re-read never drops
  * the older pages the Operator opened.
  */
-function mergeNewest(rows: Backup[], more: boolean, page: Page): { rows: Backup[]; more: boolean } {
+export function mergeNewest(
+  rows: Backup[],
+  more: boolean,
+  page: Pick<Page, 'backups' | 'more'>,
+): { rows: Backup[]; more: boolean } {
   const last = page.backups.at(-1)
   if (last === undefined) return { rows: [], more: false }
   const tail = rows.filter((b) => b.id < last.id)
@@ -252,7 +257,7 @@ export default function BackupHistory({ project, flow, history: h }: Props & { h
               </thead>
               <tbody className="font-mono text-[13px] tabular-nums">
                 {h.rows.map((b) => (
-                  <Row
+                  <BackupRow
                     key={b.id}
                     backup={b}
                     several={several}
@@ -291,6 +296,8 @@ export default function BackupHistory({ project, flow, history: h }: Props & { h
 type RowProps = {
   backup: Backup
   several: boolean
+  /** Show the Project column (the Backups page lists every project's backups). */
+  withProject?: boolean
   flow: BackupFlow
   /** The database's number of copies to keep now, for a removed copy's words; null when unknown. */
   keep: number | null
@@ -299,13 +306,24 @@ type RowProps = {
 /** triggeredBy is who started a backup: the person's email, or Schedule. */
 const triggeredBy = (b: Backup) => (b.startedBy === 'schedule' ? 'Schedule' : b.startedBy || '—')
 
-function Row({ backup: b, several, flow, keep }: RowProps) {
+/** BackupRow is one backup of a history table; the Backups page shares it. */
+export function BackupRow({ backup: b, several, withProject = false, flow, keep }: RowProps) {
   const [text, dot] = TONE[b.state] ?? TONE.queued
   const retrying = flow.retryingId === b.id
   const removed = b.prunedAt !== null && b.prunedAt !== undefined && b.prunedAt !== ''
   return (
     <tr data-id={b.id} className="border-b border-[#1a1e24] last:border-b-0">
       <td className={CELL}>{formatWhen(b.createdAt)}</td>
+      {withProject && (
+        <td className={`${CELL} break-all`}>
+          <Link
+            to={`/projects/${b.projectId}/database`}
+            className="text-white no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {b.projectName}
+          </Link>
+        </td>
+      )}
       {several && <td className={`${CELL} break-all text-text-2`}>{b.database.name}</td>}
       <td className={`${CELL} whitespace-nowrap`}>
         {b.state === 'ok' && b.sizeBytes > 0 ? formatBytes(b.sizeBytes) : '—'}
