@@ -379,6 +379,8 @@ describe('rescan page, failure', () => {
     const title = screen.getByRole('heading', { level: 1, name: 'Rescan' })
     expect(title.parentElement).not.toHaveClass('border')
     expect(title.parentElement).not.toHaveClass('bg-surface')
+    // The same size as the results step's h1.
+    expect(title).toHaveClass('text-xl')
   })
 
   it('Retry rescans everything when the job covered several workspaces', async () => {

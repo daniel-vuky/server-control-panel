@@ -14,18 +14,23 @@ export default function EmptyState({
   children,
   action,
   titleAs: Title = 'h2',
+  titleId,
 }: {
   icon: IconType
-  title: string
+  title: ReactNode
   children?: ReactNode
   action?: ReactNode
   /** The heading level of the title; a page that has no other h1 passes 'h1'. */
   titleAs?: 'h1' | 'h2'
+  /** An id for the title, for a section that names itself by it. */
+  titleId?: string
 }) {
   return (
     <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
       <Icon size={44} strokeWidth={1.4} className="text-icon-muted" />
-      <Title className="m-0 text-sm font-semibold">{title}</Title>
+      <Title id={titleId} className="m-0 text-sm font-semibold">
+        {title}
+      </Title>
       {children ? <p className="m-0 text-[13px] leading-normal text-muted">{children}</p> : null}
       {action}
     </div>

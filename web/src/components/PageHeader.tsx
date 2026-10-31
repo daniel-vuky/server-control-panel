@@ -37,7 +37,7 @@ export function BrandRow({ label, children }: { label: string; children?: ReactN
   return (
     <header className="flex w-full max-w-[980px] flex-wrap items-center justify-between gap-4">
       <p className="m-0 flex items-baseline gap-2">
-        <span className="font-semibold text-text-2">Server Control Panel</span>
+        <span className="font-semibold text-text-2">Server Control Panel</span>{' '}
         <span className="text-[12.5px] text-muted">· {label}</span>
       </p>
       <div className="flex flex-wrap items-center gap-4">

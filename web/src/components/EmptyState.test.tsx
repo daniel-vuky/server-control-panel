@@ -27,6 +27,23 @@ describe('EmptyState', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeTruthy()
   })
 
+  it('takes a node as the title and an id for it', () => {
+    render(
+      <EmptyState
+        icon={Search}
+        titleId="t"
+        title={
+          <>
+            No project in <span className="font-mono">/srv</span>.
+          </>
+        }
+      />,
+    )
+    const title = screen.getByRole('heading', { level: 2, name: 'No project in /srv.' })
+    expect(title).toHaveAttribute('id', 't')
+    expect(screen.getByText('/srv')).toHaveClass('font-mono')
+  })
+
   it('works without a line or an action', () => {
     render(<EmptyState icon={Search} title="Nothing here" />)
     expect(screen.getByRole('heading', { level: 2, name: 'Nothing here' })).toBeTruthy()

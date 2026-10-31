@@ -5,6 +5,7 @@ import type { Project, ProjectPoint, ProjectSeries, TimeZone } from '../../api/t
 import LoadError from '../../components/LoadError'
 import MetricChart from '../../components/MetricChart'
 import RangeSwitch from '../../components/RangeSwitch'
+import { SkeletonCard } from '../../components/Skeleton'
 import { formatBytes, formatCpu, formatMem, formatRate } from '../../lib/format'
 import { isRangeKey, type RangeKey, useRangeParam } from '../../lib/range'
 import { useRead } from '../../lib/useRead'
@@ -126,7 +127,6 @@ function Charts({ series, range, zone, cpu, mem }: ChartsProps) {
         <MetricChart
           title="Network"
           current={formatRate(sum(latest?.netIn ?? null, latest?.netOut ?? null))}
-          sub="in + out"
           series={[
             { name: 'In', values: values((p) => p.netIn), color: BLUE },
             { name: 'Out', values: values((p) => p.netOut), color: ORANGE, dashed: true },
@@ -155,9 +155,7 @@ function ChartsLoading() {
     <div aria-busy="true" className={GRID}>
       <span className="sr-only">Loading the charts…</span>
       {[0, 1, 2].map((i) => (
-        <div key={i} className="h-[210px] rounded-[10px] border border-border bg-surface p-4">
-          <div className="h-3 w-1/4 rounded bg-border motion-safe:animate-pulse" />
-        </div>
+        <SkeletonCard key={i} minHeight="min-h-[220px]" />
       ))}
     </div>
   )

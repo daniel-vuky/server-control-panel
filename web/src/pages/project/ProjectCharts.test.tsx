@@ -100,6 +100,15 @@ describe('project resource charts', () => {
     )
   })
 
+  it('holds three compact chart cards while the period is read', async () => {
+    serve(() => new Response(new ReadableStream()))
+    renderProject('/projects/1')
+    pushState([live])
+    const cards = await within(region()).findAllByLabelText('Loading')
+    expect(cards).toHaveLength(3)
+    for (const c of cards) expect(c).toHaveClass('min-h-[220px]')
+  })
+
   it('sits above the Containers card', async () => {
     serve()
     renderProject('/projects/1')
@@ -156,7 +165,8 @@ describe('project resource charts', () => {
     await screen.findByRole('img', { name: 'Network chart, In and Out, last 1 hour' })
     const net = chart('Network')
     expect(net).toHaveTextContent('1.8 MB/s')
-    expect(within(net).getByText('in + out')).toBeInTheDocument()
+    // Design 02's card has a label only; the in/out key is in the footer.
+    expect(within(net).queryByText('in + out')).toBeNull()
     expect(net.querySelector('polyline[data-series="In"]')).not.toHaveAttribute('stroke-dasharray')
     expect(net.querySelector('polyline[data-series="Out"]')).toHaveAttribute(
       'stroke-dasharray',

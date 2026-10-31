@@ -21,7 +21,7 @@ function notShown(r: ScanResult): string {
 const foldersScanned = (r: ScanResult) => `${plural(r.foldersScanned, 'folder', 'folders')} scanned`
 
 /** Warnings is the scan's warnings, in the warning colour. */
-export function Warnings({ result }: { result: ScanResult }) {
+function Warnings({ result }: { result: ScanResult }) {
   if (result.warnings.length === 0) return null
   return (
     <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12.5px] text-warning-text">
@@ -273,11 +273,17 @@ export function NothingFound({
 }) {
   const hidden = notShown(job.result)
   return (
-    <div className="w-full max-w-[640px]">
+    <section aria-labelledby="nothing-found-title" className="w-full max-w-[640px]">
       <EmptyState
         icon={Search}
         titleAs="h1"
-        title={`No compose project found in ${job.path} at depth ${job.depth}.`}
+        titleId="nothing-found-title"
+        title={
+          <>
+            No compose project found in <span className="font-mono">{job.path}</span> at depth{' '}
+            {job.depth}.
+          </>
+        }
         action={
           <>
             <Warnings result={job.result} />
@@ -295,6 +301,6 @@ export function NothingFound({
         {foldersScanned(job.result)}
         {hidden && ` · ${hidden}`}
       </EmptyState>
-    </div>
+    </section>
   )
 }

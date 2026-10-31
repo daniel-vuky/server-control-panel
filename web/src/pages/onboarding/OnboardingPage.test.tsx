@@ -194,7 +194,7 @@ describe('onboarding, step 1', () => {
     ).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Add a workspace' })).toBeNull()
     expect(screen.getByText('· Add a workspace').parentElement).toHaveTextContent(
-      'Server Control Panel· Add a workspace',
+      'Server Control Panel · Add a workspace',
     )
     const steps = screen.getByRole('list', { name: 'Setup steps' })
     expect(within(steps).getByText('Workspace')).toBeInTheDocument()
@@ -534,6 +534,8 @@ describe('onboarding, nothing found', () => {
     await scanToEnd(empty(1))
     const title = await screen.findByRole('heading', { level: 1, name: /^No compose project/ })
     expect(title.parentElement).toHaveClass('border-dashed')
+    expect(within(title).getByText('/srv')).toHaveClass('font-mono')
+    expect(screen.getByRole('region', { name: /^No compose project/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Scan again at depth 2' })).toHaveClass(
       'bg-surface-2',
     )

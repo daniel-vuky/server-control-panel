@@ -2,17 +2,12 @@ import { Link } from 'react-router'
 import MonitorOnlyTag from '../../components/MonitorOnlyTag'
 import StatusBadge from '../../components/StatusBadge'
 import { formatCpu, formatMem } from '../../lib/format'
-import Meter from './Meter'
 import {
-  CPU_COLOR,
-  cpuFraction,
   Domain,
   ItemMenu,
   ItemSwitch,
   LastBackupLine,
   type ProjectItem,
-  RAM_COLOR,
-  ramFraction,
   uptimeOrIssue,
 } from './ProjectCard'
 import { stackNote } from './stack'
@@ -21,7 +16,8 @@ const HEAD = 'px-3 py-2.5 font-normal'
 
 /**
  * ProjectRows is the Dashboard's table view (D24): the same projects, words
- * and controls as the cards, one row each. The number columns have set
+ * and controls as the cards, one row each; CPU and RAM show the value only,
+ * as design 01's table. The number columns have set
  * widths (table-layout fixed), so live values never move the columns.
  */
 export default function ProjectRows({ items }: { items: ProjectItem[] }) {
@@ -95,22 +91,10 @@ function Row({ item }: { item: ProjectItem }) {
         <Domain project={p} />
       </td>
       <td className="px-3 py-2.5">
-        <Meter
-          label={formatCpu(p.cpuPercent)}
-          fraction={cpuFraction(p)}
-          color={CPU_COLOR}
-          testId="cpu-bar"
-          className="text-[13px]"
-        />
+        <span className="font-mono text-[13px] tabular-nums">{formatCpu(p.cpuPercent)}</span>
       </td>
       <td className="px-3 py-2.5">
-        <Meter
-          label={formatMem(p.memBytes)}
-          fraction={ramFraction(p)}
-          color={RAM_COLOR}
-          testId="ram-bar"
-          className="text-[13px]"
-        />
+        <span className="font-mono text-[13px] tabular-nums">{formatMem(p.memBytes)}</span>
       </td>
       <td className="px-3 py-2.5">
         {third.label === 'Issue' ? (

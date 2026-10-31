@@ -19,4 +19,16 @@ describe('SkeletonCard', () => {
     expect(card.getAttribute('aria-busy')).toBe('true')
     expect(card.querySelectorAll('.animate-scp-pulse').length).toBe(4)
   })
+
+  it('takes its min-height from the caller', () => {
+    render(<SkeletonCard minHeight="min-h-[274px]" />)
+    const card = screen.getByLabelText('Loading')
+    expect(card).toHaveClass('min-h-[274px]')
+    expect(card).not.toHaveClass('min-h-[220px]')
+  })
+
+  it('is 220 px high by default', () => {
+    render(<SkeletonCard />)
+    expect(screen.getByLabelText('Loading')).toHaveClass('min-h-[220px]')
+  })
 })

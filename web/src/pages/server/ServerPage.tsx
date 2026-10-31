@@ -128,7 +128,7 @@ function ChartsLoading() {
       className="grid grid-cols-[repeat(auto-fit,minmax(min(460px,100%),1fr))] gap-3.5"
     >
       {[0, 1, 2, 3].map((i) => (
-        <SkeletonCard key={i} />
+        <SkeletonCard key={i} minHeight="min-h-[274px]" />
       ))}
     </section>
   )
