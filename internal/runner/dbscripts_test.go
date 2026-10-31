@@ -235,6 +235,14 @@ if [ -n "${PGPASSFILE:-}" ]; then
 	cat "$PGPASSFILE" >>"$o/$n.file"
 fi
 if [ "$n" = mysqldump ] && [ "${1:-}" = --version ]; then
+	if [ -n "${FAKE_VERSION_SLOW:-}" ]; then
+		echo "$$" >"$o/version.pid"
+		i=0
+		while [ "$i" -lt 600 ]; do
+			sleep 0.1
+			i=$((i + 1))
+		done
+	fi
 	echo "${FAKE_DUMP_VERSION:-mysqldump  Ver 9.7.4 for Linux}"
 fi
 for a in "$@"; do
@@ -555,8 +563,18 @@ func TestDumpScriptsRecordTheirDumper(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(dumpGuard, `t=$(mktemp /tmp/.scp-dump.XXXXXX) && printf '%s %s\n' "$$" "${k:-}" >"$t" && mv -f "$t" /tmp/.scp-dump.pid && t= && o=1`) {
-		t.Fatal("the pid file is not written through a private mktemp file renamed into place")
+	claim := "scp_claim() {\n" +
+		"\tt=$(mktemp /tmp/.scp-dump.XXXXXX) || return 0\n" +
+		"\tif printf '%s %s\\n' \"$$\" \"${k:-}\" >\"$t\" && mv -fT \"$t\" /tmp/.scp-dump.pid 2>/dev/null; then\n" +
+		"\t\tt=\n\t\to=1\n" +
+		"\telse\n\t\trm -f \"$t\"\n\t\tt=\n\tfi\n}\n"
+	if !strings.Contains(dumpGuard, claim) {
+		t.Fatal("the pid file is not written through a private mktemp file renamed into place with mv -T")
+	}
+	for _, l := range scriptLines(dumpGuard, "mv ") {
+		if !strings.Contains(l, "mv -fT ") {
+			t.Errorf("a rename without -T, which would move into a directory: %q", l)
+		}
 	}
 }
 
@@ -581,9 +599,23 @@ func TestDumpStopScriptShape(t *testing.T) {
 		}
 	}
 	for _, l := range scriptLines(s, "kill ") {
-		if !regexp.MustCompile(`kill -s (TERM|CONT|KILL) "\$[sk]"`).MatchString(l) {
+		if !regexp.MustCompile(`kill -s (TERM|CONT|KILL) "\$[sk]"|kill -s TERM "\$c"`).MatchString(l) {
 			t.Errorf("unexpected kill: %q", l)
 		}
+	}
+	// A child gets TERM only when it is all digits, not the stop's own shell,
+	// readable in /proc and a child of the verified dump shell s.
+	children := "\t\tcase $c in\n\t\t'' | *[!0-9]*) continue ;;\n\t\tesac\n" +
+		"\t\t[ \"$c\" != \"$$\" ] || continue\n" +
+		"\t\tp=$(cat 2>/dev/null \"/proc/$c/stat\") || continue\n" +
+		"\t\tp=${p##*) }\n\t\tp=${p#* }\n" +
+		"\t\t[ \"${p%% *}\" = \"$s\" ] || continue\n" +
+		"\t\tkill -s TERM \"$c\" 2>/dev/null\n"
+	if !strings.Contains(s, children) {
+		t.Error("the TERM to the dump shell's children is not guarded")
+	}
+	if !strings.Contains(s, "\tif ! scp_wait 10 \"$s\"; then\n\t\tscp_children\n\t\tscp_wait 10 \"$s\" || kill -s KILL \"$s\" 2>/dev/null\n") {
+		t.Error("the children are not ended before the dump shell is KILLed")
 	}
 	if !strings.Contains(dumpLive, "pg_dump | mysqldump | mariadb-dump | mongodump)") {
 		t.Fatal("the liveness check does not name the dumpers")
@@ -797,26 +829,155 @@ func TestDumpPidFileStaleOrReused(t *testing.T) {
 }
 
 // The pid file is replaced, never written through: a symlink planted at its
-// path does not redirect the write, and is not followed by the stop.
+// path does not redirect the write, and is not followed by the stop. A link to
+// a directory does not make the claim put a file into that directory: GNU
+// mv -T replaces the link, BusyBox mv -T refuses it and the dump runs
+// unrecorded.
 func TestDumpPidFileSymlinkNotFollowed(t *testing.T) {
 	requireProc(t)
+	t.Run("file", func(t *testing.T) {
+		cleanPidFile(t)
+		target := filepath.Join(t.TempDir(), "victim")
+		if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, dumpPidFile); err != nil {
+			t.Fatal(err)
+		}
+		if code, _ := runStop(t); code != 0 {
+			t.Fatalf("stop over a symlink: exit %d", code)
+		}
+		r := runScript(t, pgDumpScript, []string{"psql", "pg_dump"}, nil, "shop")
+		if r.code != 0 || r.stdout != "pg_dump output\n" {
+			t.Errorf("dump: exit %d, stdout %q", r.code, r.stdout)
+		}
+		if b, err := os.ReadFile(target); err != nil || string(b) != "keep\n" { //nolint:gosec // G304: the test's own file
+			t.Errorf("the symlink's target = %q, %v; it was written through", b, err)
+		}
+		noClaimLeft(t)
+	})
+	t.Run("directory", func(t *testing.T) {
+		cleanPidFile(t)
+		target := t.TempDir()
+		if err := os.Symlink(target, dumpPidFile); err != nil {
+			t.Fatal(err)
+		}
+		if code, _ := runStop(t); code != 0 {
+			t.Fatalf("stop over a symlink: exit %d", code)
+		}
+		d := newScriptDirs(t, []string{"psql", "pg_dump"})
+		cmd, stdout, stderr := d.start(t, pgDumpScript, nil, "shop")
+		r := d.finish(t, cmd, stdout, stderr)
+		if r.code != 0 || r.stdout != "pg_dump output\n" || r.stderr != "" {
+			t.Errorf("dump: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+		}
+		if left, err := os.ReadDir(target); err != nil || len(left) != 0 {
+			t.Errorf("the claim wrote into the linked directory: %v, %v", left, err)
+		}
+		// Replaced (and removed at exit), or refused and left as it was.
+		if fi, err := os.Lstat(dumpPidFile); err == nil {
+			if to, _ := os.Readlink(dumpPidFile); fi.Mode()&os.ModeSymlink == 0 || to != target {
+				t.Errorf("the pid file path is now %v -> %q", fi.Mode(), to)
+			}
+		}
+		noClaimLeft(t)
+	})
+}
+
+// A claim that cannot be made (an mv without -T, or a destination it refuses)
+// is abandoned: its temp file is removed, nothing is recorded, and the dump
+// runs as usual, with nothing added to its stderr.
+func TestDumpClaimFailureRunsUnrecorded(t *testing.T) {
+	requireProc(t)
 	cleanPidFile(t)
-	target := filepath.Join(t.TempDir(), "victim")
-	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+	d := newScriptDirs(t, []string{"psql", "pg_dump"})
+	failMv := "#!/bin/sh\necho 'mv: unrecognized option: T' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(d.bin, "mv"), []byte(failMv), 0o700); err != nil { //nolint:gosec // G306: the fake must be executable
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, dumpPidFile); err != nil {
+	cmd, stdout, stderr := d.start(t, pgDumpScript, nil, "shop")
+	r := d.finish(t, cmd, stdout, stderr)
+	if r.code != 0 || r.stdout != "pg_dump output\n" || r.stderr != "" {
+		t.Errorf("dump: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	if _, err := os.Lstat(dumpPidFile); err == nil {
+		t.Error("a pid file was recorded though every claim failed")
+	}
+	noClaimLeft(t)
+}
+
+// noClaimLeft fails when a claim's temp file (/tmp/.scp-dump.XXXXXX) is left.
+func noClaimLeft(t *testing.T) {
+	t.Helper()
+	left, err := filepath.Glob("/tmp/.scp-dump.*")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if code, _ := runStop(t); code != 0 {
-		t.Fatalf("stop over a symlink: exit %d", code)
+	for _, p := range left {
+		if p != dumpPidFile {
+			t.Errorf("claim temp file left: %s", p)
+			_ = os.Remove(p)
+		}
 	}
-	r := runScript(t, pgDumpScript, []string{"psql", "pg_dump"}, nil, "shop")
-	if r.code != 0 || r.stdout != "pg_dump output\n" {
-		t.Errorf("dump: exit %d, stdout %q", r.code, r.stdout)
+}
+
+// A dump shell held in a foreground command (here mysqldump --version, after
+// the credentials file exists) cannot run its trap while that command runs.
+// The stop ends that child too, so the shell exits by itself and removes its
+// credentials file and the pid file, instead of being KILLed and leaving them.
+func TestDumpStopEndsTheShellsForegroundChild(t *testing.T) {
+	requireProc(t)
+	if testing.Short() {
+		t.Skip("waits out the TERM grace")
 	}
-	if b, err := os.ReadFile(target); err != nil || string(b) != "keep\n" { //nolint:gosec // G304: the test's own file
-		t.Errorf("the symlink's target = %q, %v; it was written through", b, err)
+	cleanPidFile(t)
+	d := newScriptDirs(t, []string{"mysqldump"})
+	cmd := d.command(mysqlDumpScript, []string{"FAKE_VERSION_SLOW=1", "MYSQL_ROOT_PASSWORD=" + hostilePassword}, "shop")
+	// Files, not pipes: Wait returns when the shell exits, not when the last
+	// holder of its stderr does.
+	out, err := os.Create(filepath.Join(t.TempDir(), "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = out.Close() }()
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	var child int
+	deadline := time.Now().Add(5 * time.Second)
+	for child == 0 {
+		b, _ := os.ReadFile(filepath.Join(d.out, "version.pid")) //nolint:gosec // G304: a file the fake wrote in the test's temp dir
+		child, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		if time.Now().After(deadline) {
+			t.Fatal("mysqldump --version did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+	if s, _ := pidFile(t); s != strconv.Itoa(cmd.Process.Pid) {
+		t.Fatalf("the pid file names shell %q, want %d", s, cmd.Process.Pid)
+	}
+	if left, _ := os.ReadDir(d.tmp); len(left) != 1 {
+		t.Fatalf("credentials files %v, want one", left)
+	}
+
+	if code, msg := runStop(t); code != 0 || msg != "" {
+		t.Fatalf("stop: exit %d, stderr %q", code, msg)
+	}
+	var ee *exec.ExitError
+	if err := cmd.Wait(); !errors.As(err, &ee) || ee.ExitCode() != 1 {
+		t.Errorf("exit = %v, want 1 (the shell's own trap, not KILL)", err)
+	}
+	if left, _ := os.ReadDir(d.tmp); len(left) != 0 {
+		t.Errorf("credentials file left: %v", left)
+	}
+	if _, err := os.Lstat(dumpPidFile); err == nil {
+		t.Error("the pid file is left")
+	}
+	if procAlive(strconv.Itoa(child)) {
+		t.Error("the shell's foreground child still runs")
 	}
 }
 

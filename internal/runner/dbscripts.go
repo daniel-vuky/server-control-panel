@@ -83,11 +83,22 @@ trap '[ -z "${k:-}" ] || { kill -s TERM "$k"; kill -s CONT "$k"; wait "$k"; } 2>
 // a live dump (only one backup runs panel-wide, so another one is an orphan
 // still finishing). Otherwise it takes the pid file, a stale one included,
 // with this shell's pid. scp_claim writes "<shell> <dumper>" to a fresh
-// mktemp file (0600) and renames it over the path: a rename replaces whatever
-// is there, a planted symlink too, and never writes through it. A failed
-// write leaves the dump running, only unrecorded.
+// mktemp file (0600) and renames it over the path with mv -T, which never
+// treats the path as a directory: a planted symlink is replaced (coreutils)
+// or, when it leads to a directory, refused (BusyBox); it is never written
+// through, and nothing goes into a directory. A claim that fails (an mv
+// without -T fails too) removes its temp file and leaves the dump running,
+// only unrecorded; mv's message is dropped, so the dump's stderr stays the
+// dumper's.
 const dumpGuard = dumpLive + `scp_claim() {
-	t=$(mktemp /tmp/.scp-dump.XXXXXX) && printf '%s %s\n' "$$" "${k:-}" >"$t" && mv -f "$t" /tmp/.scp-dump.pid && t= && o=1
+	t=$(mktemp /tmp/.scp-dump.XXXXXX) || return 0
+	if printf '%s %s\n' "$$" "${k:-}" >"$t" && mv -fT "$t" /tmp/.scp-dump.pid 2>/dev/null; then
+		t=
+		o=1
+	else
+		rm -f "$t"
+		t=
+	fi
 }
 s=
 r=
@@ -258,13 +269,16 @@ U=$u P=$pw N="$1" mongosh --quiet --norc --nodb --eval '` + mongoJS + `'
 // argument and reads only the pid file and /proc; scp_live guards every
 // signal, so a stale or reused pid is left alone. The dumper gets TERM (and
 // CONT) and up to 5 s, then KILL; its shell, which then exits by itself and
-// runs its cleanup trap, gets 2 s, then TERM and 2 s, then KILL. A shell still
-// before its dumper (the PostgreSQL probe) is sent TERM at once. When nothing
-// is left it removes the pid file; when something is, it says so and exits 1,
-// keeping the file so that the next dump is refused. At most about 10 s, inside
-// the read timeout.
+// runs its cleanup trap, gets 2 s, then TERM and 2 s. A shell still before its
+// dumper (the PostgreSQL probe, the MySQL version read) is sent TERM at once.
+// A shell runs its trap only once its foreground command ends, so a shell
+// still there after its 2 s has each of its children (by the parent pid in
+// /proc/<pid>/stat) sent TERM and gets 2 s more; only then is it KILLed, which
+// leaves its credentials file. When nothing is left it removes the pid file;
+// when something is, it says so and exits 1, keeping the file so that the next
+// dump is refused. At most about 12 s, inside the read timeout.
 const dumpStopScript = `umask 077
-unset s k q n i
+unset s k q n i c p
 ` + dumpLive + `scp_wait() {
 	i="$1"
 	shift
@@ -274,6 +288,20 @@ unset s k q n i
 		sleep 0.2
 	done
 	return 0
+}
+scp_children() {
+	for c in /proc/[0-9]*; do
+		c=${c#/proc/}
+		case $c in
+		'' | *[!0-9]*) continue ;;
+		esac
+		[ "$c" != "$$" ] || continue
+		p=$(cat 2>/dev/null "/proc/$c/stat") || continue
+		p=${p##*) }
+		p=${p#* }
+		[ "${p%% *}" = "$s" ] || continue
+		kill -s TERM "$c" 2>/dev/null
+	done
 }
 [ -f /tmp/.scp-dump.pid ] && [ ! -L /tmp/.scp-dump.pid ] || exit 0
 s=
@@ -288,7 +316,10 @@ fi
 if scp_live "$s"; then
 	kill -s TERM "$s" 2>/dev/null
 	kill -s CONT "$s" 2>/dev/null
-	scp_wait 10 "$s" || kill -s KILL "$s" 2>/dev/null
+	if ! scp_wait 10 "$s"; then
+		scp_children
+		scp_wait 10 "$s" || kill -s KILL "$s" 2>/dev/null
+	fi
 fi
 if scp_wait 5 "$s" "$k"; then
 	rm -f /tmp/.scp-dump.pid
