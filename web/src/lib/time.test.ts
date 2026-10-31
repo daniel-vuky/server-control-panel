@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { folderMissing, formatClock, formatLastScan, formatWhen } from './time'
+import { folderMissing, formatClock, formatLastScan, formatRecent, formatWhen } from './time'
 
 describe('formatLastScan', () => {
   const now = new Date(2026, 9, 29, 15, 0) // 29 Oct 2026, local time
@@ -63,5 +63,21 @@ describe('formatClock', () => {
   it('shows a dash for an empty or invalid time', () => {
     expect(formatClock('')).toBe('—')
     expect(formatClock('nope')).toBe('—')
+  })
+})
+
+describe('formatRecent', () => {
+  const now = new Date(2026, 9, 31, 15, 0)
+
+  it('says "HH:MM today" and "Yesterday HH:MM", else as formatWhen', () => {
+    expect(formatRecent(new Date(2026, 9, 31, 2, 0).toISOString(), now)).toBe('02:00 today')
+    expect(formatRecent(new Date(2026, 9, 30, 23, 5).toISOString(), now)).toBe('Yesterday 23:05')
+    expect(formatRecent(new Date(2026, 9, 28, 2, 0).toISOString(), now)).toBe('Oct 28 02:00')
+    expect(formatRecent(new Date(2025, 11, 3, 18, 30).toISOString(), now)).toBe('Dec 3 2025 18:30')
+  })
+
+  it('shows a dash for an empty or invalid time', () => {
+    expect(formatRecent('', now)).toBe('—')
+    expect(formatRecent('nope', now)).toBe('—')
   })
 })
