@@ -12,7 +12,7 @@ import { useVisibleInterval } from '../../lib/useVisibleInterval'
 
 const BLUE = '#5AA7FF'
 const ORANGE = '#F0913A'
-const HEIGHT = 120
+const HEIGHT = 130
 /** REFRESH_MS is how often a visible page re-reads (spec decision 24): a sample is taken every 30 s. */
 const REFRESH_MS = 30_000
 
@@ -67,7 +67,7 @@ export default function ProjectCharts({ project }: { project: Project }) {
   }
 
   return (
-    <section aria-labelledby="app-resources" className="flex flex-col gap-3.5">
+    <section aria-labelledby="app-resources" className="flex flex-col gap-[18px]">
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <h2 id="app-resources" className="m-0 text-[15px] font-semibold">
           App resources
@@ -96,6 +96,7 @@ function Charts({ series, range, zone, cpu, mem }: ChartsProps) {
     from: series.from,
     zone,
     height: HEIGHT,
+    variant: 'compact' as const,
   }
 
   return (

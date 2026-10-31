@@ -96,7 +96,7 @@ describe('project resource charts', () => {
     // Smaller than the Server page's charts (design 02).
     expect(screen.getByRole('img', { name: 'CPU chart, last 1 hour' })).toHaveAttribute(
       'viewBox',
-      '0 0 600 120',
+      '0 0 600 130',
     )
   })
 

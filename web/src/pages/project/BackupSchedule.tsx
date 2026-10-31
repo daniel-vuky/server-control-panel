@@ -55,16 +55,16 @@ const OFFSET = /([+-]\d{2}:\d{2})$/
 const offsetOf = (iso: string) => OFFSET.exec(iso)?.[1] ?? '+00:00'
 
 /**
- * nextRunText is "Next run: Sun Nov 1, 02:00 (Asia/Ho_Chi_Minh, UTC+07:00)":
- * the run read in the server zone, never the browser's, with the zone's
- * offset at that run. Until the zone's name is known it reads the offset the
- * server wrote into the time.
+ * nextRunText is "Sun Nov 1, 02:00 (Asia/Ho_Chi_Minh, UTC+07:00)", the time
+ * after "Next run: ": the run read in the server zone, never the browser's,
+ * with the zone's offset at that run. Until the zone's name is known it reads
+ * the offset the server wrote into the time.
  */
 function nextRunText(iso: string, zone: TimeZone | null): string {
   const offset = offsetOf(iso)
   const when = formatInZone(iso, zone ?? { name: '', offset })
   const label = zone ? zoneLabel({ name: zone.name, offset }) : `UTC${offset}`
-  return `Next run: ${when} (${label})`
+  return `${when} (${label})`
 }
 
 type Props = {
@@ -276,7 +276,10 @@ function ScheduleCard({
               {saved.draft.frequency === 'off' ? (
                 'No scheduled backups. Back up now still works.'
               ) : saved.next !== null ? (
-                <span className="font-mono text-text-2">{nextRunText(saved.next, zone)}</span>
+                <>
+                  Next run:{' '}
+                  <span className="font-mono text-text-2">{nextRunText(saved.next, zone)}</span>
+                </>
               ) : null}
             </span>
           </div>

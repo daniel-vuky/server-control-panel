@@ -104,7 +104,7 @@ export default function UsageTable({
         </div>
         <table className="w-full table-fixed border-collapse text-left">
           <colgroup>
-            <col className="w-[24%]" />
+            <col className="w-[16.5%]" />
             {COLUMNS.map((c) => (
               <col key={c.key} />
             ))}
@@ -113,7 +113,7 @@ export default function UsageTable({
             <tr className="border-b border-border">
               <th
                 scope="col"
-                className="px-4 py-1.5 text-xs font-normal tracking-wider text-muted uppercase"
+                className="py-1.5 pr-2 pl-4 text-xs font-normal tracking-wider text-muted uppercase"
               >
                 Project
               </th>
@@ -147,7 +147,7 @@ export default function UsageTable({
                 key={row.projectId ?? `self-${row.name}`}
                 className="border-b border-divider last:border-b-0"
               >
-                <th scope="row" className="px-4 py-3 font-normal">
+                <th scope="row" className="py-3 pr-2 pl-4 font-normal">
                   <AppName row={row} />
                 </th>
                 {COLUMNS.map((c) => (

@@ -484,6 +484,12 @@ describe('project logs', () => {
     const select = screen.getByRole('combobox', { name: 'Container' })
     expect(Array.from((select as HTMLSelectElement).options).map((o) => o.text)).toEqual([
       'All',
+      'shop-app-1',
+      'shop-db-1',
+    ])
+    // Each option's value stays the service.
+    expect(Array.from((select as HTMLSelectElement).options).map((o) => o.value)).toEqual([
+      '',
       'app',
       'db',
     ])

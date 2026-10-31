@@ -368,7 +368,7 @@ function Tabs({
       <div
         role="tablist"
         aria-label="Project detail sections"
-        className="-mt-1 flex gap-1 overflow-x-auto border-b border-border"
+        className="flex gap-1 overflow-x-auto border-b border-border"
       >
         {TABS.map((t, i) => {
           const selected = i === open

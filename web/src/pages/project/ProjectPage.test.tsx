@@ -268,6 +268,12 @@ describe('project page', () => {
     })
   })
 
+  it('puts the tabs 24px under the header, with no negative margin', () => {
+    renderProject('/projects/1')
+    pushState([shop])
+    expect(screen.getByRole('tablist').className).not.toMatch(/-mt-/)
+  })
+
   it('tabs are links with their own URLs and Overview first', () => {
     renderProject('/projects/1')
     pushState([shop])

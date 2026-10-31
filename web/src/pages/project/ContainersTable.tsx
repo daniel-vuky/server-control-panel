@@ -10,8 +10,8 @@ const ROW_TINT = {
   stopped: 'bg-[rgba(154,163,175,0.04)]',
 } as const
 
-const HEAD = 'px-3 py-2.5 font-normal first:pl-4 last:pr-4'
-const CELL = 'px-3 py-[11px] align-top first:pl-4 last:pr-4'
+const HEAD = 'px-1.5 py-2.5 font-normal first:pl-4 last:pr-4'
+const CELL = 'px-1.5 py-[11px] align-top first:pl-4 last:pr-4'
 /** The live columns (CPU, RAM, Restart) keep their width and align their digits to the right. */
 const NUMBER = 'text-right whitespace-nowrap'
 

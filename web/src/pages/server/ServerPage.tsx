@@ -5,6 +5,7 @@ import { LiveDim, useLive } from '../../app/live'
 import LoadError from '../../components/LoadError'
 import PageHeader from '../../components/PageHeader'
 import RangeSwitch from '../../components/RangeSwitch'
+import { SkeletonCard } from '../../components/Skeleton'
 import { formatBytes } from '../../lib/format'
 import { useRangeParam } from '../../lib/range'
 import { useRead } from '../../lib/useRead'
@@ -97,6 +98,7 @@ export default function ServerPage() {
           />
         )}
 
+        {usage.data === null && usage.error === '' && <SkeletonCard />}
         {usage.data && <UsageTable report={usage.data} dockerUp={live.dockerUp} />}
         {usage.error !== '' && (
           <LoadError
@@ -126,9 +128,7 @@ function ChartsLoading() {
       className="grid grid-cols-[repeat(auto-fit,minmax(min(460px,100%),1fr))] gap-3.5"
     >
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-[274px] rounded-[10px] border border-border bg-surface p-4">
-          <div className="h-3 w-1/4 rounded bg-border motion-safe:animate-pulse" />
-        </div>
+        <SkeletonCard key={i} />
       ))}
     </section>
   )

@@ -96,9 +96,17 @@ export default function ProjectLogs() {
   }
 
   const services = useMemo(() => {
-    const list = [...new Set(project.containers.map((c) => c.service).filter((s) => s !== ''))]
+    // One option per service, labelled with its first container's name (design 02).
+    const list: { service: string; label: string }[] = []
+    for (const c of project.containers) {
+      if (c.service !== '' && !list.some((o) => o.service === c.service)) {
+        list.push({ service: c.service, label: c.name || c.service })
+      }
+    }
     // A preselected service the project does not list stays shown until the server says so.
-    if (service !== '' && !list.includes(service)) list.push(service)
+    if (service !== '' && !list.some((o) => o.service === service)) {
+      list.push({ service, label: service })
+    }
     return list
   }, [project.containers, service])
 
@@ -117,9 +125,9 @@ export default function ProjectLogs() {
             className="max-w-[40vw] border-0 bg-transparent font-mono text-[13px] text-text outline-none"
           >
             <option value="">All</option>
-            {services.map((s) => (
-              <option key={s} value={s}>
-                {s}
+            {services.map((o) => (
+              <option key={o.service} value={o.service}>
+                {o.label}
               </option>
             ))}
           </select>

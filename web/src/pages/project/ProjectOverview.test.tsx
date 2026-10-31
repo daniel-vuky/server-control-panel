@@ -98,6 +98,8 @@ describe('project overview', () => {
     renderProject('/projects/1')
     pushState([broken])
     const card = screen.getByRole('region', { name: 'Containers' })
+    // Cells pad like the backup rows: 12px between columns, 16px at the card's edges.
+    expect(within(card).getAllByRole('cell')[1]).toHaveClass('px-1.5')
     expect(card).toHaveTextContent('docker compose · 1/4 running')
 
     const table = within(card).getByRole('table')
