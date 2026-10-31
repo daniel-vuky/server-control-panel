@@ -155,14 +155,14 @@ describe('BackupsTable rows', () => {
     expect(t).toHaveClass('table-fixed')
     const cols = t.querySelectorAll('colgroup > col')
     expect([...cols].map((c) => (c as HTMLElement).style.width)).toEqual([
-      '13%',
+      '14%',
       '11%',
       '13%',
-      '9%',
+      '10%',
       '8%',
       '18%',
       '12%',
-      '13%',
+      '14%',
     ])
     const [r10, r9] = bodyRows(t)
     const cell = r10.querySelector('td') as HTMLElement
@@ -180,6 +180,17 @@ describe('BackupsTable rows', () => {
     const dot = (r: HTMLElement) => r.querySelector('span[aria-hidden="true"]')
     expect(dot(r9)).toHaveClass('bg-danger-text')
     expect(dot(r10)).toHaveClass('bg-success')
+  })
+
+  it('lets a pruned row wrap inside the fixed File column', async () => {
+    serveBackups([ok(6, { prunedAt: '2026-10-28T02:01:00Z' })])
+    openBackups(connected, { projects })
+    const [row] = bodyRows(await table())
+    const removed = within(row).getByText('Removed (kept 14 newest)')
+    const file = removed.closest('td') as HTMLElement
+    expect(file).not.toHaveClass('whitespace-nowrap')
+    expect(removed.parentElement).toHaveClass('flex-wrap')
+    expect(removed.parentElement).not.toHaveClass('whitespace-nowrap')
   })
 
   it('shows a skeleton card while the first page loads', async () => {

@@ -46,10 +46,10 @@ describe('BackupSummaryCards', () => {
     const loading = container.querySelector('section[aria-busy="true"]') as HTMLElement
     const skeletonCards = [...loading.children] as HTMLElement[]
     expect(skeletonCards).toHaveLength(4)
+    for (const c of skeletonCards) expect(c).toHaveClass('min-h-[116px]')
     rerender(<BackupSummaryCards summary={summary()} zone={zone} error="" onRetry={() => {}} />)
-    for (const c of skeletonCards) expect(c).toHaveClass('min-h-[110px]')
     for (const name of ['Drive usage', 'Failed · 7 days', 'Next run']) {
-      expect(card(name)).toHaveClass('min-h-[110px]')
+      expect(card(name)).toHaveClass('min-h-[116px]')
       // The label, the value and one sub-line.
       expect(card(name).children).toHaveLength(3)
     }

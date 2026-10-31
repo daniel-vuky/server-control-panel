@@ -17,7 +17,7 @@ const CELL = 'px-1.5 py-2.5 align-middle first:pl-4 last:pr-4'
 export const ROW_BUTTON =
   'h-7 cursor-pointer rounded-md border border-border-strong bg-transparent px-2.5 font-sans text-[12.5px] text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 const LINK =
-  'font-sans text-[13px] text-text-2 underline hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+  'font-sans text-[13px] whitespace-nowrap text-text-2 underline hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 /** The colour of a status, from designs 02 and 04: text, then its dot. */
 const TONE: Record<string, [string, string]> = {
@@ -102,10 +102,12 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
         </button>
       </td>
       <td className={`${CELL} font-sans break-all text-text-2`}>{triggeredBy(b)}</td>
-      {/* w-px: the actions take their whole width; Time and Triggered by wrap instead. */}
-      <td className={`${CELL} w-px whitespace-nowrap`}>
+      {/* History (auto layout): w-px, so the actions take their whole width and Time and Triggered by wrap
+          instead. Backups page (table-fixed, a colgroup width): the actions wrap as units, and so does the
+          pruned row's "Removed (kept N newest)", rather than spill into the next column. */}
+      <td className={`${CELL} w-px ${withProject ? '' : 'whitespace-nowrap'}`}>
         <span
-          className={`flex items-center justify-end gap-3 whitespace-nowrap ${withProject ? 'flex-wrap gap-y-1' : ''}`}
+          className={`flex items-center justify-end gap-3 ${withProject ? 'flex-wrap gap-y-1' : 'whitespace-nowrap'}`}
         >
           {removed && (
             <span className="font-sans text-[13px] text-muted">

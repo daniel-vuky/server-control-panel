@@ -99,8 +99,9 @@ export default function BackupSummaryCards({ summary, zone, error, onRetry }: Pr
 }
 
 const GRID = 'grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-3'
-// min-h: a loaded card and its skeleton are the same height (label, value, one sub-line).
-const CARD = 'flex min-h-[110px] flex-col gap-2 rounded-[10px] border bg-surface p-4'
+// min-h: a loaded card and its skeleton are the same height. Loaded: 32 padding + 16 label + 32 value + 18.75
+// sub-line (12.5 px at the 1.5 line height) + 16 gaps = 114.75, the day-strip card 110; 116 holds both.
+const CARD = 'flex min-h-[116px] flex-col gap-2 rounded-[10px] border bg-surface p-4'
 const VALUE = 'font-mono text-2xl font-semibold tabular-nums'
 const SUB = 'text-[12.5px] text-muted'
 

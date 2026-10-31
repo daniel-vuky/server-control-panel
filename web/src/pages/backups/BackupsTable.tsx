@@ -272,8 +272,8 @@ type TableProps = {
   projects: Project[]
 }
 
-/** COLUMN_WIDTHS are design 04's column proportions (1.1, 0.9, 1.1, 0.8, 0.7, 1.5, 1, 1.1 fr) over this table's eight columns. */
-const COLUMN_WIDTHS = ['13%', '11%', '13%', '9%', '8%', '18%', '12%', '13%']
+/** COLUMN_WIDTHS are design 04's column proportions (1.1, 0.9, 1.1, 0.8, 0.7, 1.5, 1, 1.1 fr, rounded to sum 100) over this table's eight columns. */
+const COLUMN_WIDTHS = ['14%', '11%', '13%', '10%', '8%', '18%', '12%', '14%']
 
 /**
  * BackupsTable is design 04's table of every backup, newest first, 50 at a
