@@ -31,6 +31,9 @@ services:
       - node_modules:/src/web/node_modules
       - pnpm-store:/root/.local/share/pnpm/store
       - /var/run/docker.sock:/var/run/docker.sock
+      # The Docker Desktop VM's /proc and root, for server metrics (see deploy/compose.yaml).
+      - /proc:/host/proc:ro
+      - /:/host/root:ro
     environment:
       pnpm_config_store_dir: /root/.local/share/pnpm/store
       WORKSPACE_ROOTS: /src/dev/workspaces
