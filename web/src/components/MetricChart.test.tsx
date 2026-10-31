@@ -110,6 +110,25 @@ describe('MetricChart', () => {
     expect(screen.getByText('2.0 MB/s')).toBeInTheDocument()
   })
 
+  it('labels an idle chart 2, 1 and 0, never a repeated 1', () => {
+    chart({ current: '0.2%', series: [cpu([0, 0.3, 0.1])] })
+    expect(screen.getByText('2%')).toBeInTheDocument()
+    expect(screen.getByText('1%')).toBeInTheDocument()
+    expect(screen.getByText('0')).toBeInTheDocument()
+  })
+
+  it('labels an idle rate chart 2 B/s, 1 B/s and 0', () => {
+    chart({
+      title: 'Network',
+      current: '0 B/s',
+      series: [{ name: 'In', values: [0, 0], color: '#5AA7FF' }],
+      formatValue: formatRate,
+      bytes: true,
+    })
+    expect(screen.getByText('2 B/s')).toBeInTheDocument()
+    expect(screen.getByText('1 B/s')).toBeInTheDocument()
+  })
+
   it('rounds a percentage scale in tens, not in 1024s', () => {
     chart({ series: [cpu([400, 1100])] })
     expect(screen.getByText('2000%')).toBeInTheDocument()

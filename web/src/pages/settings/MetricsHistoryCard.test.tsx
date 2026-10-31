@@ -32,7 +32,7 @@ function renderCard() {
 }
 
 const card = () => screen.getByRole('region', { name: 'Metrics history' })
-const save = () => within(card()).getByRole('button', { name: 'Save' })
+const save = () => within(card()).getByRole('button', { name: 'Save changes' })
 const input = () => screen.getByLabelText('Keep metrics for') as HTMLInputElement
 
 beforeEach(() => {
@@ -42,7 +42,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Metrics history card', () => {
-  it('loads the days kept, with the unit and the sub-line; Save waits for a change', async () => {
+  it('loads the days kept, with the unit and the sub-line; Save changes waits for a change', async () => {
     route({ [`GET ${SETTINGS}`]: () => json(200, { retentionDays: 7 }) })
     renderCard()
     expect(card()).toHaveTextContent(

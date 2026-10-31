@@ -82,10 +82,11 @@ const NICE = [1, 2, 4, 5, 6, 8, 10]
  * value reaches (KB, MB, GB…, as formatBytes words them), so 3.1 MB tops out
  * at 4 MB, and a result of 1024 units or more is one of the next unit.
  * Without, it is decimal (CPU in Docker's % can pass 1,000 on a many-core
- * host). Anything at or below 1 (and a value that is not a number) is 1.
+ * host). Anything at or below 2 (and a value that is not a number) is 2, so
+ * an idle chart's labels read 2, 1 and 0 rather than repeating a rounded 1.
  */
 export function niceMax(v: number, bytes = false): number {
-  if (!(v > 1)) return 1
+  if (!(v > 2)) return 2
   let unit = 1
   if (bytes) while (v / unit >= 1024) unit *= 1024
   const m = v / unit

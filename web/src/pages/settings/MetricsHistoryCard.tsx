@@ -147,7 +147,7 @@ function RetentionForm({ days }: { days: number }) {
           disabled={!dirty || saving}
           className="h-[38px] cursor-pointer rounded-[7px] border-0 bg-text px-[18px] font-semibold text-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Save
+          Save changes
         </button>
       </div>
     </form>
