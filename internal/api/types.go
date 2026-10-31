@@ -134,7 +134,8 @@ type Database struct {
 // weekly; Time is "HH:MM" in the server zone; Weekday is 0 (Sunday) to 6 and
 // only matters for weekly; Keep is how many copies stay on Drive (1 to 365);
 // Compress gzips the dump. NextRunAt is the next scheduled run, RFC 3339 with
-// the server zone's offset, null when the schedule is off.
+// the server zone's offset, null when the schedule is off or the database can
+// never be backed up (not_supported), since the scheduler skips it.
 type DatabaseSchedule struct {
 	Frequency string  `json:"frequency"`
 	Time      string  `json:"time"`
@@ -579,9 +580,10 @@ type BackupAllResult struct {
 }
 
 // BackupSummary is the body of GET /api/backups/summary. The Drive figures
-// are what the panel stored (copies not removed by retention), not a Drive
-// query. Days are the last 7 days of the server zone, oldest first, today
-// last; OK7d and Failed7d sum them (failed counts failed, refused and
+// are what the panel stored (every backup row with a Drive file that
+// retention has not removed, whatever its state), not a Drive query. Days
+// are the last 7 days of the server zone, oldest first, today last; OK7d and
+// Failed7d sum them (failed counts failed, refused and
 // interrupted). RecentFailures are the newest two failed or refused backups.
 // NextRun is the earliest scheduled run and the projects due at that minute,
 // null when nothing is scheduled.

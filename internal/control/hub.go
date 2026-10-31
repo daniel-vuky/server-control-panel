@@ -253,8 +253,8 @@ type Hub struct {
 	log *slog.Logger
 
 	// The optional in-memory sources a state is built with, set once before
-	// the first Subscribe. Both are called with mu held, so neither may call
-	// the hub, read the store or run a command.
+	// the first Subscribe. All are called with mu held, so none may call the
+	// hub, read the store or run a command.
 	backups  func() []store.Backup
 	batchNow func() *backup.Batch
 	driveNow func() drive.Status

@@ -82,8 +82,10 @@ func (s *server) backupDefaults(w http.ResponseWriter, r *http.Request) {
 // database's schedule and answers the Project. 404 for a project that is not
 // tracked; 422 on database for a key that is not one of its databases or a
 // database that can never be backed up (not_supported), then on the first bad
-// field. A save that changes something is recorded as backup.schedule and
-// pushed to every open tab through Hub.Refresh.
+// field. The not_supported check runs before the field validation and may do
+// one bounded Docker read when the hub's container cache is cold, so a field
+// 422 comes only after it. A save that changes something is recorded as
+// backup.schedule and pushed to every open tab through Hub.Refresh.
 func (s *server) backupSchedule(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r)
 	if !ok {
