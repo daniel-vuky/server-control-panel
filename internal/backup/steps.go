@@ -50,8 +50,12 @@ func (m *Manager) run(ctx context.Context, j *job) {
 		m.finish(j)
 	}()
 
-	// Things change while a backup waits: checks 4, 6 and 7 again.
-	r := m.checkDrive()
+	// Things change while a backup waits: the project as it is now (checks 1-3),
+	// then checks 5, 7 and 8 again.
+	r := m.recheckProject(ctx, j)
+	if r == nil {
+		r = m.checkDrive()
+	}
 	if r == nil {
 		var p plan
 		p, r = m.plan(ctx, j.t, j.db)
@@ -86,6 +90,35 @@ func (m *Manager) run(ctx context.Context, j *job) {
 	if m.dump(ctx, j, tmp) {
 		m.upload(ctx, j, tmp)
 	}
+}
+
+// recheckProject re-reads a queued backup's project from the store: one
+// untracked, removed or missing meanwhile is not_found, a database no longer
+// detected unknown_database (and its location is checked again). Otherwise the
+// job goes on with the project and database as they are now. A failed read
+// keeps the project of the Enqueue; the checks that follow still run.
+func (m *Manager) recheckProject(ctx context.Context, j *job) *Refusal {
+	t, err := m.st.TrackedProject(ctx, j.t.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return &Refusal{Code: CodeNotFound, Words: wordsNotFound}
+	case err != nil:
+		if ctx.Err() == nil {
+			m.log.Warn("backup: cannot re-read the project; using it as queued", "backup", j.b.ID, "err", err)
+		}
+		return nil
+	case t.MissingSince != nil:
+		return &Refusal{Code: CodeNotFound, Words: wordsNotFound}
+	}
+	db, ok := findDatabase(t, j.b.DBKey)
+	if !ok {
+		return &Refusal{Code: CodeUnknownDatabase, Words: wordsUnknownDatabase}
+	}
+	if r := checkLocation(db); r != nil {
+		return r
+	}
+	j.t, j.db = t, db
+	return nil
 }
 
 // failInternal ends a job a panic stopped: failed at its running step (else
@@ -446,6 +479,28 @@ type localError struct{ msg string }
 
 func (e *localError) Error() string { return e.msg }
 
+// dumpReader reads the temporary file for the upload. A failure to read it,
+// a file shorter than the size the upload was told included, is the panel's
+// own: a *localError, so it is never worded or logged as a Drive outage. The
+// reason is masked like stderr.
+type dumpReader struct {
+	r       io.Reader
+	left    int64 // bytes still expected
+	secrets []string
+}
+
+func (d *dumpReader) Read(p []byte) (int, error) {
+	n, err := d.r.Read(p)
+	d.left -= int64(n)
+	if err == nil || (errors.Is(err, io.EOF) && d.left <= 0) {
+		return n, err
+	}
+	if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
+	return n, &localError{"Could not read the dump file: " + runner.Mask(pathReason(err), d.secrets)}
+}
+
 func (m *Manager) send(ctx context.Context, j *job, tmp string, size int64) (string, string, error) {
 	sess, folder, err := m.d.Session(ctx)
 	if err != nil {
@@ -461,7 +516,8 @@ func (m *Manager) send(ctx context.Context, j *job, tmp string, size int64) (str
 		return "", "", &localError{"Could not read the temporary file: " + pathReason(err)}
 	}
 	defer func() { _ = f.Close() }()
-	return sess.Upload(ctx, sub.ID, j.b.FileName, size, f, func(sent int64) {
+	r := &dumpReader{r: f, left: size, secrets: j.plan.secrets}
+	return sess.Upload(ctx, sub.ID, j.b.FileName, size, r, func(sent int64) {
 		m.progress(j, iUpload, formatProgress(sent, size))
 	})
 }

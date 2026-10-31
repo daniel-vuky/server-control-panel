@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -702,6 +703,68 @@ func TestUploadStall(t *testing.T) {
 	}
 }
 
+// truncClient cuts the temporary file short before the upload reads it, as a
+// failing disk would.
+type truncClient struct {
+	drive.Client
+	dataDir *string // set once the env exists
+}
+
+func (c truncClient) Session(refresh string) drive.Session {
+	return truncSession{Session: c.Client.Session(refresh), dataDir: c.dataDir}
+}
+
+type truncSession struct {
+	drive.Session
+	dataDir *string
+}
+
+func (s truncSession) FindOrCreateFolder(ctx context.Context, name, parentID string) (drive.Folder, error) {
+	files, _ := filepath.Glob(filepath.Join(*s.dataDir, "tmp", "backup-*.gz"))
+	for _, f := range files {
+		_ = os.Truncate(f, 10)
+	}
+	return s.Session.FindOrCreateFolder(ctx, name, parentID)
+}
+
+// A failure to read the temporary file during the upload is the panel's own:
+// worded as a local file problem, not "Google Drive is unreachable."
+func TestUploadLocalReadFailure(t *testing.T) {
+	var dataDir string
+	e := newEnv(t, envOpt{client: func(c drive.Client) drive.Client { return truncClient{Client: c, dataDir: &dataDir} }})
+	dataDir = e.dataDir
+	b := e.waitDone(t, e.enqueue(t, keyPG))
+	if b.State != "failed" || b.FailedStep != "upload" || b.Error != "Could not read the dump file: unexpected EOF" {
+		t.Fatalf("row = %q %q %q", b.State, b.FailedStep, b.Error)
+	}
+	if left := tempFiles(t, e.dataDir); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+}
+
+// dumpReader turns any read failure into a *localError, a short file included.
+func TestDumpReader(t *testing.T) {
+	r := &dumpReader{r: strings.NewReader("abc"), left: 3}
+	if b, err := io.ReadAll(r); err != nil || string(b) != "abc" {
+		t.Fatalf("full read = %q, %v", b, err)
+	}
+	r = &dumpReader{r: strings.NewReader("abc"), left: 5}
+	var local *localError
+	if _, err := io.ReadAll(r); !errors.As(err, &local) || local.msg != "Could not read the dump file: unexpected EOF" {
+		t.Fatalf("short read = %v", err)
+	}
+	r = &dumpReader{r: io.MultiReader(strings.NewReader("a"), iotestErr{&os.PathError{Op: "read", Path: "/data/tmp/backup-1.gz", Err: errors.New("input/output error devpassword")}}), left: 5, secrets: []string{devPass}}
+	_, err := io.ReadAll(r)
+	if !errors.As(err, &local) || local.msg != "Could not read the dump file: input/output error ••••" {
+		t.Fatalf("failed read = %v", err)
+	}
+}
+
+// iotestErr is a reader that fails with err.
+type iotestErr struct{ err error }
+
+func (r iotestErr) Read([]byte) (int, error) { return 0, r.err }
+
 func TestRefusalsWriteRowsAndActivity(t *testing.T) {
 	type tc struct {
 		name    string
@@ -837,6 +900,32 @@ func TestRecheckWhenWorkerStarts(t *testing.T) {
 			}
 		}, CodeDriveNotConnected},
 		{"disk filled", func(e *env) { e.free.Store(1) }, CodeDiskShort},
+		{"project untracked", func(e *env) {
+			if _, err := e.st.UntrackProject(context.Background(), e.shop.ID); err != nil {
+				panic(err)
+			}
+		}, CodeNotFound},
+		{"workspace removed", func(e *env) {
+			if _, err := e.st.RemoveWorkspace(context.Background(), e.shop.WorkspaceID); err != nil {
+				panic(err)
+			}
+		}, CodeNotFound},
+		{"folder missing", func(e *env) {
+			apply := store.RescanApply{Workspaces: []store.WorkspaceApply{{ID: e.shop.WorkspaceID, LastScanAt: time.Now(), Missing: []string{e.shop.Path}}}}
+			if err := e.st.ApplyRescan(context.Background(), apply, time.Now()); err != nil {
+				panic(err)
+			}
+		}, CodeNotFound},
+		{"database gone", func(e *env) {
+			apply := store.RescanApply{Workspaces: []store.WorkspaceApply{{ID: e.shop.WorkspaceID, LastScanAt: time.Now(),
+				Refresh: []store.ProjectRefresh{{Path: e.shop.Path, Config: &store.ConfigRefresh{
+					ComposeFiles: e.shop.ComposeFiles, ComposeProject: e.shop.ComposeProject,
+					Details: project.Details{Services: e.shop.ServiceDetails}}}},
+				Found: []string{e.shop.Path}}}}
+			if err := e.st.ApplyRescan(context.Background(), apply, time.Now()); err != nil {
+				panic(err)
+			}
+		}, CodeUnknownDatabase},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -848,7 +937,7 @@ func TestRecheckWhenWorkerStarts(t *testing.T) {
 			c.change(e)
 			e.start(t)
 			b := e.waitDone(t, id)
-			if b.State != "refused" || b.Error == "" {
+			if b.State != "refused" || b.Error != wordsOf(c.code, b.Error) {
 				t.Fatalf("row = %+v", b)
 			}
 			if got := stepStates(b); got != "dump=skipped compress=skipped upload=skipped prune=skipped" {
@@ -862,6 +951,46 @@ func TestRecheckWhenWorkerStarts(t *testing.T) {
 				t.Errorf("activity = %+v", acts)
 			}
 		})
+	}
+}
+
+// wordsOf is the refusal words a re-check gives for code; got for the codes
+// whose words carry values (the service, the sizes), when it is not empty.
+func wordsOf(code, got string) string {
+	switch code {
+	case CodeNotFound:
+		return wordsNotFound
+	case CodeUnknownDatabase:
+		return wordsUnknownDatabase
+	}
+	if got == "" {
+		return "(words)"
+	}
+	return got
+}
+
+// A queued backup re-reads its project when the worker takes it: a change
+// made meanwhile (here a rescan that found an override file) is what the
+// backup runs with.
+func TestRecheckUsesTheProjectAsItIsNow(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	id := e.enqueue(t, keyPG)
+	files := []string{"compose.yaml", "compose.override.yaml"}
+	apply := store.RescanApply{Workspaces: []store.WorkspaceApply{{ID: e.shop.WorkspaceID, LastScanAt: time.Now(),
+		Refresh: []store.ProjectRefresh{{Path: e.shop.Path, Config: &store.ConfigRefresh{
+			ComposeFiles: files, ComposeProject: e.shop.ComposeProject,
+			Details: project.Details{Services: e.shop.ServiceDetails}, Databases: e.shop.Databases}}},
+		Found: []string{e.shop.Path}}}}
+	if err := e.st.ApplyRescan(context.Background(), apply, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	e.start(t)
+	if b := e.waitDone(t, id); b.State != "ok" {
+		t.Fatalf("row = %+v", b)
+	}
+	dumps := e.r.callsOf(isDumpAction)
+	if len(dumps) != 1 || dumps[0].a != runner.DBPgDump+".override" || dumps[0].v["override"] != filepath.Join(e.shop.Path, files[1]) {
+		t.Errorf("dump = %+v, want the override file the rescan found", dumps)
 	}
 }
 
@@ -1112,9 +1241,18 @@ func TestPlaceholderNames(t *testing.T) {
 		t.Errorf("mysql placeholder: %+v", r)
 	}
 
-	// With an override file the .override actions run, with its path.
+	// With an override file the .override actions run, with its path. The
+	// worker re-reads the project, so the file is stored, as a rescan does.
 	withOverride := e.shop
 	withOverride.ComposeFiles = []string{"compose.yaml", "compose.override.yaml"}
+	apply := store.RescanApply{Workspaces: []store.WorkspaceApply{{ID: e.shop.WorkspaceID, LastScanAt: time.Now(),
+		Refresh: []store.ProjectRefresh{{Path: e.shop.Path, Config: &store.ConfigRefresh{
+			ComposeFiles: withOverride.ComposeFiles, ComposeProject: e.shop.ComposeProject,
+			Details: project.Details{Services: e.shop.ServiceDetails}, Databases: e.shop.Databases}}},
+		Found: []string{e.shop.Path}}}}
+	if err := e.st.ApplyRescan(context.Background(), apply, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	id, err := e.m.Enqueue(context.Background(), withOverride, keyMongo, actor)
 	if err != nil {
 		t.Fatal(err)
@@ -1638,5 +1776,17 @@ func TestDriveLinkStoredOnlyWhenSafe(t *testing.T) {
 				t.Errorf("row = %s, link %q; want %q", b.State, b.DriveLink, c.want)
 			}
 		})
+	}
+}
+
+// Bavail counts fragments: the free bytes use Frsize, not the I/O size Bsize.
+func TestAvailBytesUsesFragmentSize(t *testing.T) {
+	s := syscall.Statfs_t{Bavail: 1000, Bsize: 1 << 20, Frsize: 4096}
+	if got := availBytes(&s); got != 1000*4096 {
+		t.Errorf("availBytes = %d, want %d", got, 1000*4096)
+	}
+	s.Frsize = 0
+	if got := availBytes(&s); got != 1000<<20 {
+		t.Errorf("availBytes without Frsize = %d, want %d", got, 1000<<20)
 	}
 }

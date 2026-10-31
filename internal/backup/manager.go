@@ -623,11 +623,22 @@ func freeSpace(dir string) (int64, error) {
 	if err := syscall.Statfs(dir, &s); err != nil {
 		return 0, err
 	}
-	free := uint64(s.Bavail) * uint64(s.Bsize) //nolint:gosec // G115: statfs block counts and sizes are non-negative
+	return availBytes(&s), nil
+}
+
+// availBytes is Bavail in bytes. Bavail counts fragments (Frsize), which is
+// not always the preferred I/O size Bsize; Frsize 0 (an old kernel) falls back
+// to Bsize.
+func availBytes(s *syscall.Statfs_t) int64 {
+	unit := uint64(s.Frsize) //nolint:gosec // G115: statfs sizes are non-negative
+	if unit == 0 {
+		unit = uint64(s.Bsize) //nolint:gosec // G115: statfs sizes are non-negative
+	}
+	free := uint64(s.Bavail) * unit
 	if free > 1<<62 {
 		free = 1 << 62
 	}
-	return int64(free), nil //nolint:gosec // G115: capped above
+	return int64(free) //nolint:gosec // G115: capped above
 }
 
 // newRow is the snapshot of a backup's target.
