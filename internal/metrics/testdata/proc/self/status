@@ -1,0 +1,30 @@
+Name:	panel
+Umask:	0022
+State:	S (sleeping)
+Tgid:	7
+Ngid:	0
+Pid:	7
+PPid:	1
+TracerPid:	0
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000
+FDSize:	64
+Groups:	1000
+VmPeak:	 1785856 kB
+VmSize:	 1785856 kB
+VmLck:	       0 kB
+VmPin:	       0 kB
+VmHWM:	   18432 kB
+VmRSS:	   16384 kB
+RssAnon:	   10240 kB
+RssFile:	    6144 kB
+RssShmem:	       0 kB
+VmData:	  120000 kB
+VmStk:	     132 kB
+VmExe:	    8192 kB
+VmLib:	    1000 kB
+VmPTE:	     200 kB
+VmSwap:	       0 kB
+Threads:	11
+voluntary_ctxt_switches:	1500
+nonvoluntary_ctxt_switches:	20
