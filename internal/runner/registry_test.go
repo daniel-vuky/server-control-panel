@@ -127,7 +127,7 @@ func TestArgvInspect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"inspect", "--format", "{{.Id}}\t{{.RestartCount}}\t{{json .State}}", id1, id2}
+	want := []string{"inspect", "--format", "{{.Id}}\t{{.RestartCount}}\t{{.HostConfig.NetworkMode}}\t{{json .State}}", id1, id2}
 	if !equal(got, want) {
 		t.Fatalf("argv\n got %q\nwant %q", got, want)
 	}
@@ -196,6 +196,9 @@ func TestArgvDown(t *testing.T) {
 	}
 	// Down never removes volumes or images.
 	for k, tpl := range registry {
+		if k.action == DockerDF {
+			continue // docker system df -v only reads
+		}
 		for _, el := range tpl {
 			if el.literal == "-v" || el.literal == "--volumes" || strings.HasPrefix(el.literal, "--rmi") {
 				t.Errorf("%s has %q", k.action, el.literal)
@@ -546,5 +549,45 @@ func TestArgvDBDumpStop(t *testing.T) {
 		if got := timeoutFor(a, 15*time.Second); got != 15*time.Second {
 			t.Errorf("timeoutFor(%s) = %v, want the read timeout", a, got)
 		}
+	}
+}
+
+func TestRegistryDockerInfo(t *testing.T) {
+	got, err := argv(StackDocker, DockerInfo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"info", "--format", "{{json .}}"}
+	if !equal(got, want) {
+		t.Fatalf("argv\n got %q\nwant %q", got, want)
+	}
+	if _, err := argv(StackDocker, DockerInfo, Values{"x": "y"}); !errors.Is(err, ErrBadValue) {
+		t.Errorf("docker.info with a value: err = %v, want ErrBadValue", err)
+	}
+}
+
+func TestRegistryDockerDF(t *testing.T) {
+	got, err := argv(StackDocker, DockerDF, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"system", "df", "-v", "--format", "{{json .Volumes}}"}
+	if !equal(got, want) {
+		t.Fatalf("argv\n got %q\nwant %q", got, want)
+	}
+	if _, err := argv(StackDocker, DockerDF, Values{"x": "y"}); !errors.Is(err, ErrBadValue) {
+		t.Errorf("docker.df with a value: err = %v, want ErrBadValue", err)
+	}
+}
+
+func TestTimeoutForDockerDF(t *testing.T) {
+	if DFTimeout != 60*time.Second {
+		t.Fatalf("DFTimeout = %v", DFTimeout)
+	}
+	if got := timeoutFor(DockerDF, 15*time.Second); got != DFTimeout {
+		t.Errorf("timeoutFor(docker.df) = %v, want %v", got, DFTimeout)
+	}
+	if got := timeoutFor(DockerInfo, 15*time.Second); got != 15*time.Second {
+		t.Errorf("timeoutFor(docker.info) = %v, want the read timeout", got)
 	}
 }

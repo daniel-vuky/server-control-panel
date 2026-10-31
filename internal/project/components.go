@@ -23,6 +23,8 @@ type Inspect struct {
 	OOMKilled    bool
 	Error        string // State.Error, cut to 300 characters
 	Health       string // healthy, unhealthy, starting; "" without a health check
+	Pid          int    // State.Pid, the container's main process on the host; 0 when not running
+	NetworkMode  string // HostConfig.NetworkMode: "host", "bridge", "default", a network name
 }
 
 // stateJSON is the part of `docker inspect` State the panel reads.
@@ -30,6 +32,7 @@ type stateJSON struct {
 	StartedAt  time.Time `json:"StartedAt"`
 	FinishedAt time.Time `json:"FinishedAt"`
 	ExitCode   int       `json:"ExitCode"`
+	Pid        int       `json:"Pid"`
 	OOMKilled  bool      `json:"OOMKilled"`
 	Error      string    `json:"Error"`
 	Health     *struct {
@@ -38,15 +41,15 @@ type stateJSON struct {
 }
 
 // ParseInspect reads docker.inspect output: one line per container,
-// "<id>\t<restart count>\t<State JSON>". The result is keyed by container id.
-// A line that does not parse is skipped. Tabs and newlines inside State.Error
-// are JSON escapes, so they cannot split a line.
+// "<id>\t<restart count>\t<network mode>\t<State JSON>". The result is keyed
+// by container id. A line that does not parse is skipped. Tabs and newlines
+// inside State.Error are JSON escapes, so they cannot split a line.
 func ParseInspect(out []byte) map[string]Inspect {
 	m := map[string]Inspect{}
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		f := strings.SplitN(line, "\t", 3)
-		if len(f) != 3 || f[0] == "" {
+		f := strings.SplitN(line, "\t", 4)
+		if len(f) != 4 || f[0] == "" {
 			continue
 		}
 		n, err := strconv.Atoi(f[1])
@@ -54,11 +57,13 @@ func ParseInspect(out []byte) map[string]Inspect {
 			continue
 		}
 		var st stateJSON
-		if err := json.Unmarshal([]byte(f[2]), &st); err != nil {
+		if err := json.Unmarshal([]byte(f[3]), &st); err != nil {
 			continue
 		}
 		in := Inspect{
 			RestartCount: n,
+			NetworkMode:  f[2],
+			Pid:          st.Pid,
 			StartedAt:    st.StartedAt,
 			FinishedAt:   st.FinishedAt,
 			ExitCode:     st.ExitCode,

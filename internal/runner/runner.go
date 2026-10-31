@@ -30,6 +30,9 @@ const (
 	LifecycleTimeout = 60 * time.Second
 	// PingTimeout is the deadline of docker.ping.
 	PingTimeout = 5 * time.Second
+	// DFTimeout is the deadline of docker.df: docker system df -v walks every
+	// volume and can be slow on a large host.
+	DFTimeout = 60 * time.Second
 	// outputCap is the most bytes kept of each of stdout and stderr.
 	outputCap = 4 << 20
 	// waitDelay bounds how long Run waits for the output pipes after a kill.
@@ -61,6 +64,8 @@ var timeoutFor = func(a Action, fallback time.Duration) time.Duration {
 		return LifecycleTimeout
 	case DockerPing:
 		return PingTimeout
+	case DockerDF:
+		return DFTimeout
 	}
 	return fallback
 }

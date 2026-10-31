@@ -12,16 +12,16 @@ func TestParseInspect(t *testing.T) {
 	longErr := strings.Repeat("é", 400)
 	out := strings.Join([]string{
 		// no Health key at all
-		idA + "\t0\t" + `{"Status":"running","StartedAt":"2026-10-01T08:00:00.123456789Z","FinishedAt":"0001-01-01T00:00:00Z","ExitCode":0,"OOMKilled":false,"Error":""}`,
+		idA + "\t0\tbridge\t" + `{"Status":"running","StartedAt":"2026-10-01T08:00:00.123456789Z","FinishedAt":"0001-01-01T00:00:00Z","ExitCode":0,"OOMKilled":false,"Error":""}`,
 		// Health.Status, a restart count, an OOM kill
-		idB + "\t7\t" + `{"Status":"exited","StartedAt":"2026-10-01T08:00:00Z","FinishedAt":"2026-10-02T09:30:00Z","ExitCode":137,"OOMKilled":true,"Error":"","Health":{"Status":"unhealthy","FailingStreak":3}}`,
+		idB + "\t7\tbridge\t" + `{"Status":"exited","StartedAt":"2026-10-01T08:00:00Z","FinishedAt":"2026-10-02T09:30:00Z","ExitCode":137,"OOMKilled":true,"Error":"","Health":{"Status":"unhealthy","FailingStreak":3}}`,
 		// a tab and a newline inside Error are JSON-escaped, so the line stays one line
-		idC + "\t1\t" + `{"Status":"created","StartedAt":"0001-01-01T00:00:00Z","FinishedAt":"0001-01-01T00:00:00Z","ExitCode":127,"Error":"oci runtime:\tno such file\nsecond line"}`,
+		idC + "\t1\tbridge\t" + `{"Status":"created","StartedAt":"0001-01-01T00:00:00Z","FinishedAt":"0001-01-01T00:00:00Z","ExitCode":127,"Error":"oci runtime:\tno such file\nsecond line"}`,
 		"total garbage",
-		id64(0xd) + "\tnot-a-number\t" + `{"Status":"running"}`,
+		id64(0xd) + "\tnot-a-number\tbridge\t" + `{"Status":"running"}`,
 		id64(0xe) + "\t0\t{not json",
-		"\t0\t{}", // no id
-		id64(0xf) + "\t2\t" + `{"Error":"` + longErr + `"}`,
+		"\t0\tbridge\t{}", // no id
+		id64(0xf) + "\t2\tbridge\t" + `{"Error":"` + longErr + `"}`,
 		"",
 	}, "\n") + "\n"
 
@@ -323,5 +323,26 @@ func TestTotalsNothingRunning(t *testing.T) {
 	cpu, mem, up = Totals([]Component{{Status: "Running"}})
 	if cpu != nil || mem != nil || up != nil {
 		t.Fatalf("got %v %v %v, want all nil", cpu, mem, up)
+	}
+}
+
+func TestParseInspectPidAndNetworkMode(t *testing.T) {
+	idA, idB, idC := id64(0x1), id64(0x2), id64(0x3)
+	out := idA + "\t0\thost\t" + `{"Status":"running","Pid":4242,"StartedAt":"2026-10-01T08:00:00Z"}` + "\n" +
+		idB + "\t0\tmy_net\t" + `{"Status":"exited","Pid":0}` + "\n" +
+		idC + "\t0\tdefault\t" + `{"Status":"running"}` + "\n"
+	got := ParseInspect([]byte(out))
+	if a := got[idA]; a.Pid != 4242 || a.NetworkMode != "host" {
+		t.Fatalf("a = %+v", a)
+	}
+	if b := got[idB]; b.Pid != 0 || b.NetworkMode != "my_net" {
+		t.Fatalf("b = %+v", b)
+	}
+	if c := got[idC]; c.Pid != 0 || c.NetworkMode != "default" {
+		t.Fatalf("c = %+v", c)
+	}
+	// The old 3-column line is no longer read.
+	if old := ParseInspect([]byte(idA + "\t0\t" + `{"Pid":1}` + "\n")); len(old) != 0 {
+		t.Fatalf("3-column line parsed: %+v", old)
 	}
 }
