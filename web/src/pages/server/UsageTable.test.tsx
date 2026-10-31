@@ -153,14 +153,16 @@ describe('UsageTable', () => {
     expect(bar(crmNet)).toBeNull()
   })
 
-  it('words a small CPU share with one decimal', () => {
+  it('words the CPU share as a whole number, <1% below half a percent', () => {
     const r = makeUsage([
-      makeUsageRow({ cpuPercent: 4 }),
-      makeUsageRow({ projectId: 2, name: 'crm', cpuPercent: 0.02 }),
+      makeUsageRow({ cpuPercent: 3.4 }),
+      makeUsageRow({ projectId: 2, name: 'crm', cpuPercent: 0.2 }),
+      makeUsageRow({ projectId: 3, name: 'blog', cpuPercent: 0.6 }),
     ])
     const table = renderTable(r)
-    expect(cells(table, 'shop')[0]).toHaveTextContent('4.0%')
-    expect(cells(table, 'crm')[0]).toHaveTextContent('<0.1%')
+    expect(cells(table, 'shop')[0]).toHaveTextContent(/^3%/)
+    expect(cells(table, 'crm')[0]).toHaveTextContent(/^<1%/)
+    expect(cells(table, 'blog')[0]).toHaveTextContent(/^1%/)
   })
 
   it('prefixes a partial disk value with ≥', () => {

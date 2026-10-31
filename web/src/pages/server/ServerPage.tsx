@@ -1,5 +1,4 @@
 import { CircleAlert } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
 import { getServer, getServerMetrics, getServerUsage } from '../../api/metrics'
 import type { ServerInfo } from '../../api/types.gen'
 import { useLive } from '../../app/live'
@@ -7,58 +6,15 @@ import LoadError from '../../components/LoadError'
 import RangeSwitch from '../../components/RangeSwitch'
 import { formatBytes } from '../../lib/format'
 import { useRangeParam } from '../../lib/range'
+import { useRead } from '../../lib/useRead'
 import { useVisibleInterval } from '../../lib/useVisibleInterval'
 import ServerCharts from './ServerCharts'
 import ServicesCard from './ServicesCard'
-import SystemInfoCard from './SystemInfoCard'
+import SystemInfoCard, { coresWord, ramWord } from './SystemInfoCard'
 import UsageTable from './UsageTable'
 
 /** REFRESH_MS is how often a visible page re-reads (spec decision 24): a sample is taken every 30 s. */
 const REFRESH_MS = 30_000
-
-const message = (err: unknown) =>
-  err instanceof Error && err.message ? err.message : 'Something went wrong.'
-
-/**
- * useRead reads with fetcher at mount and whenever key changes (starting
- * over from nothing), and again on refresh, which keeps what it has until
- * the answer comes: a failed refresh keeps the last data and reports the
- * error only while there is none to show. It aborts the read it supersedes
- * and the one running at unmount.
- */
-function useRead<T>(fetcher: (signal: AbortSignal) => Promise<T>, key: string) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState('')
-  const fetcherRef = useRef(fetcher)
-  fetcherRef.current = fetcher
-  const ctl = useRef<AbortController | null>(null)
-
-  const refresh = useCallback(() => {
-    ctl.current?.abort()
-    const c = new AbortController()
-    ctl.current = c
-    fetcherRef.current(c.signal).then(
-      (d) => {
-        if (c.signal.aborted) return
-        setData(d)
-        setError('')
-      },
-      (err: unknown) => {
-        if (!c.signal.aborted) setError(message(err))
-      },
-    )
-  }, [])
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: key starts the read over.
-  useEffect(() => {
-    setData(null)
-    setError('')
-    refresh()
-  }, [key, refresh])
-  useEffect(() => () => ctl.current?.abort(), [])
-
-  return { data, error: data === null ? error : '', refresh }
-}
 
 /** rootDisk is the disk the header names: the one at "/", else the fallback row, else the first. */
 function rootDisk(info: ServerInfo) {
@@ -74,8 +30,8 @@ function headerLine(info: ServerInfo): string {
   const disk = rootDisk(info)
   return [
     info.hostname || '—',
-    `${info.cores} vCPU`,
-    `${formatBytes(info.ramBytes)} RAM`,
+    `${coresWord(info.cores)} vCPU`,
+    `${ramWord(info.ramBytes)} RAM`,
     ...(disk ? [`${formatBytes(disk.totalBytes)} disk`] : []),
     `sampled every ${info.sampleSeconds} seconds`,
   ].join(' · ')
@@ -92,7 +48,11 @@ export default function ServerPage() {
   const live = useLive()
   const [range, setRange] = useRangeParam('24h')
   const server = useRead(getServer, 'server')
-  const series = useRead((signal) => getServerMetrics(range, signal), range)
+  // Read alongside the server, but not once it says there are no server metrics.
+  const series = useRead(
+    (signal) => getServerMetrics(range, signal),
+    server.data?.available === false ? null : range,
+  )
   const usage = useRead(getServerUsage, 'usage')
 
   useVisibleInterval(() => {

@@ -4,6 +4,12 @@ import { formatBytes } from '../../lib/format'
 /** dash is a fact the server could not read yet ("" before Docker answered once). */
 const dash = (v: string) => (v === '' ? '—' : v)
 
+/** coresWord is the core count, "—" for 0 (neither /proc nor docker info answered). */
+export const coresWord = (n: number) => (n > 0 ? String(n) : '—')
+
+/** ramWord is the RAM size, "—" for 0 (neither /proc nor docker info answered). */
+export const ramWord = (bytes: number) => (bytes > 0 ? formatBytes(bytes) : '—')
+
 /**
  * SystemInfoCard is design 05's System info (spec decisions 10 and 11): the
  * operating system, kernel, cores, RAM and Docker version (Node and pm2 are
@@ -27,9 +33,9 @@ export default function SystemInfoCard({ info }: { info: ServerInfo }) {
         <dt className="text-muted">Kernel</dt>
         <dd className="m-0 font-mono break-all">{dash(info.kernel)}</dd>
         <dt className="text-muted">CPU</dt>
-        <dd className="m-0">{info.cores} vCPU</dd>
+        <dd className="m-0">{info.cores > 0 ? `${info.cores} vCPU` : '—'}</dd>
         <dt className="text-muted">RAM</dt>
-        <dd className="m-0">{formatBytes(info.ramBytes)}</dd>
+        <dd className="m-0">{ramWord(info.ramBytes)}</dd>
         <dt className="text-muted">Docker</dt>
         <dd className="m-0 font-mono">{docker}</dd>
       </dl>

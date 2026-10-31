@@ -17,13 +17,11 @@ type Column = {
 }
 
 /**
- * cpuWord is a share of the server: one decimal under 10 % (so 0.4 % is not
- * "0%"), "<0.1%" for a busy project below that, and a known idle 0 as "0%".
+ * cpuWord is a share of the server as a whole number (design 05, spec
+ * decision 16): "3%", "<1%" for a busy project below 0.5 %, and a known idle
+ * 0 as "0%".
  */
-function cpuWord(v: number): string {
-  if (v <= 0 || v >= 10) return formatPercent(v)
-  return v < 0.05 ? '<0.1%' : formatPercent(v, 1)
-}
+const cpuWord = (v: number) => (v > 0 && v < 0.5 ? '<1%' : formatPercent(v))
 
 // Design 05's columns, colours alternating blue and orange.
 const COLUMNS: Column[] = [
@@ -180,7 +178,7 @@ function AppName({ row }: { row: UsageRow }) {
         <span
           role="img"
           aria-label={statusWord(row.status)}
-          className={`size-[7px] flex-none rounded-full ${DOT[row.status] ?? 'bg-[#d9c78a]'}`}
+          className={`size-[7px] flex-none rounded-full ${DOT[row.status] ?? 'bg-warning'}`}
         />
       )}
       {row.projectId !== null ? (

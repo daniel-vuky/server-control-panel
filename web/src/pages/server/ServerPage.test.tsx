@@ -102,13 +102,15 @@ describe('ServerPage', () => {
     expect(await screen.findByText(/· 160 GB disk ·/)).toBeInTheDocument()
   })
 
-  it('names the fallback disk, and — before Docker has answered', async () => {
+  it('names the fallback disk, and — for what nothing has answered', async () => {
     serve({
       server: () =>
         json(
           200,
           makeServerInfo({
             hostname: '',
+            cores: 0,
+            ramBytes: 0,
             disks: [{ mount: '/ (panel data)', usedBytes: 1, totalBytes: 40 * GB }],
             disksPartial: true,
           }),
@@ -116,7 +118,7 @@ describe('ServerPage', () => {
     })
     renderPage()
     expect(
-      await screen.findByText('— · 4 vCPU · 8.0 GB RAM · 40 GB disk · sampled every 30 seconds'),
+      await screen.findByText('— · — vCPU · — RAM · 40 GB disk · sampled every 30 seconds'),
     ).toBeInTheDocument()
   })
 
@@ -183,6 +185,23 @@ describe('ServerPage', () => {
     expect(screen.queryByRole('region', { name: 'Resource charts' })).toBeNull()
     // The usage by app still has the projects' numbers.
     expect(await screen.findByRole('heading', { name: 'Usage by app' })).toBeInTheDocument()
+  })
+
+  it('stops reading the series once the server says there are no server metrics', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const stub = serve({ server: () => json(200, makeServerInfo({ available: false })) })
+    renderPage()
+    expect(
+      await screen.findByText("Server metrics are not available: the host's /proc is not mounted."),
+    ).toBeInTheDocument()
+    const first = calls(stub, '/api/server/metrics').length
+    expect(first).toBeLessThanOrEqual(1)
+    act(() => {
+      vi.advanceTimersByTime(30_000)
+    })
+    await waitFor(() => expect(calls(stub, '/api/server')).toHaveLength(2))
+    expect(calls(stub, '/api/server/metrics')).toHaveLength(first)
+    expect(screen.queryByText('Could not load the charts.')).toBeNull()
   })
 
   it('follows the live Docker state at once', async () => {

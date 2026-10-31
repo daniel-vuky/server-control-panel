@@ -38,6 +38,12 @@ describe('SystemInfoCard', () => {
     expect(fact(card, 'Docker')).toHaveTextContent('—')
   })
 
+  it('reads — for cores and RAM before anything answered', () => {
+    const card = renderCard(makeServerInfo({ cores: 0, ramBytes: 0 }))
+    expect(fact(card, 'CPU')).toHaveTextContent(/^—$/)
+    expect(fact(card, 'RAM')).toHaveTextContent(/^—$/)
+  })
+
   it('says Not installed without a Docker socket', () => {
     const card = renderCard(
       makeServerInfo({ docker: { state: 'not_installed', version: '', containersRunning: 0 } }),
