@@ -376,3 +376,163 @@ func TestStoredCopies(t *testing.T) {
 		t.Fatalf("none = %#v, %v", none, err)
 	}
 }
+
+// rowAt inserts a backup created at at, in state, for (projectID, key), with a
+// Drive file when fileID is not empty, and returns its id.
+func rowAt(t *testing.T, s *Store, projectID int64, key, state, fileID string, size int64, at time.Time) int64 {
+	t.Helper()
+	b := sampleBackup(projectID, key)
+	b.State, b.DriveFileID, b.SizeBytes, b.CreatedAt = state, fileID, size, at
+	id, err := s.InsertBackup(context.Background(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestListBackupsFilters(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	day := func(d, h int) time.Time { return time.Date(2026, 10, d, h, 0, 0, 0, time.UTC) }
+
+	a1 := rowAt(t, s, 1, "k", "ok", "f1", 1, day(1, 10))
+	a2 := rowAt(t, s, 1, "k", "failed", "", 0, day(2, 10))
+	a3 := rowAt(t, s, 1, "k", "refused", "", 0, day(3, 10))
+	a4 := rowAt(t, s, 1, "k", "interrupted", "", 0, day(4, 10))
+	b1 := rowAt(t, s, 2, "k", "ok", "f2", 1, day(5, 10))
+	b2 := rowAt(t, s, 2, "k", "queued", "", 0, day(6, 10))
+	b3 := rowAt(t, s, 2, "k", "running", "", 0, day(7, 10))
+
+	list := func(f BackupFilter) ([]int64, bool) {
+		t.Helper()
+		got, more, err := s.ListBackups(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return idsOf(got), more
+	}
+	eq := func(name string, got, want []int64, more, wantMore bool) {
+		t.Helper()
+		if !reflect.DeepEqual(got, want) || more != wantMore {
+			t.Errorf("%s = %v more=%v, want %v more=%v", name, got, more, want, wantMore)
+		}
+	}
+
+	got, more := list(BackupFilter{Limit: 50})
+	eq("all", got, []int64{b3, b2, b1, a4, a3, a2, a1}, more, false)
+
+	got, more = list(BackupFilter{ProjectID: 1, Limit: 50})
+	eq("project", got, []int64{a4, a3, a2, a1}, more, false)
+
+	got, more = list(BackupFilter{Result: "ok", Limit: 50})
+	eq("ok", got, []int64{b1, a1}, more, false)
+
+	got, more = list(BackupFilter{Result: "failed", Limit: 50})
+	eq("failed has no queued or running", got, []int64{a4, a3, a2}, more, false)
+
+	got, more = list(BackupFilter{Result: "failed", ProjectID: 2, Limit: 50})
+	eq("failed in project 2", got, []int64{}, more, false)
+
+	// From is inclusive, To exclusive.
+	got, more = list(BackupFilter{From: day(2, 10), To: day(4, 10), Limit: 50})
+	eq("from/to", got, []int64{a3, a2}, more, false)
+	got, more = list(BackupFilter{From: day(5, 10), Limit: 50})
+	eq("from only", got, []int64{b3, b2, b1}, more, false)
+	got, more = list(BackupFilter{To: day(2, 10), Limit: 50})
+	eq("to only", got, []int64{a1}, more, false)
+
+	// A bound in another zone is compared as the same UTC instant.
+	plus7 := time.FixedZone("UTC+7", 7*3600)
+	got, _ = list(BackupFilter{From: time.Date(2026, 10, 2, 17, 0, 0, 0, plus7), To: time.Date(2026, 10, 4, 17, 0, 0, 0, plus7), Limit: 50})
+	if !reflect.DeepEqual(got, []int64{a3, a2}) {
+		t.Errorf("zone bounds = %v, want %v", got, []int64{a3, a2})
+	}
+
+	// Paging: limit+1 gives more; the cursor continues below the last id.
+	got, more = list(BackupFilter{Limit: 3})
+	eq("page 1", got, []int64{b3, b2, b1}, more, true)
+	got, more = list(BackupFilter{Limit: 3, Before: b1})
+	eq("page 2", got, []int64{a4, a3, a2}, more, true)
+	got, more = list(BackupFilter{Limit: 3, Before: a2})
+	eq("page 3", got, []int64{a1}, more, false)
+	got, more = list(BackupFilter{Limit: 4, Before: a2, Result: "ok"})
+	eq("cursor with filter", got, []int64{a1}, more, false)
+
+	got, more = list(BackupFilter{})
+	eq("no limit", got, []int64{}, more, false)
+}
+
+func TestBackupSummary(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	day := func(d, h, m int) time.Time { return time.Date(2026, 10, d, h, m, 0, 0, time.UTC) }
+	// Seven day starts (Oct 25..31) and tomorrow's start.
+	var starts []time.Time
+	for d := 25; d <= 32; d++ {
+		starts = append(starts, time.Date(2026, 10, d, 0, 0, 0, 0, time.UTC))
+	}
+
+	// Outside the window: before the first day start and at/after tomorrow.
+	rowAt(t, s, 1, "k", "failed", "", 0, day(24, 23, 59))
+	rowAt(t, s, 1, "k", "ok", "", 0, starts[7])
+
+	// Day 0 (Oct 25): one ok on Drive (project 1), one pruned ok (excluded from drive).
+	rowAt(t, s, 1, "k", "ok", "f1", 100, day(25, 0, 0))
+	pruned := rowAt(t, s, 1, "k", "ok", "f2", 1000, day(25, 12, 0))
+	if err := s.MarkPruned(ctx, pruned, day(26, 1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	// Day 3 (Oct 28): an ok on Drive in project 2, a failed, a refused and an interrupted.
+	rowAt(t, s, 2, "k", "ok", "f3", 50, day(28, 23, 59))
+	f1 := rowAt(t, s, 2, "k", "failed", "", 0, day(28, 3, 0))
+	f2 := rowAt(t, s, 2, "k", "refused", "", 0, day(28, 4, 0))
+	rowAt(t, s, 2, "k", "interrupted", "", 0, day(28, 5, 0))
+	// Day 6 (Oct 31): queued and running count in neither bucket.
+	rowAt(t, s, 2, "k", "queued", "", 0, day(31, 8, 0))
+	rowAt(t, s, 2, "k", "running", "", 0, day(31, 9, 0))
+	// A failed row with a Drive file id still counts as a copy on Drive.
+	rowAt(t, s, 3, "k", "failed", "f4", 7, day(30, 1, 0))
+
+	got, err := s.BackupSummary(ctx, starts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DriveBytes != 157 || got.DriveFiles != 3 || got.DriveProjects != 3 {
+		t.Errorf("drive = %d bytes %d files %d projects, want 157, 3, 3", got.DriveBytes, got.DriveFiles, got.DriveProjects)
+	}
+	if len(got.Days) != 7 {
+		t.Fatalf("Days = %d, want 7", len(got.Days))
+	}
+	want := []DayCount{
+		{OK: 2}, {}, {}, {OK: 1, Failed: 3}, {}, {Failed: 1}, {},
+	}
+	for i, w := range want {
+		d := got.Days[i]
+		if !d.Start.Equal(starts[i]) || d.OK != w.OK || d.Failed != w.Failed {
+			t.Errorf("Days[%d] = %+v, want start %v ok %d failed %d", i, d, starts[i], w.OK, w.Failed)
+		}
+	}
+	if got.OK7d != 3 || got.Failed7d != 4 {
+		t.Errorf("7d = %d ok %d failed, want 3 and 4", got.OK7d, got.Failed7d)
+	}
+	// Recent failures: failed or refused only, newest first, at most 2, whole window or not.
+	var rf []int64
+	for _, b := range got.RecentFailures {
+		rf = append(rf, b.ID)
+	}
+	if len(rf) != 2 || rf[1] != f2 || rf[0] <= f2 {
+		t.Errorf("RecentFailures = %v, want 2 newest failed/refused (ending with refused %d, not %d)", rf, f2, f1)
+	}
+
+	if _, err := s.BackupSummary(ctx, starts[:7]); err == nil {
+		t.Error("BackupSummary with 7 instants succeeded, want an error")
+	}
+
+	empty, err := open(t).BackupSummary(ctx, starts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.DriveBytes != 0 || empty.OK7d != 0 || empty.RecentFailures == nil || len(empty.RecentFailures) != 0 || len(empty.Days) != 7 {
+		t.Errorf("empty summary = %+v", empty)
+	}
+}

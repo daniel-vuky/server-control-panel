@@ -137,6 +137,139 @@ func (s *Store) ProjectBackups(ctx context.Context, projectID, before int64, lim
 	return out, more, nil
 }
 
+// BackupFilter selects the rows of ListBackups. Zero values mean "any":
+// ProjectID 0 is every project, Result "" is every state, a zero From or To
+// is an open end. Result "ok" is state ok; "failed" is failed, refused and
+// interrupted (never queued or running rows). From is inclusive and To
+// exclusive, both UTC instants compared with created_at. A positive Before
+// lists only ids below it; Limit must be positive.
+type BackupFilter struct {
+	ProjectID int64
+	Result    string
+	From, To  time.Time
+	Before    int64
+	Limit     int
+}
+
+// failedStates are the states the all-backups page counts as failed.
+const failedStates = `'failed', 'refused', 'interrupted'`
+
+// ListBackups lists backups across projects, newest first (by id), with
+// the filter's bounds, and whether older rows remain.
+func (s *Store) ListBackups(ctx context.Context, f BackupFilter) ([]Backup, bool, error) {
+	if f.Limit <= 0 {
+		return []Backup{}, false, nil
+	}
+	q := `SELECT ` + backupColumns + ` FROM backups WHERE 1 = 1`
+	var args []any
+	if f.ProjectID > 0 {
+		q += ` AND project_id = ?`
+		args = append(args, f.ProjectID)
+	}
+	switch f.Result {
+	case "ok":
+		q += ` AND state = 'ok'`
+	case "failed":
+		q += ` AND state IN (` + failedStates + `)`
+	}
+	if !f.From.IsZero() {
+		q += ` AND created_at >= ?`
+		args = append(args, formatTime(f.From))
+	}
+	if !f.To.IsZero() {
+		q += ` AND created_at < ?`
+		args = append(args, formatTime(f.To))
+	}
+	if f.Before > 0 {
+		q += ` AND id < ?`
+		args = append(args, f.Before)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, f.Limit+1)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: list all backups: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []Backup{}
+	for rows.Next() {
+		b, err := scanBackup(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("store: list all backups: %w", err)
+	}
+	more := len(out) > f.Limit
+	if more {
+		out = out[:f.Limit]
+	}
+	return out, more, nil
+}
+
+// DayCount is one day of the summary strip: Start is the day's first instant.
+type DayCount struct {
+	Start      time.Time
+	OK, Failed int
+}
+
+// Summary is the all-backups page's numbers. The Drive totals are what the
+// panel stored (rows with a file on Drive, not pruned), not a Drive query.
+type Summary struct {
+	DriveBytes                int64
+	DriveFiles, DriveProjects int
+	Days                      []DayCount
+	OK7d, Failed7d            int
+	RecentFailures            []Backup
+}
+
+// BackupSummary reads the summary. dayStarts are 8 instants: the starts of
+// the 7 days (oldest first) and the start of the day after the last; day i
+// covers [dayStarts[i], dayStarts[i+1]) of created_at. The newest two failed
+// or refused backups come back whatever their age.
+func (s *Store) BackupSummary(ctx context.Context, dayStarts []time.Time) (Summary, error) {
+	if len(dayStarts) != 8 {
+		return Summary{}, fmt.Errorf("store: backup summary needs 8 day instants, got %d", len(dayStarts))
+	}
+	sum := Summary{Days: make([]DayCount, 0, 7), RecentFailures: []Backup{}}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(size_bytes), 0), count(*), count(DISTINCT project_id) FROM backups
+		 WHERE drive_file_id <> '' AND pruned_at IS NULL`).Scan(&sum.DriveBytes, &sum.DriveFiles, &sum.DriveProjects); err != nil {
+		return Summary{}, fmt.Errorf("store: backup summary drive: %w", err)
+	}
+	for i := 0; i < 7; i++ {
+		d := DayCount{Start: dayStarts[i]}
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT COALESCE(SUM(state = 'ok'), 0), COALESCE(SUM(state IN (`+failedStates+`)), 0) FROM backups
+			 WHERE created_at >= ? AND created_at < ?`,
+			formatTime(dayStarts[i]), formatTime(dayStarts[i+1])).Scan(&d.OK, &d.Failed); err != nil {
+			return Summary{}, fmt.Errorf("store: backup summary day: %w", err)
+		}
+		sum.OK7d += d.OK
+		sum.Failed7d += d.Failed
+		sum.Days = append(sum.Days, d)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+backupColumns+` FROM backups WHERE state IN ('failed', 'refused') ORDER BY id DESC LIMIT 2`)
+	if err != nil {
+		return Summary{}, fmt.Errorf("store: backup summary failures: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		b, err := scanBackup(rows)
+		if err != nil {
+			return Summary{}, err
+		}
+		sum.RecentFailures = append(sum.RecentFailures, b)
+	}
+	if err := rows.Err(); err != nil {
+		return Summary{}, fmt.Errorf("store: backup summary failures: %w", err)
+	}
+	return sum, nil
+}
+
 // ActiveBackup returns the id of the queued or running backup of a project's
 // database, if there is one.
 func (s *Store) ActiveBackup(ctx context.Context, projectID int64, dbKey string) (int64, bool, error) {
