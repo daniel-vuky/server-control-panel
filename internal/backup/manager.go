@@ -1,6 +1,7 @@
-// Package backup runs manual database backups (spec §4): the checks before a
-// backup is queued, one worker panel-wide that dumps, compresses and uploads to
-// Google Drive, the step progress the live state shows, and the hints for a
+// Package backup runs database backups (spec §4), started by a person or by a
+// schedule: the checks before a backup is queued, one worker panel-wide that
+// dumps, compresses, uploads to Google Drive and removes the copies past the
+// number to keep, the step progress the live state shows, and the hints for a
 // failed dump.
 package backup
 
@@ -97,13 +98,14 @@ const (
 	wordsNotConnected    = "Connect Google Drive first"
 	wordsNotRetryable    = "Only a failed, refused or interrupted backup can be retried."
 	wordsInterrupted     = "The panel restarted during this backup"
-	wordsRetention       = "No retention set yet. All copies are kept."
+	wordsCompressionOff  = "Compression off"
 	wordsTempDeleted     = "temp file deleted"
 )
 
 const (
 	mib = int64(1) << 20
-	// diskMargin is added to half the database size: free ≥ size/2 + 100 MiB.
+	// diskMargin is added to the room the dump needs: free ≥ size/2 + 100 MiB,
+	// or size + 100 MiB when compression is off.
 	diskMargin = 100 * mib
 	// fallbackNeed is the free space needed when the size read fails.
 	fallbackNeed = 500 * mib
@@ -115,6 +117,22 @@ const (
 	// a cancel too; it is the stop action's own read timeout.
 	stopWait = 15 * time.Second
 )
+
+// defaultKeep and the compression on are the settings of a database with no
+// schedule row.
+const defaultKeep = 14
+
+// Actor is who started a backup: a person (Name is the email) or the
+// scheduler. Name is stored as the row's started_by and the activity's actor.
+type Actor struct {
+	Name, Kind string
+}
+
+// Person is a backup started by the person with this email.
+func Person(email string) Actor { return Actor{Name: email, Kind: store.ActorPerson} }
+
+// ScheduleActor starts the scheduled backups.
+var ScheduleActor = Actor{Name: "schedule", Kind: store.ActorSchedule}
 
 // ErrClosed is returned by Enqueue and Retry after Close.
 var ErrClosed = errors.New("backup: the manager is closed")
@@ -161,6 +179,10 @@ type job struct {
 	activityID int64
 	published  time.Time // the last publish of this job, for the throttle
 	tmpMade    bool      // the temporary file was created; only the worker uses it
+	// keep and compress are the database's settings when it was queued; a
+	// later change applies to the next backup.
+	keep     int
+	compress bool
 }
 
 // plan is how a backup runs: the resolved service and the commands.
@@ -253,9 +275,9 @@ func (m *Manager) fire() {
 func (m *Manager) tmpDir() string { return filepath.Join(m.dataDir, "tmp") }
 
 // Start deletes the temporary files a previous process left
-// ($PANEL_DATA_DIR/tmp/backup-*) and starts the worker. Rows that process left
-// queued or running were made interrupted when the store opened; they are not
-// resumed.
+// ($PANEL_DATA_DIR/tmp/backup-*: the .gz and the .raw ones) and starts the
+// worker. Rows that process left queued or running were made interrupted when
+// the store opened; they are not resumed.
 func (m *Manager) Start(ctx context.Context) {
 	m.removeLeftovers()
 	m.mu.Lock()
@@ -359,9 +381,10 @@ func (m *Manager) waiters(projectID int64, key string) int {
 	return 0
 }
 
-// Enqueue queues a backup of database dbKey of project t for actor and returns
-// its id. It runs spec §4's checks in order and answers a *Refusal when one
-// fails:
+// Enqueue queues a backup of database dbKey of project t started by by, and
+// returns its id. The job keeps the database's keep and compress settings
+// from t.Schedules (14 and on without a row). It runs spec §4's checks in
+// order and answers a *Refusal when one fails:
 //
 //  1. the project is present (not_found);
 //  2. dbKey is one of its databases (unknown_database);
@@ -376,13 +399,14 @@ func (m *Manager) waiters(projectID int64, key string) int {
 //     it is waited for (honouring ctx) and its outcome returned;
 //  7. its service resolves and runs (not_supported, no_db_name, docker_down,
 //     db_not_running);
-//  8. the disk has room for the dump (disk_short).
+//  8. the disk has room for the dump (disk_short): half its size + 100 MiB,
+//     or its whole size + 100 MiB when compression is off.
 //
 // Checks 1-3 are input errors and write nothing, and already_running writes
 // nothing. A refusal at 5, 7 or 8 is stored as a refused row and a refused
 // backup.run activity. When ctx ends during checks 7-8, Enqueue returns
 // ctx.Err() and records nothing.
-func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor string) (int64, error) {
+func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey string, by Actor) (int64, error) {
 	if m.isClosed() {
 		return 0, ErrClosed
 	}
@@ -400,7 +424,8 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 	if id, ok := m.active(key); ok {
 		return 0, alreadyRunning(id, db.Name)
 	}
-	row := m.newRow(t, db, actor)
+	row := m.newRow(t, db, by.Name)
+	keep, compress := settingsOf(t, dbKey)
 	if r := m.checkDrive(); r != nil {
 		return 0, m.refuse(ctx, row, r)
 	}
@@ -415,7 +440,7 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 
 	p, r := m.plan(ctx, t, db)
 	if r == nil {
-		r = m.checkDisk(ctx, p)
+		r = m.checkDisk(ctx, p, compress)
 	}
 	if ctx.Err() != nil {
 		// The caller left during the slow checks: a cancelled container or size
@@ -440,7 +465,7 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 		return 0, err
 	}
 	row.ID = id
-	queued = &job{b: row, t: t, db: db, plan: p}
+	queued = &job{b: row, t: t, db: db, plan: p, keep: keep, compress: compress}
 	return id, nil
 }
 
@@ -448,7 +473,7 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 // failed, refused or interrupted row (else not_retryable). store.ErrNotFound for
 // an unknown id; not_found when the project is no longer tracked;
 // unknown_database when it no longer has that database.
-func (m *Manager) Retry(ctx context.Context, id int64, actor string) (int64, error) {
+func (m *Manager) Retry(ctx context.Context, id int64, by Actor) (int64, error) {
 	if m.isClosed() {
 		return 0, ErrClosed
 	}
@@ -468,13 +493,23 @@ func (m *Manager) Retry(ctx context.Context, id int64, actor string) (int64, err
 	if err != nil {
 		return 0, err
 	}
-	return m.Enqueue(ctx, t, b.DBKey, actor)
+	return m.Enqueue(ctx, t, b.DBKey, by)
 }
 
 func (m *Manager) isClosed() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.closed
+}
+
+// settingsOf is the number of copies to keep and the compression of database
+// key: its schedule row, else 14 and on.
+func settingsOf(t store.Tracked, key string) (keep int, compress bool) {
+	sc, ok := t.Schedules[key]
+	if !ok {
+		return defaultKeep, true
+	}
+	return max(sc.Keep, 1), sc.Compress
 }
 
 func findDatabase(t store.Tracked, key string) (project.Database, bool) {
@@ -589,10 +624,11 @@ func actions(dbType string, byDefault, override bool) (dump, size runner.Action)
 	return dump, size
 }
 
-// checkDisk is check 7: free ≥ size/2 + 100 MiB on the temporary folder. A
-// failed size read needs 500 MiB and is only logged; so is a failed free-space
-// read, which does not block.
-func (m *Manager) checkDisk(ctx context.Context, p plan) *Refusal {
+// checkDisk is check 7: free ≥ size/2 + 100 MiB on the temporary folder, or
+// size + 100 MiB when compression is off (the dump is stored raw). A failed
+// size read needs 500 MiB and is only logged; so is a failed free-space read,
+// which does not block.
+func (m *Manager) checkDisk(ctx context.Context, p plan, compress bool) *Refusal {
 	dir := m.tmpDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		m.log.Warn("backup: cannot create the temporary folder", "err", err)
@@ -601,9 +637,12 @@ func (m *Manager) checkDisk(ctx context.Context, p plan) *Refusal {
 	res, err := m.r.Run(ctx, runner.StackCompose, p.size, p.values, p.secrets)
 	if err == nil {
 		n, perr := strconv.ParseInt(strings.TrimSpace(string(res.Stdout)), 10, 64)
-		if perr == nil && n >= 0 {
+		switch {
+		case perr == nil && n >= 0 && compress:
 			need = n/2 + diskMargin
-		} else {
+		case perr == nil && n >= 0:
+			need = min(n, 1<<62) + diskMargin
+		default:
 			m.log.Warn("backup: the size read printed no size; needing 500 MiB free", "action", p.size)
 		}
 	} else {
@@ -667,9 +706,16 @@ func newSteps(state string) []store.BackupStep {
 	return steps
 }
 
+// activityOf is the backup.run activity of a backup. The actor's kind comes
+// from the row: started by "schedule" is the scheduler, anything else a
+// person's email.
 func activityOf(b store.Backup) store.Activity {
+	kind := store.ActorPerson
+	if b.StartedBy == ScheduleActor.Name {
+		kind = store.ActorSchedule
+	}
 	return store.Activity{
-		Actor: b.StartedBy, ActorKind: store.ActorPerson, Action: store.ActBackupRun,
+		Actor: b.StartedBy, ActorKind: kind, Action: store.ActBackupRun,
 		ProjectID: b.ProjectID, Target: b.ProjectName + " · " + b.DBName,
 	}
 }

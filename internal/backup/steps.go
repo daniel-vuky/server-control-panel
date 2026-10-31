@@ -31,7 +31,11 @@ const msgInternal = "The backup stopped on an internal error. Try again."
 // job, a panic included: the temporary file is removed, the row is final, the
 // activity finished and the job off the active list, and the worker goes on.
 func (m *Manager) run(ctx context.Context, j *job) {
-	tmp := filepath.Join(m.tmpDir(), "backup-"+strconv.FormatInt(j.b.ID, 10)+".gz")
+	ext := ".gz"
+	if !j.compress {
+		ext = ".raw"
+	}
+	tmp := filepath.Join(m.tmpDir(), "backup-"+strconv.FormatInt(j.b.ID, 10)+ext)
 	defer func() {
 		p := recover()
 		if p != nil {
@@ -60,7 +64,7 @@ func (m *Manager) run(ctx context.Context, j *job) {
 		var p plan
 		p, r = m.plan(ctx, j.t, j.db)
 		if r == nil {
-			r = m.checkDisk(ctx, p)
+			r = m.checkDisk(ctx, p, j.compress)
 		}
 		if r == nil {
 			j.plan = p
@@ -84,11 +88,12 @@ func (m *Manager) run(ctx context.Context, j *job) {
 	j.activityID = id
 	m.update(j, true, func(b *store.Backup) {
 		b.DBService = j.plan.service
-		b.FileName = FileName(b.ProjectName, b.DBName, b.DBType, *b.StartedAt)
+		b.FileName = FileName(b.ProjectName, b.DBName, b.DBType, j.compress, *b.StartedAt)
 	})
 
-	if m.dump(ctx, j, tmp) {
-		m.upload(ctx, j, tmp)
+	if m.dump(ctx, j, tmp) && m.upload(ctx, j, tmp) {
+		// The new copy is on Drive: the backup is ok whatever Prune meets.
+		m.prune(ctx, j)
 	}
 }
 
@@ -236,9 +241,12 @@ func skipAfter(b *store.Backup, i int) {
 	}
 }
 
-// finish sets the Prune step (always skipped: no retention yet), the end time
-// and the duration, stores the row, finishes the activity and takes the job off
-// the active list. Prune says "temp file deleted" only when the file was made.
+// finish ends the job: the end time and the duration, the row stored, the
+// activity finished and the job off the active list. It keeps the Prune step
+// the worker set (done or failed by Prune, or a panic's failed) and only fills
+// in a default: skipped for an ok backup whose step is still waiting, and
+// "temp file deleted" for a backup that ended before Prune once the file was
+// made.
 //
 // The active row turns ok only once the store has it: a client that sees ok in
 // the live state and downloads at once reads a stored ok row.
@@ -251,9 +259,10 @@ func (m *Manager) finish(j *job) {
 		final.State = StateOK
 	}
 	prune := &final.Steps[iPrune]
-	if final.State == StateOK {
-		prune.State, prune.Detail = stepSkipped, wordsRetention
-	} else if j.tmpMade {
+	switch {
+	case prune.State == stepWaiting && final.State == StateOK:
+		prune.State, prune.Detail = stepSkipped, ""
+	case final.State != StateOK && j.tmpMade && (prune.State == stepWaiting || prune.State == stepSkipped):
 		prune.State, prune.Detail = stepSkipped, wordsTempDeleted
 	}
 	final.FinishedAt = &now
@@ -314,8 +323,10 @@ func (c *counter) Write(p []byte) (int, error) {
 }
 
 // dump runs the Dump and Compress steps: RunTo → raw counter → gzip (level 1) →
-// compressed counter → the temporary file (mode 0600). It reports whether both
-// succeeded; on failure the job is already ended failed or interrupted.
+// compressed counter → the temporary file (mode 0600). With compression off
+// the raw counter writes the file itself and Compress is skipped. It reports
+// whether both succeeded; on failure the job is already ended failed or
+// interrupted.
 func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 	p := j.plan
 	m.setStep(j, iDump, stepRunning, p.tool)
@@ -323,7 +334,7 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 		m.fail(j, iDump, "Could not create the temporary folder: "+pathReason(err), "")
 		return false
 	}
-	//nolint:gosec // G304: the path is $PANEL_DATA_DIR/tmp/backup-<id>.gz, built from the row id
+	//nolint:gosec // G304: the path is $PANEL_DATA_DIR/tmp/backup-<id>.gz (or .raw), built from the row id
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		m.fail(j, iDump, "Could not create the temporary file: "+pathReason(err), "")
@@ -332,13 +343,16 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 	j.tmpMade = true
 	defer func() { _ = f.Close() }() // a second Close after the checked one is harmless
 	compressed := &counter{w: f}
-	gz, err := m.compressor(compressed)
-	if err != nil { // only for a bad level
-		_ = f.Close()
-		m.fail(j, iDump, err.Error(), "")
-		return false
+	var gz io.WriteCloser
+	raw := &counter{w: f}
+	if j.compress {
+		if gz, err = m.compressor(compressed); err != nil { // only for a bad level
+			_ = f.Close()
+			m.fail(j, iDump, err.Error(), "")
+			return false
+		}
+		raw = &counter{w: gz}
 	}
-	raw := &counter{w: gz}
 
 	start := m.now()
 	stop := m.ticker(func() {
@@ -365,7 +379,9 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 	// belong to Compress.
 	var cerr error
 	if err == nil {
-		cerr = gz.Close()
+		if gz != nil {
+			cerr = gz.Close()
+		}
 		if ferr := f.Close(); cerr == nil {
 			cerr = ferr
 		}
@@ -381,6 +397,10 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 		return false
 	}
 	dumpDetail := p.tool + " · " + formatDuration(elapsed)
+	if cerr != nil && !j.compress {
+		m.fail(j, iDump, "Could not write the temporary file: "+pathReason(cerr), "")
+		return false
+	}
 	if cerr != nil {
 		m.update(j, false, func(b *store.Backup) {
 			b.Steps[iDump].State, b.Steps[iDump].Detail = stepDone, dumpDetail
@@ -389,10 +409,14 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 		return false
 	}
 	rawN, compN := raw.n.Load(), compressed.n.Load()
+	compState, compDetail := stepDone, formatCompress(rawN, compN)
+	if !j.compress {
+		compN, compState, compDetail = rawN, stepSkipped, wordsCompressionOff
+	}
 	m.update(j, true, func(b *store.Backup) {
 		b.RawBytes, b.SizeBytes = rawN, compN
 		b.Steps[iDump].State, b.Steps[iDump].Detail = stepDone, dumpDetail
-		b.Steps[iCompress].State, b.Steps[iCompress].Detail = stepDone, formatCompress(rawN, compN)
+		b.Steps[iCompress].State, b.Steps[iCompress].Detail = compState, compDetail
 	})
 	return true
 }
@@ -516,9 +540,10 @@ func (m *Manager) ticker(fn func()) (stop func()) {
 }
 
 // upload runs the Upload step: find or create <folder>/<project slug>/ and
-// upload the temporary file there, with progress. On failure the job is ended
-// failed (with the Drive words) or interrupted.
-func (m *Manager) upload(ctx context.Context, j *job, tmp string) {
+// upload the temporary file there, with progress. It reports whether the file
+// is on Drive; on failure the job is ended failed (with the Drive words) or
+// interrupted.
+func (m *Manager) upload(ctx context.Context, j *job, tmp string) bool {
 	size := j.b.SizeBytes
 	m.setStep(j, iUpload, stepRunning, formatProgress(0, size))
 	start := m.now()
@@ -526,10 +551,10 @@ func (m *Manager) upload(ctx context.Context, j *job, tmp string) {
 	if err != nil {
 		if ctx.Err() != nil {
 			m.interrupt(j, iUpload)
-			return
+			return false
 		}
-		m.fail(j, iUpload, m.uploadWords(j, err), "")
-		return
+		m.fail(j, iUpload, m.driveWords(j, "upload", err), "")
+		return false
 	}
 	elapsed := m.now().Sub(start)
 	m.update(j, true, func(b *store.Backup) {
@@ -538,6 +563,7 @@ func (m *Manager) upload(ctx context.Context, j *job, tmp string) {
 		b.DriveFileID, b.DriveLink = fileID, m.d.SafeLink(link)
 		b.Steps[iUpload].State, b.Steps[iUpload].Detail = stepDone, formatBytes(size)+" · "+formatDuration(elapsed)
 	})
+	return true
 }
 
 // localError is a failure on the panel's side of the upload, worded as it is.
@@ -576,7 +602,7 @@ func (m *Manager) send(ctx context.Context, j *job, tmp string, size int64) (str
 	if err != nil {
 		return "", "", err
 	}
-	//nolint:gosec // G304: the path is $PANEL_DATA_DIR/tmp/backup-<id>.gz, built from the row id
+	//nolint:gosec // G304: the path is $PANEL_DATA_DIR/tmp/backup-<id>.gz (or .raw), built from the row id
 	f, err := os.Open(tmp)
 	if err != nil {
 		return "", "", &localError{"Could not read the temporary file: " + pathReason(err)}
@@ -588,9 +614,9 @@ func (m *Manager) send(ctx context.Context, j *job, tmp string, size int64) (str
 	})
 }
 
-// uploadWords words an upload failure: the Drive code's words, never a raw
-// error from Google.
-func (m *Manager) uploadWords(j *job, err error) string {
+// driveWords words a failed Drive call (op names it in the log): the Drive
+// code's words, never a raw error from Google.
+func (m *Manager) driveWords(j *job, op string, err error) string {
 	var local *localError
 	switch {
 	case errors.As(err, &local):
@@ -603,6 +629,6 @@ func (m *Manager) uploadWords(j *job, err error) string {
 	if w := drive.Words(drive.CodeOf(err)); w != "" {
 		return w
 	}
-	m.log.Warn("backup: upload failed", "backup", j.b.ID, "err", err)
+	m.log.Warn("backup: "+op+" failed", "backup", j.b.ID, "err", err)
 	return drive.Words(drive.CodeUnreachable)
 }

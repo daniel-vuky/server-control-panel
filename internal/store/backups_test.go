@@ -270,3 +270,109 @@ func TestTrackedServiceDetails(t *testing.T) {
 		t.Fatalf("ServiceDetails = %#v, want empty non-nil", ts[0].ServiceDetails)
 	}
 }
+
+// storedRow inserts a backup of (projectID, key) in state with a Drive file
+// when fileID is not empty, and returns its id.
+func storedRow(t *testing.T, s *Store, projectID int64, key, state, fileID string) int64 {
+	t.Helper()
+	b := sampleBackup(projectID, key)
+	b.State, b.DriveFileID = state, fileID
+	id, err := s.InsertBackup(context.Background(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestRetentionCandidates(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const key = "postgresql:db:shop"
+	a := storedRow(t, s, 1, key, "ok", "f1")
+	storedRow(t, s, 1, key, "failed", "")             // no file: never a candidate
+	storedRow(t, s, 1, key, "refused", "")            // no file
+	c := storedRow(t, s, 1, key, "interrupted", "f3") // a file stored before the end: counted
+	d := storedRow(t, s, 1, key, "ok", "f4")
+	pruned := storedRow(t, s, 1, key, "ok", "f5")
+	storedRow(t, s, 1, "mysql:db:crm", "ok", "f6") // another database
+	storedRow(t, s, 2, key, "ok", "f7")            // another project
+	running := storedRow(t, s, 1, key, "running", "f8")
+	if err := s.MarkPruned(ctx, pruned, driveTime); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.RetentionCandidates(ctx, 1, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []int64{running, d, c, a}; !reflect.DeepEqual(idsOf(got), want) {
+		t.Fatalf("candidates = %v, want %v (newest first)", idsOf(got), want)
+	}
+	if got[0].DriveFileID != "f8" || got[0].State != "running" {
+		t.Errorf("first candidate = %+v", got[0])
+	}
+	if none, err := s.RetentionCandidates(ctx, 3, key); err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("none = %#v, %v", none, err)
+	}
+}
+
+func TestMarkPruned(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	id := storedRow(t, s, 1, "k", "ok", "f1")
+	if b, _ := s.GetBackup(ctx, id); b.PrunedAt != nil {
+		t.Fatalf("PrunedAt = %v before the mark", b.PrunedAt)
+	}
+	at := driveTime.Add(time.Hour)
+	if err := s.MarkPruned(ctx, id, at); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.GetBackup(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.PrunedAt == nil || !b.PrunedAt.Equal(at) {
+		t.Fatalf("PrunedAt = %v, want %v", b.PrunedAt, at)
+	}
+	// The worker's own update never clears a stamp.
+	b.Error = "x"
+	if err := s.UpdateBackup(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if b2, _ := s.GetBackup(ctx, id); b2.PrunedAt == nil || !b2.PrunedAt.Equal(at) {
+		t.Fatalf("PrunedAt after UpdateBackup = %v", b2.PrunedAt)
+	}
+	// The list reads it too.
+	page, _, err := s.ProjectBackups(ctx, 1, 0, 10)
+	if err != nil || len(page) != 1 || page[0].PrunedAt == nil {
+		t.Fatalf("ProjectBackups = %+v, %v", page, err)
+	}
+	if err := s.MarkPruned(ctx, 999, at); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("MarkPruned unknown = %v, want ErrNotFound", err)
+	}
+}
+
+func TestStoredCopies(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	const pg, my = "postgresql:db:shop", "mysql:db:crm"
+	storedRow(t, s, 1, pg, "ok", "f1")
+	storedRow(t, s, 1, pg, "interrupted", "f2")
+	storedRow(t, s, 1, pg, "failed", "")
+	p := storedRow(t, s, 1, pg, "ok", "f3")
+	storedRow(t, s, 1, my, "ok", "f4")
+	storedRow(t, s, 2, pg, "ok", "f5")
+	if err := s.MarkPruned(ctx, p, driveTime); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.StoredCopies(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{pg: 2, my: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("StoredCopies = %v, want %v", got, want)
+	}
+	if none, err := s.StoredCopies(ctx, 9); err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("none = %#v, %v", none, err)
+	}
+}

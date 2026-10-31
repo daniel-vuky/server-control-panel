@@ -24,14 +24,14 @@ func TestDevMinFreeOverride(t *testing.T) {
 	}
 	e := newEnv(t, envOpt{noStart: true})
 	e.m.SetMinFree(cfg.DevBackupMinFree)
-	_, err = e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+	_, err = e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 	r := refusalOf(t, err)
 	if r.Code != CodeDiskShort || r.NeedBytes != 1000000000000000 || r.FreeBytes != e.free.Load() {
 		t.Fatalf("refusal = %+v", r)
 	}
 	// Below the rule's own need, the override changes nothing.
 	e.m.SetMinFree(1)
-	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); err != nil {
+	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); err != nil {
 		t.Errorf("with a small override: %v", err)
 	}
 }

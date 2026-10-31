@@ -7,16 +7,20 @@ import (
 )
 
 // FileName is the Drive file name of a backup taken at at:
-// <project>_<db>_<YYYYMMDD-HHmm>.sql.gz, or .archive.gz for MongoDB. The time is
-// in the panel's zone (time.Local, from TZ); the parts are slugged.
-func FileName(projectName, dbName, dbType string, at time.Time) string {
-	return fileName(projectName, dbName, dbType, at, time.Local)
+// <project>_<db>_<YYYYMMDD-HHmm>.sql.gz, or .archive.gz for MongoDB; without
+// the .gz when compression is off. The time is in the panel's zone
+// (time.Local, from TZ); the parts are slugged.
+func FileName(projectName, dbName, dbType string, compressed bool, at time.Time) string {
+	return fileName(projectName, dbName, dbType, compressed, at, time.Local)
 }
 
-func fileName(projectName, dbName, dbType string, at time.Time, loc *time.Location) string {
-	ext := ".sql.gz"
+func fileName(projectName, dbName, dbType string, compressed bool, at time.Time, loc *time.Location) string {
+	ext := ".sql"
 	if dbType == "mongodb" {
-		ext = ".archive.gz"
+		ext = ".archive"
+	}
+	if compressed {
+		ext += ".gz"
 	}
 	return slugOr(projectName, "project") + "_" + slugOr(dbName, "db") + "_" + at.In(loc).Format("20060102-1504") + ext
 }

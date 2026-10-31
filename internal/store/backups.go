@@ -36,11 +36,14 @@ type Backup struct {
 	CreatedAt                                                          time.Time
 	StartedAt, FinishedAt                                              *time.Time
 	DurationMS                                                         int64
+	// PrunedAt is when retention removed the row's Drive file (nil: not
+	// removed). Only MarkPruned writes it.
+	PrunedAt *time.Time
 }
 
 const backupColumns = `id, project_id, project_name, db_type, db_name, db_location_kind, db_location, db_service, db_key,
 	state, failed_step, steps, error, hint, raw_bytes, size_bytes, file_name, drive_file_id, drive_link,
-	started_by, created_at, started_at, finished_at, duration_ms`
+	started_by, created_at, started_at, finished_at, duration_ms, pruned_at`
 
 // InsertBackup stores a new backup and returns its id.
 func (s *Store) InsertBackup(ctx context.Context, b Backup) (int64, error) {
@@ -150,6 +153,73 @@ func (s *Store) ActiveBackup(ctx context.Context, projectID int64, dbKey string)
 	return id, true, nil
 }
 
+// RetentionCandidates lists the backups of one database whose file is on
+// Drive (a Drive file id, not pruned), whatever their state, newest first:
+// the copies retention counts (spec decision 9). Only rows the panel stored
+// count.
+func (s *Store) RetentionCandidates(ctx context.Context, projectID int64, dbKey string) ([]Backup, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+backupColumns+` FROM backups
+		 WHERE project_id = ? AND db_key = ? AND drive_file_id <> '' AND pruned_at IS NULL ORDER BY id DESC`,
+		projectID, dbKey)
+	if err != nil {
+		return nil, fmt.Errorf("store: retention candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []Backup{}
+	for rows.Next() {
+		b, err := scanBackup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: retention candidates: %w", err)
+	}
+	return out, nil
+}
+
+// MarkPruned stamps a backup whose Drive file retention removed. The row
+// stays (history is a record). ErrNotFound for an unknown id.
+func (s *Store) MarkPruned(ctx context.Context, id int64, at time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE backups SET pruned_at = ? WHERE id = ?`, formatTime(at), id)
+	if err != nil {
+		return fmt.Errorf("store: mark pruned: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("store: mark pruned: %w", err)
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// StoredCopies counts a project's copies on Drive (rows with a Drive file id,
+// not pruned) by db_key.
+func (s *Store) StoredCopies(ctx context.Context, projectID int64) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT db_key, count(*) FROM backups
+		 WHERE project_id = ? AND drive_file_id <> '' AND pruned_at IS NULL GROUP BY db_key`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("store: stored copies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int{}
+	for rows.Next() {
+		var key string
+		var n int
+		if err := rows.Scan(&key, &n); err != nil {
+			return nil, fmt.Errorf("store: stored copies: %w", err)
+		}
+		out[key] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: stored copies: %w", err)
+	}
+	return out, nil
+}
+
 // interruptActiveBackups ends backups a previous process left queued or
 // running, next to interruptRunningJobs. They are not resumed. Their steps end
 // as the manager's own interrupt leaves them: a running step failed, a waiting
@@ -236,10 +306,11 @@ func scanBackup(rows *sql.Rows) (Backup, error) {
 		failed            sql.NullString
 		steps, created    string
 		started, finished sql.NullString
+		pruned            sql.NullString
 	)
 	if err := rows.Scan(&b.ID, &b.ProjectID, &b.ProjectName, &b.DBType, &b.DBName, &b.DBLocationKind, &b.DBLocation, &b.DBService, &b.DBKey,
 		&b.State, &failed, &steps, &b.Error, &b.Hint, &b.RawBytes, &b.SizeBytes, &b.FileName, &b.DriveFileID, &b.DriveLink,
-		&b.StartedBy, &created, &started, &finished, &b.DurationMS); err != nil {
+		&b.StartedBy, &created, &started, &finished, &b.DurationMS, &pruned); err != nil {
 		return Backup{}, fmt.Errorf("store: read backup: %w", err)
 	}
 	b.FailedStep = failed.String
@@ -258,6 +329,9 @@ func scanBackup(rows *sql.Rows) (Backup, error) {
 	}
 	if b.FinishedAt, err = parseNullTime(finished); err != nil {
 		return Backup{}, fmt.Errorf("store: backup %d finished_at: %w", b.ID, err)
+	}
+	if b.PrunedAt, err = parseNullTime(pruned); err != nil {
+		return Backup{}, fmt.Errorf("store: backup %d pruned_at: %w", b.ID, err)
 	}
 	return b, nil
 }

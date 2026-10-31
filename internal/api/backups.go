@@ -108,7 +108,7 @@ func (s *server) enqueueBackup(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	bid, err := s.Backups.Enqueue(r.Context(), t, req.Database, actor(r))
+	bid, err := s.Backups.Enqueue(r.Context(), t, req.Database, backup.Person(actor(r)))
 	s.backupQueued(w, r, bid, err)
 }
 
@@ -121,7 +121,7 @@ func (s *server) retryBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, msgNoBackup)
 		return
 	}
-	bid, err := s.Backups.Retry(r.Context(), id, actor(r))
+	bid, err := s.Backups.Retry(r.Context(), id, backup.Person(actor(r)))
 	var refusal *backup.Refusal
 	switch {
 	case errors.Is(err, store.ErrNotFound):
