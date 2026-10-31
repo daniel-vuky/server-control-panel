@@ -46,7 +46,7 @@ func (s *server) backupSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, BackupSettings{
 		Defaults: fromStoreFields(f),
-		TimeZone: TimeZone{Name: s.Zone.String(), Offset: s.Now().In(s.Zone).Format("-07:00")},
+		TimeZone: s.timeZone(),
 	})
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/daniel-vuky/server-control-panel/internal/control"
 	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/logs"
+	"github.com/daniel-vuky/server-control-panel/internal/metrics"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
@@ -120,6 +121,22 @@ func run(log *slog.Logger) int {
 	sched.Start(context.Background())
 	defer sched.Close()
 
+	// The server metrics: samples every 30 s (reusing the hub's fresh reads),
+	// the hourly disk usage and the System cards. The host's /proc, its root
+	// (read-only) and the Docker socket are mounted by deploy/compose.yaml.
+	monitor := metrics.New(metrics.Options{
+		Store:           st,
+		Cmd:             docker,
+		Source:          hub,
+		Host:            metrics.Host{Proc: "/host/proc", Sys: "/sys", Root: "/host/root", DataDir: cfg.DataDir},
+		Socket:          "/var/run/docker.sock",
+		CloudflaredAddr: cfg.CloudflaredMetrics,
+		Now:             time.Now,
+		Log:             log,
+	})
+	monitor.Start(context.Background())
+	defer monitor.Close() // an early return; the shutdown below closes it first
+
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
 	baseCtx, cancelBase := context.WithCancel(context.Background())
@@ -140,6 +157,7 @@ func run(log *slog.Logger) int {
 			Logs:     logStreams,
 			Drive:    driveSvc,
 			Backups:  backups,
+			Metrics:  monitor,
 			Zone:     cfg.Zone,
 			Now:      time.Now,
 		}),
@@ -185,7 +203,8 @@ func run(log *slog.Logger) int {
 	// or queued backup ends interrupted.
 	waitCtx, cancelWait := context.WithTimeout(context.Background(), jobWait)
 	defer cancelWait()
-	sched.Close() // no scheduled backup is queued after this
+	monitor.Close() // no sample is written after this
+	sched.Close()   // no scheduled backup is queued after this
 	backups.Close()
 	if err := backups.Wait(waitCtx); err != nil {
 		log.Warn("a backup is still stopping; the next start marks it interrupted", "error", err)

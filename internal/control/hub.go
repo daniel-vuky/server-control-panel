@@ -381,6 +381,14 @@ func (h *Hub) RecentContainers(ctx context.Context, maxAge time.Duration) (cs []
 	return h.Containers(ctx)
 }
 
+// CachedContainers returns the cached container list and whether Docker
+// answered, when the last read is at most maxAge old; ok is false otherwise
+// (or after a failed read). Like RecentStats it never reads Docker or waits
+// for a read. Callers must not modify cs.
+func (h *Hub) CachedContainers(maxAge time.Duration) (cs []project.Container, dockerUp, ok bool) {
+	return h.recent(maxAge)
+}
+
 // Subscribe returns the current state and a channel of later ones. The
 // channel holds the latest state not yet received; it is never closed. The
 // first subscriber starts the tick and metrics loops and the last cancel stops

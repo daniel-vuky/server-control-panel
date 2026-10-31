@@ -18,12 +18,13 @@ import (
 // Interval is the time between the starts of two sampler ticks (decision 1).
 const Interval = 30 * time.Second
 
+// LatestMaxAge is how long the latest tick stands for the current values.
+const LatestMaxAge = 90 * time.Second
+
 const (
 	// hubMaxAge is how old the hub's stats or inspect read may be for the
 	// sampler to reuse it instead of reading Docker itself (decisions 7, 7a).
 	hubMaxAge = 15 * time.Second
-	// latestMaxAge is how long the latest tick stands for the current values.
-	latestMaxAge = 90 * time.Second
 	// maxBaselineAge is the longest time between two readings of a counter
 	// that still gives a rate: after a longer stall the sample is a gap, not
 	// an average over the stall.
@@ -219,7 +220,7 @@ func (s *Sampler) Latest() (Tick, bool) {
 	s.mu.Lock()
 	tk, ok := s.latest, s.haveLatest
 	s.mu.Unlock()
-	if !ok || s.now().Sub(tk.At) > latestMaxAge {
+	if !ok || s.now().Sub(tk.At) > LatestMaxAge {
 		return Tick{}, false
 	}
 	return tk, true

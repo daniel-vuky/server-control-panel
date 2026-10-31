@@ -621,3 +621,183 @@ type SummaryNextRun struct {
 	At       string   `json:"at"`
 	Projects []string `json:"projects"`
 }
+
+// ServerInfo is the body of GET /api/server: the System info and System
+// services cards and what the Server page's charts need. Available is false,
+// with Reason the words to show, when the host's /proc is not mounted (no
+// server metrics). Hostname, OS, Kernel and Docker.Version are "" before
+// Docker has answered once. DisksPartial means the one fallback row ("/
+// (panel data)"): re-running install.sh lists every disk. SampleSeconds is the
+// sampling interval and RetentionDays how long history is kept.
+type ServerInfo struct {
+	Available     bool          `json:"available"`
+	Reason        string        `json:"reason,omitempty"`
+	Hostname      string        `json:"hostname"`
+	OS            string        `json:"os"`
+	Kernel        string        `json:"kernel"`
+	Cores         int           `json:"cores"`
+	RAMBytes      int64         `json:"ramBytes"`
+	Docker        DockerService `json:"docker"`
+	Cloudflared   TunnelService `json:"cloudflared"`
+	Disks         []DiskInfo    `json:"disks"`
+	DisksPartial  bool          `json:"disksPartial"`
+	Thresholds    Thresholds    `json:"thresholds"`
+	SampleSeconds int           `json:"sampleSeconds"`
+	RetentionDays int           `json:"retentionDays"`
+	TimeZone      TimeZone      `json:"timeZone"`
+}
+
+// DockerService is ServerInfo.Docker: State is running, not_responding or
+// not_installed (no Docker socket); ContainersRunning is from the last good
+// docker info.
+type DockerService struct {
+	State             string `json:"state"`
+	Version           string `json:"version"`
+	ContainersRunning int    `json:"containersRunning"`
+}
+
+// TunnelService is ServerInfo.Cloudflared: State is connected, disconnected,
+// not_running or unknown (running, its metrics server not reachable);
+// Hostnames is null when its configuration could not be read.
+type TunnelService struct {
+	State     string `json:"state"`
+	Hostnames *int   `json:"hostnames" tstype:"number | null,required"`
+}
+
+// DiskInfo is one disk of the server, in bytes.
+type DiskInfo struct {
+	Mount      string `json:"mount"`
+	UsedBytes  uint64 `json:"usedBytes"`
+	TotalBytes uint64 `json:"totalBytes"`
+}
+
+// Thresholds are the server's alert lines in percent.
+type Thresholds struct {
+	CPUPercent  int `json:"cpuPercent"`
+	RAMPercent  int `json:"ramPercent"`
+	DiskPercent int `json:"diskPercent"`
+}
+
+// ServerPoint is one bucket of a ServerSeries: T is the bucket start; CPU is %
+// of the whole machine, memory in bytes, the rates in bytes per second; a
+// value is null where nothing was sampled (a gap).
+type ServerPoint struct {
+	T         string   `json:"t"`
+	CPU       *float64 `json:"cpu" tstype:"number | null,required"`
+	MemUsed   *int64   `json:"memUsed" tstype:"number | null,required"`
+	MemTotal  *int64   `json:"memTotal" tstype:"number | null,required"`
+	DiskRead  *float64 `json:"diskRead" tstype:"number | null,required"`
+	DiskWrite *float64 `json:"diskWrite" tstype:"number | null,required"`
+	NetIn     *float64 `json:"netIn" tstype:"number | null,required"`
+	NetOut    *float64 `json:"netOut" tstype:"number | null,required"`
+}
+
+// ServerLatest is ServerSeries.Latest, the newest sample (at most 90 s old):
+// At is when it was taken, the values as in ServerPoint.
+type ServerLatest struct {
+	At        string   `json:"at"`
+	CPU       *float64 `json:"cpu" tstype:"number | null,required"`
+	MemUsed   *int64   `json:"memUsed" tstype:"number | null,required"`
+	MemTotal  *int64   `json:"memTotal" tstype:"number | null,required"`
+	DiskRead  *float64 `json:"diskRead" tstype:"number | null,required"`
+	DiskWrite *float64 `json:"diskWrite" tstype:"number | null,required"`
+	NetIn     *float64 `json:"netIn" tstype:"number | null,required"`
+	NetOut    *float64 `json:"netOut" tstype:"number | null,required"`
+}
+
+// ServerSeries is the body of GET /api/server/metrics: one point per bucket
+// of the range (1h: 120 of 30 s, 24h: 288 of 5 min, 7d: 336 of 30 min), the
+// last bucket the one containing now. From and To are the first and last
+// bucket starts. HistoryStart is the oldest kept sample (null with none);
+// Latest is null when there is no sample of the last 90 s. Times are RFC 3339
+// in the server zone.
+type ServerSeries struct {
+	Range        string        `json:"range"`
+	StepSeconds  int           `json:"stepSeconds"`
+	From         string        `json:"from"`
+	To           string        `json:"to"`
+	HistoryStart *string       `json:"historyStart" tstype:"string | null,required"`
+	Latest       *ServerLatest `json:"latest" tstype:"ServerLatest | null,required"`
+	Points       []ServerPoint `json:"points"`
+}
+
+// ProjectPoint is one bucket of a ProjectSeries: CPU in Docker's % (100 = one
+// core), memory in bytes, the network rates in bytes per second; null in a
+// gap (the project was not running, Docker was down or nothing was sampled).
+type ProjectPoint struct {
+	T      string   `json:"t"`
+	CPU    *float64 `json:"cpu" tstype:"number | null,required"`
+	Mem    *int64   `json:"mem" tstype:"number | null,required"`
+	NetIn  *float64 `json:"netIn" tstype:"number | null,required"`
+	NetOut *float64 `json:"netOut" tstype:"number | null,required"`
+}
+
+// ProjectLatest is ProjectSeries.Latest, the project's newest sample (at
+// most 90 s old, while it runs).
+type ProjectLatest struct {
+	At     string   `json:"at"`
+	CPU    *float64 `json:"cpu" tstype:"number | null,required"`
+	Mem    *int64   `json:"mem" tstype:"number | null,required"`
+	NetIn  *float64 `json:"netIn" tstype:"number | null,required"`
+	NetOut *float64 `json:"netOut" tstype:"number | null,required"`
+}
+
+// ProjectSeries is the body of GET /api/projects/{id}/metrics, shaped like
+// ServerSeries.
+type ProjectSeries struct {
+	Range        string         `json:"range"`
+	StepSeconds  int            `json:"stepSeconds"`
+	From         string         `json:"from"`
+	To           string         `json:"to"`
+	HistoryStart *string        `json:"historyStart" tstype:"string | null,required"`
+	Latest       *ProjectLatest `json:"latest" tstype:"ProjectLatest | null,required"`
+	Points       []ProjectPoint `json:"points"`
+}
+
+// UsageRow is one row of the Usage by app table: a tracked, present project,
+// or the panel itself when its project is not tracked (ProjectID null, Name
+// "Server Control Panel"). Self marks the panel's row. Status is the
+// project's status from the hub's recent read, null when there is none (and
+// for the untracked panel row). CPUPercent is a share of the whole server
+// (Docker's % divided by the core count); NetBps is in + out. A value is null
+// when unknown (Docker down, no recent sample, no usable network delta) and 0
+// for a project with nothing running. DiskBytes is its named volumes plus its
+// folder, read hourly (null before the first read); DiskPartial means it is a
+// lower bound; DiskAt is when it was read.
+type UsageRow struct {
+	ProjectID   *int64   `json:"projectId" tstype:"number | null,required"`
+	Name        string   `json:"name"`
+	Status      *string  `json:"status" tstype:"string | null,required"`
+	Self        bool     `json:"self"`
+	CPUPercent  *float64 `json:"cpuPercent" tstype:"number | null,required"`
+	MemBytes    *int64   `json:"memBytes" tstype:"number | null,required"`
+	NetBps      *float64 `json:"netBps" tstype:"number | null,required"`
+	DiskBytes   *int64   `json:"diskBytes" tstype:"number | null,required"`
+	DiskPartial bool     `json:"diskPartial"`
+	DiskAt      *string  `json:"diskAt" tstype:"string | null,required"`
+}
+
+// UsageTotals are the server's totals the share bars divide by: CPU % used,
+// RAM used and network in + out from the latest server sample, and the used
+// space of the listed disks. Null when unknown.
+type UsageTotals struct {
+	CPUPercent    *float64 `json:"cpuPercent" tstype:"number | null,required"`
+	MemBytes      *int64   `json:"memBytes" tstype:"number | null,required"`
+	DiskUsedBytes *uint64  `json:"diskUsedBytes" tstype:"number | null,required"`
+	NetBps        *float64 `json:"netBps" tstype:"number | null,required"`
+}
+
+// UsageReport is the body of GET /api/server/usage: At is the latest sample
+// the values come from (null with none in the last 90 s), RFC 3339 in the
+// server zone.
+type UsageReport struct {
+	At     *string     `json:"at" tstype:"string | null,required"`
+	Totals UsageTotals `json:"totals"`
+	Rows   []UsageRow  `json:"rows"`
+}
+
+// MetricsSettings is the body of GET and POST /api/metrics-settings: how many
+// days of history are kept (7 to 30).
+type MetricsSettings struct {
+	RetentionDays int `json:"retentionDays"`
+}

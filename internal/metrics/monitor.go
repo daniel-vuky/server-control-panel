@@ -150,6 +150,10 @@ func (m *Monitor) Latest() (Tick, bool) { return m.sampler.Latest() }
 // Prune rolls up and prunes the samples at once (after a retention save).
 func (m *Monitor) Prune(ctx context.Context) error { return m.sampler.Prune(ctx) }
 
+// Disks lists the server's disks (Host.Disks): one statfs per disk, no
+// Docker read.
+func (m *Monitor) Disks() (disks []Disk, fallback bool) { return m.host.Disks() }
+
 // Thresholds are the server's alert lines.
 func (m *Monitor) Thresholds() Thresholds { return DefaultThresholds }
 
