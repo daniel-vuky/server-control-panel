@@ -1,6 +1,7 @@
 import { useOutletContext } from 'react-router'
 import type { Project } from '../../api/types.gen'
 import { useLive } from '../../app/live'
+import type { BackupFlow } from '../../lib/useBackup'
 import type { useProjectActions } from '../../lib/useProjectActions'
 
 /**
@@ -29,13 +30,15 @@ export type ProjectActions = ReturnType<typeof useProjectActions>
 /**
  * ProjectOutlet is what the detail page hands each tab. project is the live
  * project with any in-between status on top; raw is it as the server last sent
- * it, which is what the actions take. The page renders actions.dialogs.
+ * it, which is what the actions take. backup is the page's Back up now flow.
+ * The page renders actions.dialogs and backup.dialogs.
  */
 export type ProjectOutlet = {
   project: Project
   raw: Project
   dockerDown: boolean
   actions: ProjectActions
+  backup: BackupFlow
 }
 
 /** useProjectOutlet reads the detail page's project in one of its tabs. */

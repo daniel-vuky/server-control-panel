@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react'
 import { checkDocker } from '../api/projects'
-import type { LiveState, Project } from '../api/types.gen'
+import type { Backup, DriveStatus, LiveState, Project } from '../api/types.gen'
 
 /**
  * connection is the state of the live stream: connecting until the first state
@@ -23,6 +23,10 @@ type Live = {
   dockerUp: boolean | null
   /** null until the first state event arrives. */
   projects: Project[] | null
+  /** The active backups, running first; empty until the first state event. */
+  backups: Backup[]
+  /** The Google Drive connection; null until the first state event. */
+  drive: DriveStatus | null
   /** True while a Docker re-check is in flight. */
   checking: boolean
   recheckDocker(): Promise<void>
@@ -98,11 +102,17 @@ async function sessionExpired(): Promise<boolean> {
   }
 }
 
-function parseState(data: unknown): LiveState | null {
+/** A parsed state event: the Drive status may be missing from the stream. */
+type ParsedState = Omit<LiveState, 'drive'> & { drive: DriveStatus | null }
+
+function parseState(data: unknown): ParsedState | null {
   if (typeof data !== 'string') return null
   try {
     const v = JSON.parse(data) as Partial<LiveState> | null
-    if (v && typeof v.dockerUp === 'boolean' && Array.isArray(v.projects)) return v as LiveState
+    if (v && typeof v.dockerUp === 'boolean' && Array.isArray(v.projects)) {
+      // A server without the backup fields (or an older one) still parses.
+      return { ...v, backups: v.backups ?? [], drive: v.drive ?? null } as ParsedState
+    }
   } catch {
     // A malformed event is dropped; the next one corrects the state.
   }
@@ -113,6 +123,8 @@ function parseState(data: unknown): LiveState | null {
 export function LiveProvider({ children }: { children: ReactNode }) {
   const [dockerUp, setDockerUp] = useState<boolean | null>(null)
   const [projects, setProjects] = useState<Project[] | null>(null)
+  const [backups, setBackups] = useState<Backup[]>([])
+  const [drive, setDrive] = useState<DriveStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [connection, setConnection] = useState<Connection>('connecting')
 
@@ -166,6 +178,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         if (!next) return
         setDockerUp(next.dockerUp)
         setProjects(next.projects)
+        setBackups(next.backups)
+        setDrive(next.drive)
         hadOpen = true
         closedInRow = 0
         setConnection('open')
@@ -207,10 +221,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       connection,
       dockerUp,
       projects,
+      backups,
+      drive,
       checking,
       recheckDocker,
     }),
-    [connection, dockerUp, projects, checking, recheckDocker],
+    [connection, dockerUp, projects, backups, drive, checking, recheckDocker],
   )
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>
 }

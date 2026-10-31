@@ -11,9 +11,11 @@ import LoadError from '../components/LoadError'
 import MonitorOnlyTag from '../components/MonitorOnlyTag'
 import ProjectSwitch from '../components/ProjectSwitch'
 import StatusBadge from '../components/StatusBadge'
+import { projectRule } from '../lib/backup'
 import { formatCpu, formatMem } from '../lib/format'
 import type { Status } from '../lib/status'
 import { folderMissing, formatLastScan } from '../lib/time'
+import { type BackupFlow, useBackup } from '../lib/useBackup'
 import { useLoad } from '../lib/useLoad'
 import { useProjectActions } from '../lib/useProjectActions'
 import { useRescan } from '../lib/useRescan'
@@ -57,6 +59,7 @@ export default function DashboardPage() {
   const { load, retry } = useLoad(listProjects)
   const live = useLive()
   const actions = useProjectActions()
+  const backup = useBackup()
   const navigate = useNavigate()
   const workspaces = useLoad(listWorkspaces).load
 
@@ -92,10 +95,13 @@ export default function DashboardPage() {
             onStop={actions.stop}
             onRestart={actions.restart}
             onUntrack={actions.leave}
+            backup={backup}
+            driveState={live.drive?.state}
           />
         ))}
 
       {actions.dialogs}
+      {backup.dialogs}
     </section>
   )
 }
@@ -199,6 +205,19 @@ type TableProps = {
   onStop(p: Project): void
   onRestart(p: Project): void
   onUntrack(p: Project): void
+  backup: BackupFlow
+  driveState: string | undefined
+}
+
+/** backupItem is a row's Back up now menu item: the project's rule, held while its start is out. */
+function backupItem(p: Project, backup: BackupFlow, driveState: string | undefined) {
+  const rule = projectRule(p, driveState)
+  const pending = backup.pendingProjectId === p.id
+  return {
+    enabled: rule.enabled && !pending,
+    reason: pending ? 'A backup is starting' : rule.reason,
+    onRun: () => backup.start(p),
+  }
 }
 
 /** RAM_RANGE is the full RAM bar of design 01: 4 GB. */
@@ -232,7 +251,16 @@ function Meter({
   )
 }
 
-function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntrack }: TableProps) {
+function ProjectTable({
+  projects,
+  dockerDown,
+  onStart,
+  onStop,
+  onRestart,
+  onUntrack,
+  backup,
+  driveState,
+}: TableProps) {
   return (
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
       <table className="w-full min-w-[1000px] border-collapse text-left">
@@ -332,6 +360,7 @@ function ProjectTable({ projects, dockerDown, onStart, onStop, onRestart, onUntr
                     onStart={() => onStart(p)}
                     onRestart={() => onRestart(p)}
                     onUntrack={() => onUntrack(p)}
+                    backup={backupItem(p, backup, driveState)}
                   />
                 </div>
               </td>

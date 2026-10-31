@@ -6,19 +6,21 @@ package project
 // Database is a database a project uses. Only names are kept, never values:
 // Sources lists the variables or services it was found in.
 type Database struct {
-	Type         string   `json:"type"`         // postgresql | mysql | mongodb | sqlite
-	Name         string   `json:"name"`         // database name, or the service name
-	LocationKind string   `json:"locationKind"` // container | host | external | file | unknown
-	Location     string   `json:"location"`     // service or container name, host name or file path
+	Type         string   `json:"type"`                   // postgresql | mysql | mongodb | sqlite
+	Name         string   `json:"name"`                   // database name, or the service name
+	NameExplicit bool     `json:"nameExplicit,omitempty"` // Name came from a variable or URL, not the service-name placeholder
+	LocationKind string   `json:"locationKind"`           // container | host | external | file | unknown
+	Location     string   `json:"location"`               // service or container name, host name or file path
 	Sources      []string `json:"sources"`
 }
 
 // Service is one service of a compose project, as the compose config reports it.
 type Service struct {
-	Name    string   `json:"name"`
-	Image   string   `json:"image"`
-	Ports   []string `json:"ports"`
-	Volumes []Volume `json:"volumes"`
+	Name          string   `json:"name"`
+	Image         string   `json:"image"`
+	ContainerName string   `json:"containerName,omitempty"` // empty when compose sets none, and on rows stored before it was read
+	Ports         []string `json:"ports"`
+	Volumes       []Volume `json:"volumes"`
 }
 
 // Volume is one mount of a service.

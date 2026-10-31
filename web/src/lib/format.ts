@@ -30,3 +30,35 @@ export function formatUptime(since: string, now: Date = new Date()): string {
   if (hours < 24) return `${hours}h ${minutes % 60}m`
   return `${Math.floor(hours / 24)}d ${hours % 24}h`
 }
+
+const BYTE_UNITS = ['KB', 'MB', 'GB', 'TB', 'PB']
+
+/**
+ * formatBytes is a size as the server words it (1024-based): "512 B",
+ * "4.2 GB", "38 MB"; one decimal below 10, else none.
+ */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${Math.max(0, Math.round(n))} B`
+  let size = 1024
+  let unit = BYTE_UNITS[0]
+  for (let i = 0; i < BYTE_UNITS.length; i++) {
+    unit = BYTE_UNITS[i]
+    if (n < size * 1024 || i === BYTE_UNITS.length - 1) break
+    size *= 1024
+  }
+  const v = n / size
+  return `${v < 10 ? v.toFixed(1) : v.toFixed(0)} ${unit}`
+}
+
+/**
+ * formatDuration is how long a backup took: "41s", "1m 02s", "1h 05m"
+ * (design 02). Zero or less is "—" (a backup that never ran).
+ */
+export function formatDuration(ms: number): string {
+  if (!(ms > 0)) return '—'
+  const s = Math.max(1, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+}

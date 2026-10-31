@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScanJob, ScanResult, ScanRow } from '../../api/types.gen'
+import { makeDatabase } from '../../test/projects'
 import { renderApp } from '../../test/renderApp'
 
 type Listener = (e: MessageEvent) => void
@@ -64,15 +65,7 @@ const rows: ScanRow[] = [
     status: 'running',
     self: false,
     services: 2,
-    databases: [
-      {
-        type: 'postgresql',
-        name: 'shop',
-        locationKind: 'container',
-        location: 'db',
-        sources: ['POSTGRES_DB'],
-      },
-    ],
+    databases: [makeDatabase({ name: 'shop', sources: ['POSTGRES_DB'] })],
     warning: '',
     workspaceId: 0,
     new: false,

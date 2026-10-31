@@ -35,6 +35,12 @@ services:
       pnpm_config_store_dir: /root/.local/share/pnpm/store
       WORKSPACE_ROOTS: /src/dev/workspaces
       PANEL_DATA_DIR: /src/data
+      # Dev-only values: a fixed key, the Vite origin, and no Google credentials,
+      # so the fake Drive (dev build tag) stands in for Google.
+      PANEL_SECRET_KEY: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+      PANEL_PUBLIC_URL: http://localhost:5173
+      GOOGLE_CLIENT_ID: ""
+      GOOGLE_CLIENT_SECRET: ""
 
   web:
     image: scp-dev

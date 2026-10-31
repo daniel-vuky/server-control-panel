@@ -109,3 +109,17 @@ func TestNormalizeProjectName(t *testing.T) {
 		}
 	}
 }
+
+func TestComposeDetailsContainerName(t *testing.T) {
+	cfg, err := ParseConfig(readFixture(t, "config-basic.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.Details()
+	if d.Services[0].Name != "db" || d.Services[0].ContainerName != "" {
+		t.Errorf("db = %+v, want no container name", d.Services[0])
+	}
+	if d.Services[1].Name != "web" || d.Services[1].ContainerName != "shop-web" {
+		t.Errorf("web = %+v, want container name shop-web", d.Services[1])
+	}
+}

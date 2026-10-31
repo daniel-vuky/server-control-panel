@@ -258,8 +258,8 @@ func replaceDatabases(ctx context.Context, tx *sql.Tx, projectID int64, dbs []pr
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO databases (project_id, type, name, location_kind, location, sources) VALUES (?, ?, ?, ?, ?, ?)`,
-			projectID, d.Type, d.Name, d.LocationKind, d.Location, string(sources)); err != nil {
+			`INSERT INTO databases (project_id, type, name, name_explicit, location_kind, location, sources) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			projectID, d.Type, d.Name, d.NameExplicit, d.LocationKind, d.Location, string(sources)); err != nil {
 			return fmt.Errorf("store: replace databases: %w", err)
 		}
 	}

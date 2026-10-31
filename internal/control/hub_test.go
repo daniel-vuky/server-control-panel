@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -76,7 +77,11 @@ func waitLoops(t *testing.T, h *Hub) {
 	}
 }
 
-// subscribe subscribes for the rest of the test.
+// subscribe subscribes for the rest of the test. From cold it runs exactly
+// one tick (one ping and the next reply of each queue), and the tick loop's
+// first tick comes tickInterval after it, so with a long interval the test's
+// Docker counts and updates move only when the test makes them. The metrics
+// loop does start at once (see quietSubscribe).
 func subscribe(t *testing.T, h *Hub) (State, <-chan State) {
 	t.Helper()
 	cur, updates, cancel := h.Subscribe()
@@ -173,7 +178,7 @@ func TestViewsEffectiveStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vs := Views(ts, cs, tt.readErr, tt.dockerUp, tt.inFlight, nil, nil)
+			vs := Views(ts, cs, tt.readErr, tt.dockerUp, tt.inFlight, nil, nil, drive.Status{})
 			if len(vs) != len(ts) {
 				t.Fatalf("got %d views, want %d", len(vs), len(ts))
 			}
@@ -244,6 +249,46 @@ func TestHubSubscribeGetsState(t *testing.T) {
 	}
 }
 
+// The first subscribe from cold runs one tick, not two: the loop goroutine,
+// held here until Subscribe has returned, waits the interval from that tick
+// instead of reading Docker again at once.
+func TestHubSubscribeFromColdReadsOnce(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	release := make(chan struct{})
+	h.loopStart = func() { <-release }
+	cur, _ := subscribe(t, h)
+	if viewOf(t, cur, "shop").Status != project.StatusRunning {
+		t.Fatalf("state = %+v", cur)
+	}
+	close(release)
+	time.Sleep(100 * time.Millisecond) // the loop's first shared would run now
+	if p, c := e.cmd.count(runner.DockerPing), e.cmd.count(runner.DockerContainers); p != 1 || c != 1 {
+		t.Fatalf("%d pings and %d containers reads after one subscribe, want 1 and 1", p, c)
+	}
+}
+
+// The loop keeps the interval from the last read: a subscribe on a cache read
+// a moment ago runs no tick, and the loop's first comes tickInterval after
+// that read, not after Subscribe.
+func TestHubLoopFirstTickKeepsTheInterval(t *testing.T) {
+	e, h := newHubEnv(t, time.Second)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	h.Check(context.Background())
+	read := time.Now()
+	time.Sleep(700 * time.Millisecond)
+	subscribe(t, h)
+	if n := e.cmd.count(runner.DockerPing); n != 1 {
+		t.Fatalf("%d pings after a subscribe on a fresh cache, want 1 (the Check)", n)
+	}
+	waitTicks(t, e.cmd, 1)
+	// About 1s. A tick at once would come at about 700ms, the interval from
+	// Subscribe at 1.7s; the upper bound leaves a loaded -race runner 600ms.
+	if d := time.Since(read); d < 900*time.Millisecond || d >= 1600*time.Millisecond {
+		t.Fatalf("the loop's first tick came %s after the last read, want about 1s", d)
+	}
+}
+
 func TestHubTicksNeverOverlap(t *testing.T) {
 	e, h := newHubEnv(t, 20*time.Millisecond)
 	e.cmd.on(runner.DockerPing, reply{delay: 50 * time.Millisecond}).
@@ -273,6 +318,7 @@ func TestHubCheckWaitsForTheTickInProgress(t *testing.T) {
 	gate := make(chan struct{})
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).on(runner.DockerContainers, reply{stdout: stoppedOut("shop"), gate: gate})
 	subscribe(t, h)
+	reads := e.cmd.count(runner.DockerContainers)
 
 	first := make(chan State, 1)
 	go func() { first <- h.Check(context.Background()) }()
@@ -286,8 +332,8 @@ func TestHubCheckWaitsForTheTickInProgress(t *testing.T) {
 			t.Fatalf("Check = %+v, want shop stopped", s)
 		}
 	}
-	if n := e.cmd.count(runner.DockerContainers); n != 2 {
-		t.Fatalf("%d containers reads, want 2 (one subscribe tick, one shared check)", n)
+	if n := e.cmd.count(runner.DockerContainers) - reads; n != 1 {
+		t.Fatalf("%d containers reads, want 1 (one shared check)", n)
 	}
 }
 
@@ -357,7 +403,7 @@ func TestHubDropsStaleTick(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	gate := make(chan struct{})
 	e.cmd.on(runner.DockerPing, reply{}).
-		containers(runningOut("shop")).                                             // 1: the first tick
+		containers(runningOut("shop")).                                             // 1: Subscribe's tick
 		on(runner.DockerContainers, reply{stdout: runningOut("shop"), gate: gate}). // 2: the stale hub read
 		containers(stoppedOut("shop")).                                             // 3: the controller's re-read, then the retry
 		on(runner.ComposeStop, reply{})
@@ -365,6 +411,7 @@ func TestHubDropsStaleTick(t *testing.T) {
 	if viewOf(t, cur, "shop").Status != project.StatusRunning {
 		t.Fatalf("state = %+v", cur)
 	}
+	reads := e.cmd.count(runner.DockerContainers)
 
 	stale := make(chan State, 1)
 	go func() { stale <- h.Check(context.Background()) }()
@@ -372,8 +419,8 @@ func TestHubDropsStaleTick(t *testing.T) {
 
 	res := e.do(t, "shop", project.ActionStop)
 	wantResult(t, res, OutcomeOK, project.StatusStopped, "")
-	if n := e.cmd.count(runner.DockerContainers); n != 3 {
-		t.Fatalf("%d containers reads before the gate opens, want 3 (the pre-check uses the hub's list)", n)
+	if n := e.cmd.count(runner.DockerContainers) - reads; n != 2 {
+		t.Fatalf("%d containers reads before the gate opens, want 2 (the pre-check uses the hub's list)", n)
 	}
 	close(gate)
 
@@ -571,6 +618,38 @@ func TestHubPanicReleasesWaiters(t *testing.T) {
 	}
 	if s := h.Check(context.Background()); !s.DockerUp {
 		t.Fatalf("Check after the panic = %+v, want Docker up", s)
+	}
+}
+
+// A tick that cannot read the store after a store change only has a tracked
+// list known to be behind: it publishes nothing and is read again, at most
+// maxTickReads times, instead of sending that list.
+func TestHubTickWithoutTheStoreAfterAChangePublishesNothing(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	updates := quietSubscribe(t, h)
+	if err := e.st.Close(); err != nil { // TrackedProjects now fails
+		t.Fatal(err)
+	}
+	h.storeChanged() // a change the cache has not read; starts no tick
+	e.cmd.set(runner.DockerContainers, reply{stdout: stoppedOut("shop")})
+	pings := e.cmd.count(runner.DockerPing)
+
+	s := h.Check(context.Background())
+	if n := e.cmd.count(runner.DockerPing) - pings; n != maxTickReads {
+		t.Fatalf("%d ticks, want %d (each one stale)", n, maxTickReads)
+	}
+	noUpdate(t, updates)
+	// The Docker half of the cache is kept, so Retry and Containers still
+	// see Docker as it is now.
+	if v := viewOf(t, s, "shop"); !s.DockerUp || v.Status != project.StatusStopped {
+		t.Fatalf("Check returned Docker up %v and shop %s, want the fresh Docker read", s.DockerUp, v.Status)
+	}
+	h.mu.Lock()
+	current := h.storeCurrentLocked()
+	h.mu.Unlock()
+	if current {
+		t.Fatal("the cache counts as current though no tick read the store")
 	}
 }
 
@@ -923,7 +1002,8 @@ func TestNoMetricsWithoutSubscriber(t *testing.T) {
 
 // After a successful WithLocks write the hub's cached list still holds the
 // rows the write dropped; a metrics merge must not publish them with their
-// actions before the caller's Refresh.
+// actions before the catch-up tick has read the store (held here at its
+// containers read).
 func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
 	setMetrics(t, 5*time.Millisecond, time.Hour)
 	e, h := newHubEnv(t, time.Hour)
@@ -937,6 +1017,8 @@ func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
 		untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "blog") != nil })
 	}
 
+	gate := make(chan struct{})
+	e.cmd.set(runner.DockerContainers, reply{stdout: runningOut("shop") + runningOut("blog"), gate: gate})
 	shop := e.ids["shop"]
 	if err := e.ctl.WithLocks([]int64{shop}, func() error {
 		_, err := e.st.UntrackProject(context.Background(), shop)
@@ -961,7 +1043,7 @@ func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
 	if n := e.cmd.count(runner.DockerStats) - reads; n < 3 {
 		t.Fatalf("%d stats reads during the check, want at least 3", n)
 	}
-	h.Refresh()
+	close(gate)
 	untilUpdate(t, updates, func(s State) bool {
 		return !slices.ContainsFunc(s.Projects, func(v ProjectView) bool { return v.ID == shop })
 	})
@@ -1006,7 +1088,7 @@ func TestViewsComponentsAndTotals(t *testing.T) {
 		containerID("blog", "db"):  {CPUPercent: 9, MemBytes: 9}, // exited: not counted
 		containerID("over", "db"):  {CPUPercent: 3, MemBytes: 30},
 	}
-	vs := Views(ts, cs, nil, true, nil, insp, use)
+	vs := Views(ts, cs, nil, true, nil, insp, use, drive.Status{})
 
 	shop := vs[0]
 	if len(shop.Components) != 2 || shop.CPUPercent == nil || *shop.CPUPercent != 3.5 || shop.MemBytes == nil || *shop.MemBytes != 150 ||
@@ -1023,7 +1105,7 @@ func TestViewsComponentsAndTotals(t *testing.T) {
 	}
 
 	// Without the maps (GET /api/projects) the docker ps part is still there.
-	vs = Views(ts, cs, nil, true, nil, nil, nil)
+	vs = Views(ts, cs, nil, true, nil, nil, nil, drive.Status{})
 	if v := vs[0]; len(v.Components) != 2 || v.CPUPercent != nil || v.MemBytes != nil || v.UpSince != nil {
 		t.Fatalf("shop without maps = cpu %v mem %v up %v %+v", v.CPUPercent, v.MemBytes, v.UpSince, v.Components)
 	}
@@ -1039,10 +1121,383 @@ func TestViewsDockerDownNoComponents(t *testing.T) {
 		dockerUp bool
 	}{"Docker down": {errors.New("down"), false}, "read failed": {errors.New("boom"), true}} {
 		t.Run(name, func(t *testing.T) {
-			v := Views(ts, cs, tc.readErr, tc.dockerUp, nil, insp, use)[0]
+			v := Views(ts, cs, tc.readErr, tc.dockerUp, nil, insp, use, drive.Status{})[0]
 			if v.Components == nil || len(v.Components) != 0 || v.CPUPercent != nil || v.MemBytes != nil || v.UpSince != nil {
 				t.Fatalf("shop = %+v, want no components and no metrics", v)
 			}
 		})
+	}
+}
+
+func TestViewsDatabaseBackupRule(t *testing.T) {
+	services := []project.Service{{Name: "app"}, {Name: "db"}}
+	running := project.ParseContainers([]byte(runningOut("shop")))
+	stopped := project.ParseContainers([]byte(stoppedOut("shop")))
+	pg := project.Database{Type: "postgresql", Name: "app_db", LocationKind: "container", Location: "db", Sources: []string{"POSTGRES_DB"}}
+	connected := drive.Status{State: drive.StateConnected, Folder: &drive.Folder{ID: "f1", Name: "Panel backups"}}
+	since := time.Now()
+	with := func(f func(*project.Database)) project.Database {
+		d := pg
+		f(&d)
+		return d
+	}
+	tests := []struct {
+		name     string
+		db       project.Database
+		cs       []project.Container
+		readErr  error
+		dockerUp bool
+		drive    drive.Status
+		want     string
+		missing  *time.Time
+	}{
+		{"a running container database is allowed", pg, running, nil, true, connected, "", nil},
+		{"the container name resolves too", with(func(d *project.Database) { d.Location = "shop-db-1" }), running, nil, true, connected, "", nil},
+		{"a PostgreSQL placeholder name is allowed", with(func(d *project.Database) { d.Name = "db" }), running, nil, true, connected, "", nil},
+		{"SQLite is not supported", project.Database{Type: "sqlite", Name: "app.db", LocationKind: "file", Location: "/data/app.db"}, running, nil, true, connected, project.ReasonNotSupported, nil},
+		{"a host database is not supported", with(func(d *project.Database) { d.LocationKind = "host"; d.Location = "db.example.com" }), running, nil, true, connected, project.ReasonNotSupported, nil},
+		{"an unresolved service is not supported", with(func(d *project.Database) { d.Location = "ghost" }), running, nil, true, connected, project.ReasonNotSupported, nil},
+		{"a MySQL placeholder name has no name", project.Database{Type: "mysql", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, connected, project.ReasonNoDBName, nil},
+		{"a MongoDB placeholder name has no name", project.Database{Type: "mongodb", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, connected, project.ReasonNoDBName, nil},
+		{"a name the slot refuses has no name", with(func(d *project.Database) { d.Name = "-bad name" }), running, nil, true, connected, project.ReasonNoDBName, nil},
+		{"a stopped service is not running", pg, stopped, nil, true, connected, project.ReasonDBNotRunning, nil},
+		{"Docker down is docker_down", pg, nil, errors.New("down"), false, connected, project.ReasonDockerDown, nil},
+		{"a failed read is docker_down", pg, nil, errors.New("boom"), true, connected, project.ReasonDockerDown, nil},
+		{"Drive not connected", pg, running, nil, true, drive.Status{State: drive.StateNotConnected}, "drive_not_connected", nil},
+		{"Drive not configured", pg, running, nil, true, drive.Status{State: drive.StateNotConfigured, Reason: "no client id"}, "drive_not_connected", nil},
+		{"Drive state unknown", pg, running, nil, true, drive.Status{}, "drive_not_connected", nil},
+		{"Drive expired", pg, running, nil, true, drive.Status{State: drive.StateExpired}, "drive_expired", nil},
+		{"Drive connected without a folder", pg, running, nil, true, drive.Status{State: drive.StateConnected}, "folder_missing", nil},
+		{"a missing project is not found", pg, running, nil, true, connected, "not_found", &since},
+		{"not found wins over the database rule", project.Database{Type: "sqlite", Name: "app.db", LocationKind: "file", Location: "/data/app.db"}, running, nil, true, connected, "not_found", &since},
+		{"the database rule wins over Drive", project.Database{Type: "mysql", Name: "db", LocationKind: "container", Location: "db"}, running, nil, true, drive.Status{State: drive.StateExpired}, project.ReasonNoDBName, nil},
+		{"not running wins over Drive", pg, stopped, nil, true, drive.Status{State: drive.StateNotConnected}, project.ReasonDBNotRunning, nil},
+	}
+	// The resolved service, not the location, for a container-name location.
+	byName := with(func(d *project.Database) { d.Location = "shop-db-1" })
+	if sv, _ := project.BackupReason(byName, "shop", services, stopped, true); sv != "db" {
+		t.Fatalf("BackupReason service = %q, want db", sv)
+	}
+	tests = append(tests, struct {
+		name     string
+		db       project.Database
+		cs       []project.Container
+		readErr  error
+		dockerUp bool
+		drive    drive.Status
+		want     string
+		missing  *time.Time
+	}{"a stopped service by container name", byName, stopped, nil, true, connected, project.ReasonDBNotRunning, nil})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := []store.Tracked{{ID: 1, DisplayName: "shop", ComposeProject: "shop", Services: []string{"app", "db"},
+				ServiceDetails: services, Databases: []project.Database{tt.db}, MissingSince: tt.missing}}
+			v := Views(ts, tt.cs, tt.readErr, tt.dockerUp, nil, nil, nil, tt.drive)[0]
+			if len(v.DatabaseViews) != 1 {
+				t.Fatalf("got %d database views, want 1", len(v.DatabaseViews))
+			}
+			dv := v.DatabaseViews[0]
+			if dv.Backup.Reason != tt.want || dv.Backup.Allowed != (tt.want == "") {
+				t.Errorf("backup = %+v, want reason %q", dv.Backup, tt.want)
+			}
+			// The rule carries the service BackupReason resolved, for the words.
+			wantService, _ := project.BackupReason(tt.db, "shop", services, tt.cs, tt.dockerUp)
+			if tt.missing != nil {
+				wantService = ""
+			}
+			if dv.Backup.Service != wantService {
+				t.Errorf("service = %q, want %q", dv.Backup.Service, wantService)
+			}
+			if dv.Key != project.DatabaseKey(tt.db) || !slices.Equal(dv.Sources, tt.db.Sources) || dv.Name != tt.db.Name || dv.Type != tt.db.Type {
+				t.Errorf("view = %+v, want the database %+v with its key", dv, tt.db)
+			}
+		})
+	}
+
+	// No database gives an empty list, never nil.
+	v := Views([]store.Tracked{{ID: 1, ComposeProject: "shop"}}, running, nil, true, nil, nil, nil, connected)[0]
+	if v.DatabaseViews == nil || len(v.DatabaseViews) != 0 {
+		t.Fatalf("database views = %#v, want empty", v.DatabaseViews)
+	}
+}
+
+// backupSource is a settable backup source for the hub.
+type backupSource struct {
+	mu sync.Mutex
+	bs []store.Backup
+}
+
+func (b *backupSource) set(bs ...store.Backup) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.bs = bs
+}
+
+func (b *backupSource) get() []store.Backup {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.bs)
+}
+
+// dockerReads counts the hub's Docker calls.
+func dockerReads(cmd *fakeCmd) int {
+	return cmd.count(runner.DockerPing) + cmd.count(runner.DockerContainers) + cmd.count(runner.DockerInspect) + cmd.count(runner.DockerStats)
+}
+
+// quietSubscribe loads the cache with one Check and registers a subscriber
+// channel without starting the loops, so the test's Docker counts move only
+// when the test makes them: Subscribe's metrics loop reads docker.stats at
+// once, and with no loop running a store change only marks the cache not
+// ready (no catch-up tick).
+func quietSubscribe(t *testing.T, h *Hub) <-chan State {
+	t.Helper()
+	h.Check(context.Background())
+	ch := make(chan State, 1)
+	h.mu.Lock()
+	h.subs[ch] = struct{}{}
+	h.mu.Unlock()
+	t.Cleanup(func() {
+		h.mu.Lock()
+		delete(h.subs, ch)
+		h.mu.Unlock()
+	})
+	return ch
+}
+
+func TestStateCarriesBackupsAndDrive(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+
+	// Without sources: no backup and Drive not connected.
+	if s := h.current(); s.Backups == nil || len(s.Backups) != 0 || s.Drive.State != drive.StateNotConnected {
+		t.Fatalf("state without sources = %+v %+v, want no backup and not_connected", s.Backups, s.Drive)
+	}
+
+	src := &backupSource{}
+	src.set(store.Backup{ID: 7, ProjectID: e.ids["shop"], State: "running"}, store.Backup{ID: 8, State: "queued", QueuePosition: 1})
+	h.SetBackupSource(src.get)
+	h.SetDriveSource(func() drive.Status {
+		return drive.Status{State: drive.StateConnected, Email: "owner@example.com", Folder: &drive.Folder{ID: "f1", Name: "Panel backups"}}
+	})
+	cur, _ := subscribe(t, h)
+	if len(cur.Backups) != 2 || cur.Backups[0].ID != 7 || cur.Backups[1].QueuePosition != 1 {
+		t.Fatalf("backups = %+v, want 7 then 8 at position 1", cur.Backups)
+	}
+	if cur.Drive.State != drive.StateConnected || cur.Drive.Email != "owner@example.com" || cur.Drive.Folder == nil || cur.Drive.Folder.Name != "Panel backups" {
+		t.Fatalf("drive = %+v, want connected with the folder", cur.Drive)
+	}
+}
+
+func TestPublishFromCacheNoDockerRead(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	src := &backupSource{}
+	h.SetBackupSource(src.get)
+	state := drive.StateNotConnected
+	var dmu sync.Mutex
+	h.SetDriveSource(func() drive.Status {
+		dmu.Lock()
+		defer dmu.Unlock()
+		return drive.Status{State: state}
+	})
+	updates := quietSubscribe(t, h)
+	if cur := h.current(); len(cur.Backups) != 0 {
+		t.Fatalf("backups = %+v, want none", cur.Backups)
+	}
+	reads := dockerReads(e.cmd)
+
+	src.set(store.Backup{ID: 1, State: "queued", QueuePosition: 1})
+	h.Publish()
+	s := nextUpdate(t, updates, time.Second)
+	if len(s.Backups) != 1 || s.Backups[0].ID != 1 {
+		t.Fatalf("backups = %+v, want backup 1", s.Backups)
+	}
+	// Only a queue position change is still a change.
+	src.set(store.Backup{ID: 1, State: "queued", QueuePosition: 2})
+	h.Publish()
+	if s := nextUpdate(t, updates, time.Second); s.Backups[0].QueuePosition != 2 {
+		t.Fatalf("backups = %+v, want position 2", s.Backups)
+	}
+	// Nothing changed: nothing is sent.
+	h.Publish()
+	noUpdate(t, updates)
+
+	dmu.Lock()
+	state = drive.StateConnected
+	dmu.Unlock()
+	h.Publish()
+	if s := nextUpdate(t, updates, time.Second); s.Drive.State != drive.StateConnected {
+		t.Fatalf("drive = %+v, want connected", s.Drive)
+	}
+	if n := dockerReads(e.cmd); n != reads {
+		t.Fatalf("%d Docker reads during Publish, want none", n-reads)
+	}
+}
+
+// A lifecycle command does not freeze Publish: the take's lockChanged brings
+// the cache level with the Controller before the command runs, so backup
+// progress keeps flowing while it runs, with the project shown in flight.
+func TestPublishDuringALifecycleCommand(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	gate := make(chan struct{})
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"), stoppedOut("shop")).
+		on(runner.ComposeStop, reply{gate: gate})
+	src := &backupSource{}
+	h.SetBackupSource(src.get)
+	_, updates := subscribe(t, h)
+
+	done := make(chan Result, 1)
+	go func() { done <- e.do(t, "shop", project.ActionStop) }()
+	e.cmd.waitRunning(t, runner.ComposeStop, 1)
+	untilUpdate(t, updates, func(s State) bool { return viewOf(t, s, "shop").Status == project.StatusStopping })
+	for i := 1; i <= 3; i++ {
+		src.set(store.Backup{ID: int64(i), State: "running"})
+		h.Publish()
+		s := nextUpdate(t, updates, time.Second)
+		if len(s.Backups) != 1 || s.Backups[0].ID != int64(i) || viewOf(t, s, "shop").Status != project.StatusStopping {
+			t.Fatalf("update %d = %+v with shop %s, want backup %d with shop stopping", i, s.Backups, viewOf(t, s, "shop").Status, i)
+		}
+	}
+	close(gate)
+	wantResult(t, <-done, OutcomeOK, project.StatusStopped, "")
+}
+
+func TestPublishSkipsWhenNotReady(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	src := &backupSource{}
+	h.SetBackupSource(src.get)
+
+	// No tick yet: nothing is built or sent.
+	src.set(store.Backup{ID: 1, State: "running"})
+	h.Publish()
+	h.mu.Lock()
+	sent := h.lastSent
+	h.mu.Unlock()
+	if sent != nil || dockerReads(e.cmd) != 0 {
+		t.Fatalf("Publish before the first tick sent %s after %d Docker reads", sent, dockerReads(e.cmd))
+	}
+
+	updates := quietSubscribe(t, h)
+	// A lock taken without its lockChanged yet leaves the cache behind the
+	// Controller: Publish waits for the lock change.
+	shop := e.ids["shop"]
+	e.ctl.mu.Lock()
+	e.ctl.locks[shop] = projectLock{status: project.StatusStopping}
+	e.ctl.gen++
+	e.ctl.mu.Unlock()
+	src.set(store.Backup{ID: 2, State: "running"})
+	h.Publish()
+	noUpdate(t, updates)
+	h.lockChanged(nil)
+	if s := nextUpdate(t, updates, time.Second); len(s.Backups) != 1 || s.Backups[0].ID != 2 {
+		t.Fatalf("backups = %+v, want backup 2", s.Backups)
+	}
+	e.ctl.unlock(shop)
+	h.lockChanged(nil)
+	nextUpdate(t, updates, time.Second)
+
+	// A successful WithLocks write leaves the cache behind the store: neither
+	// Publish nor a lock change publishes it until a tick has read the store.
+	if err := e.ctl.WithLocks([]int64{shop}, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	nextUpdate(t, updates, time.Second) // the take
+	src.set(store.Backup{ID: 3, State: "running"})
+	h.Publish()
+	h.lockChanged(nil)
+	noUpdate(t, updates)
+	h.Check(context.Background())
+	if s := nextUpdate(t, updates, time.Second); len(s.Backups) != 1 || s.Backups[0].ID != 3 {
+		t.Fatalf("backups = %+v, want backup 3", s.Backups)
+	}
+}
+
+func TestRecentContainersUsesCacheWhenFresh(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"), stoppedOut("shop"))
+	h.Check(context.Background())
+	reads := e.cmd.count(runner.DockerContainers)
+
+	cs, ok := h.RecentContainers(context.Background(), time.Minute)
+	if !ok || project.StatusOf(cs, "shop", []string{"app", "db"}) != project.StatusRunning {
+		t.Fatalf("RecentContainers = %v %v, want the cached running list", cs, ok)
+	}
+	if n := e.cmd.count(runner.DockerContainers); n != reads {
+		t.Fatalf("%d container reads with a fresh cache, want none", n-reads)
+	}
+
+	// Too old: one tick reads again.
+	time.Sleep(5 * time.Millisecond)
+	cs, ok = h.RecentContainers(context.Background(), time.Millisecond)
+	if !ok || project.StatusOf(cs, "shop", []string{"app", "db"}) != project.StatusStopped {
+		t.Fatalf("RecentContainers = %v %v, want the re-read stopped list", cs, ok)
+	}
+	if n := e.cmd.count(runner.DockerContainers); n != reads+1 {
+		t.Fatalf("%d container reads with a stale cache, want 1", n-reads)
+	}
+
+	// Docker down, recently seen: ok false without a read.
+	e.cmd.set(runner.DockerPing, reply{err: errors.New("down")})
+	h.Check(context.Background())
+	pings := e.cmd.count(runner.DockerPing)
+	if cs, ok := h.RecentContainers(context.Background(), time.Minute); ok || cs != nil {
+		t.Fatalf("RecentContainers = %v %v with Docker down, want nil false", cs, ok)
+	}
+	if n := e.cmd.count(runner.DockerPing); n != pings {
+		t.Fatalf("%d pings with a fresh Docker-down cache, want none", n-pings)
+	}
+}
+
+// The sources run under hub.mu and the build reads neither the store nor
+// Docker: with the store closed, Publish still builds and sends the state.
+func TestNoStoreReadUnderMu(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	src := &backupSource{}
+	var underMu sync.Map
+	held := func(k string) {
+		if h.mu.TryLock() {
+			h.mu.Unlock()
+			underMu.Store(k, false)
+			return
+		}
+		underMu.Store(k, true)
+	}
+	h.SetBackupSource(func() []store.Backup {
+		held("backups")
+		return src.get()
+	})
+	h.SetDriveSource(func() drive.Status {
+		held("drive")
+		return drive.Status{State: drive.StateConnected}
+	})
+	updates := quietSubscribe(t, h)
+	reads := dockerReads(e.cmd)
+	if err := e.st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	src.set(store.Backup{ID: 3, State: "running"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.Publish()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Publish did not return")
+	}
+	if s := nextUpdate(t, updates, time.Second); len(s.Backups) != 1 || s.Backups[0].ID != 3 {
+		t.Fatalf("backups = %+v, want backup 3", s.Backups)
+	}
+	for _, k := range []string{"backups", "drive"} {
+		if v, _ := underMu.Load(k); v != true {
+			t.Errorf("the %s source ran without hub.mu held", k)
+		}
+	}
+	if n := dockerReads(e.cmd); n != reads {
+		t.Fatalf("%d Docker reads during Publish, want none", n-reads)
 	}
 }

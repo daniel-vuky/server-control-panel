@@ -8,6 +8,8 @@ type Props = {
   onRestart(): void
   /** onUntrack runs the red item: Stop tracking for `untrack`, Remove from list for `remove`. */
   onUntrack?(): void
+  /** backup is the Back up now item: whether it can run, its reason when not, and the run. */
+  backup?: { enabled: boolean; reason: string; onRun(): void }
   /** status, self and dockerDown give a disabled item its reason as a title. */
   status?: string
   self?: boolean
@@ -24,6 +26,7 @@ export default function ActionMenu({
   onStart,
   onRestart,
   onUntrack,
+  backup,
   status,
   self,
   dockerDown,
@@ -36,10 +39,25 @@ export default function ActionMenu({
   const menu = useRef<HTMLDivElement>(null)
   const menuId = useId()
 
-  const items = [
-    { key: 'start', label: 'Start', run: onStart },
-    { key: 'restart', label: 'Restart', run: onRestart },
+  const items: Array<{
+    key: string
+    label: string
+    run(): void
+    allowed: boolean
+    reason?: string
+  }> = [
+    { key: 'start', label: 'Start', run: onStart, allowed: actions.includes('start') },
+    { key: 'restart', label: 'Restart', run: onRestart, allowed: actions.includes('restart') },
   ]
+  if (backup !== undefined) {
+    items.push({
+      key: 'backup',
+      label: 'Back up now',
+      run: backup.onRun,
+      allowed: backup.enabled,
+      reason: backup.reason,
+    })
+  }
 
   // The red slot holds the one of untrack or remove the server allows, if any.
   const danger =
@@ -131,18 +149,17 @@ export default function ActionMenu({
           className="z-10 flex w-[220px] flex-col gap-0.5 rounded-[9px] border border-border-strong bg-[#181c22] p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
         >
           {items.map((item) => {
-            const allowed = actions.includes(item.key)
+            const { allowed } = item
+            const reason =
+              item.reason ??
+              (status === undefined ? undefined : disabledReason(status, self, dockerDown))
             return (
               <button
                 key={item.key}
                 type="button"
                 role="menuitem"
                 aria-disabled={allowed ? undefined : true}
-                title={
-                  allowed || status === undefined
-                    ? undefined
-                    : disabledReason(status, self, dockerDown)
-                }
+                title={allowed ? undefined : reason}
                 onClick={() => {
                   if (!allowed) return
                   close(true)

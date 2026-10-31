@@ -94,8 +94,9 @@ func DetectDatabases(cfg ComposeConfig, dotenv map[string]string) []project.Data
 	// Compose database services come first; they are the merge targets.
 	var records, svcRecords []*project.Database
 	svcRecord := map[string]*project.Database{} // service name -> its record
+	explicit := map[*project.Database]bool{}    // the name came from a variable or URL, not the service-name placeholder
 	for _, s := range services {
-		t, ok := imageTypes[imageBase(s.Image)]
+		t, ok := imageTypes[ImageBase(s.Image)]
 		if !ok {
 			continue
 		}
@@ -109,6 +110,7 @@ func DetectDatabases(cfg ComposeConfig, dotenv map[string]string) []project.Data
 		for _, v := range serviceNameVars[t] {
 			if n := strings.TrimSpace(s.Environment[v]); n != "" {
 				rec.Name = n
+				explicit[rec] = true
 				break
 			}
 		}
@@ -140,6 +142,12 @@ func DetectDatabases(cfg ComposeConfig, dotenv map[string]string) []project.Data
 	for _, f := range findings {
 		if rec := mergeTarget(f, svcRecords, svcRecord, hostService); rec != nil {
 			rec.Sources = append(rec.Sources, f.source)
+			// A name from a URL or a variable group replaces only the
+			// service-name placeholder, never an explicit *_DB / *_DATABASE.
+			if !explicit[rec] && f.name != "" {
+				rec.Name = f.name
+				explicit[rec] = true
+			}
 			continue
 		}
 		var same *project.Database
@@ -153,18 +161,21 @@ func DetectDatabases(cfg ComposeConfig, dotenv map[string]string) []project.Data
 			same.Sources = append(same.Sources, f.source)
 			continue
 		}
-		records = append(records, &project.Database{
+		rec := &project.Database{
 			Type:         f.dbType,
 			Name:         f.name,
 			LocationKind: f.kind,
 			Location:     f.loc,
 			Sources:      []string{f.source},
-		})
+		}
+		explicit[rec] = f.name != ""
+		records = append(records, rec)
 	}
 
 	out := make([]project.Database, 0, len(records))
 	for _, rec := range records {
 		rec.Sources = sortedUnique(rec.Sources)
+		rec.NameExplicit = explicit[rec]
 		out = append(out, *rec)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -286,9 +297,9 @@ func serviceLocation(s ComposeService) string {
 	return s.Name
 }
 
-// imageBase returns the last path segment of an image reference, without tag
+// ImageBase returns the last path segment of an image reference, without tag
 // or digest, in lower case: "docker.io/library/mongo@sha256:..." gives "mongo".
-func imageBase(image string) string {
+func ImageBase(image string) string {
 	if i := strings.LastIndex(image, "/"); i >= 0 {
 		image = image[i+1:]
 	}

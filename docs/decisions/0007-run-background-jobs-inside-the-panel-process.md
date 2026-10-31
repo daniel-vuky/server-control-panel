@@ -65,3 +65,9 @@ Rescans of tracked workspaces (#24) run as `scan` jobs: the same table, the same
 - **One scan at a time.** A rescan is refused with 409 while any scan runs, and the 409 body tells the client whether the running job is a rescan.
 - **`WhileIdle`.** Removing a workspace must not race a scan of it. The scan manager's `WhileIdle(fn)` runs `fn` only while no scan runs, and a scan cannot start until `fn` returns.
 - **Result.** The rescan stores its result on the job like a scan; the scan manager applies it (`store.ApplyRescan`) inside the job, before the job is stored as done, and then calls `OnChange`; and `scan.track` on the rescan job adds the New rows the owner picked. The activity record uses `workspace.rescan`.
+
+## Note (2026-10-31, manual backup)
+
+Manual backups (#48, #49, #56) are not stored in the `jobs` table. They have their own `backups` table (migration 0005), because the history needs columns per backup: the project and database snapshot, the file name, the Drive file id and link, the size, the steps with their progress and the error and hint. This refines decision 3 (the `jobs` table records scans and backups): scans stay in `jobs`, a backup is recorded in `backups`, and the `activity` record (`backup.run`) is written beside it as before.
+
+Decisions 4 and 5 stand for backups: one worker takes one backup at a time inside the panel process, queued ones wait in order, and a backup left `queued` or `running` by a crash or restart becomes `interrupted` when the store reopens (the manager also removes leftover temporary files when it starts).

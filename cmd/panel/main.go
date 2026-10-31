@@ -15,9 +15,12 @@ import (
 
 	"github.com/daniel-vuky/server-control-panel/internal/api"
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
+	"github.com/daniel-vuky/server-control-panel/internal/backup"
 	"github.com/daniel-vuky/server-control-panel/internal/config"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/logs"
+	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -30,6 +33,10 @@ var version = "dev"
 
 // readTimeout bounds every docker command the panel runs to read state.
 const readTimeout = 15 * time.Second
+
+// recentContainers is how old the hub's container list may be for a backup's
+// "is the database running" check before it reads Docker again.
+const recentContainers = 10 * time.Second
 
 // jobWait is how long shutdown waits for a running scan or lifecycle command to
 // store its outcome before the database closes. One still running then is
@@ -81,6 +88,29 @@ func run(log *slog.Logger) int {
 	// container list is never older than a tick.
 	logStreams := logs.New(docker, hub.Containers, time.Now)
 
+	// Google Drive (the fake one in a dev build without GOOGLE_CLIENT_ID) and
+	// the backup manager. Both publish to /api/events through the hub; their
+	// sources are set before the API serves.
+	driveSvc, err := drive.NewService(cfg, st, drive.NewClient(cfg, cfg.DataDir), time.Now)
+	if err != nil {
+		log.Error("cannot load the Google Drive connection", "error", err)
+		return 1
+	}
+	if reason := cfg.DriveReason(); reason != "" {
+		log.Info("Google Drive is not configured", "reason", reason)
+	}
+	recent := func(ctx context.Context) ([]project.Container, bool) {
+		return hub.RecentContainers(ctx, recentContainers)
+	}
+	backups := backup.New(st, docker, driveSvc, recent, cfg.DataDir, time.Now, log)
+	backups.SetMinFree(cfg.DevBackupMinFree)
+	hub.SetBackupSource(backups.Active)
+	hub.SetDriveSource(driveSvc.Status)
+	backups.OnChange(hub.Publish)
+	driveSvc.OnChange(hub.Publish)
+	backups.Start(context.Background())
+	defer backups.Close() // an early return; the shutdown below also waits
+
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
 	baseCtx, cancelBase := context.WithCancel(context.Background())
@@ -99,6 +129,8 @@ func run(log *slog.Logger) int {
 			Control:  ctl,
 			Hub:      hub,
 			Logs:     logStreams,
+			Drive:    driveSvc,
+			Backups:  backups,
 		}),
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 		ReadHeaderTimeout: 10 * time.Second,
@@ -137,10 +169,15 @@ func run(log *slog.Logger) int {
 		log.Error("shutdown failed", "error", shutdownErr)
 	}
 
-	// The store closes when run returns; let a running scan or lifecycle
-	// command store its outcome first, for a short while.
+	// The store closes when run returns; let a running scan, lifecycle
+	// command or backup store its outcome first, for a short while. A running
+	// or queued backup ends interrupted.
 	waitCtx, cancelWait := context.WithTimeout(context.Background(), jobWait)
 	defer cancelWait()
+	backups.Close()
+	if err := backups.Wait(waitCtx); err != nil {
+		log.Warn("a backup is still stopping; the next start marks it interrupted", "error", err)
+	}
 	if err := scans.Wait(waitCtx); err != nil {
 		log.Warn("a scan is still running; the next start marks it interrupted", "error", err)
 	}

@@ -17,7 +17,7 @@ The files live in `/opt/server-control-panel`:
 
 | File | What it is | On a re-run of the install command |
 | --- | --- | --- |
-| `panel.env` | Your Cloudflare values and workspace roots (mode 0600) | Never overwritten |
+| `panel.env` | Your Cloudflare values, workspace roots, the secret key and the optional Google Drive values (mode 0600) | Never overwritten (a missing `PANEL_SECRET_KEY` is appended) |
 | `.env` | `PANEL_TAG` and `UPDATE_INTERVAL` | Never overwritten (but the uninstall removes it, see section 8) |
 | `data/` | The panel's own data | Kept |
 | `compose.yaml` | The compose project | Refreshed |
@@ -54,13 +54,13 @@ On the server, as the user from section 2:
 curl -fsSL https://raw.githubusercontent.com/daniel-vuky/server-control-panel/main/deploy/install.sh | bash
 ```
 
-The script checks Docker, creates `/opt/server-control-panel` (it uses `sudo` for that step only when your user cannot write to `/opt`), then asks three questions:
+The script checks Docker, creates `/opt/server-control-panel` (it uses `sudo` for that step only when your user cannot write to `/opt`), then asks three questions (and three optional ones, below):
 
 1. **Cloudflare Access team domain**, like `myteam.cloudflareaccess.com`.
 2. **Cloudflare Access application AUD tag**, the long hex string.
 3. **Workspace roots**: the folders that hold your projects, comma-separated. Press Enter for the default, which is those of `/home`, `/srv`, `/opt` and `/var/www` that exist. A root that does not exist is skipped.
 
-A wrong answer is explained and asked again. The answers go into `panel.env`. The script then pulls the images, starts the project and waits up to 60 seconds for the panel to report healthy. A good finish prints a block that starts with:
+A wrong answer is explained and asked again. Then come three optional questions for backups to Google Drive: the panel's public URL (`https://<your panel domain>`, no path) and the Google client ID and secret. Press Enter to skip all three and set them later (see section 4a). The answers go into `panel.env`. The script then pulls the images, starts the project and waits up to 60 seconds for the panel to report healthy. A good finish prints a block that starts with:
 
 ```text
 The server control panel is running.
@@ -72,7 +72,7 @@ If it prints anything else, go to section 9.
 
 The workspace roots are mounted into the panel read-only, at the same path as on the host. That includes `/opt/server-control-panel` with `panel.env`, because `/opt` is a default root. The panel already receives those values, so nothing new is exposed.
 
-**Without a terminal.** If the install runs with no terminal (a script, cron, or `ssh host '…'` without `-t`), it cannot ask. Set all three variables instead: `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` and `WORKSPACE_ROOTS`. Put them on the `bash` side of the pipe:
+**Without a terminal.** If the install runs with no terminal (a script, cron, or `ssh host '…'` without `-t`), it cannot ask. Set all three variables instead: `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` and `WORKSPACE_ROOTS`. The optional `PANEL_PUBLIC_URL`, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` stay empty unless you set them too. Put them on the `bash` side of the pipe:
 
 ```sh
 ssh host 'curl -fsSL https://raw.githubusercontent.com/daniel-vuky/server-control-panel/main/deploy/install.sh | CF_ACCESS_TEAM_DOMAIN=myteam.cloudflareaccess.com CF_ACCESS_AUD=<tag> WORKSPACE_ROOTS=/home,/srv bash'
@@ -85,6 +85,22 @@ Without a terminal, `sudo` cannot ask for a password either. So a first install,
 When the install is healthy, check the whole setup with the [manual acceptance checklist](cloudflare-access.md#manual-acceptance-checklist) in the Cloudflare guide. That checklist needs the panel running, so this is its first chance.
 
 Running the install command again is always safe. It keeps `panel.env` and `.env`, refreshes the other files and restarts what changed.
+
+## 4a. The secret key and the Google Drive settings
+
+The install adds these to `panel.env`:
+
+| Variable | What it is |
+| --- | --- |
+| `PANEL_SECRET_KEY` | 32 random bytes as 64 hex characters, generated for you. It encrypts the Google Drive token. |
+| `PANEL_PUBLIC_URL` | The panel's public address, `https://<your panel domain>` with no path (a trailing `/` is dropped). Optional. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The Google OAuth client for Drive backups. Optional; give both or neither. |
+
+Keep `PANEL_SECRET_KEY` with the server's other secrets. It is stored outside `data/` on purpose, so a copy of the panel's database alone cannot decrypt the Drive token. If the key is lost or changed, nothing else breaks: you only connect Google Drive again from Settings.
+
+An older `panel.env` that has no `PANEL_SECRET_KEY` gets one line appended on the next run of the install command; the rest of the file is not touched.
+
+Without the three optional values the panel runs as before and Google Drive shows as not set up. To set Drive up, follow [Connect Google Drive](google-drive.md), put the values in `panel.env` and run `cd /opt/server-control-panel && docker compose up -d`.
 
 ## 5. Automatic updates
 

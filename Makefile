@@ -54,16 +54,18 @@ deploy-test:
 deploy-e2e:
 	bash deploy/test/e2e.sh
 
-## fixtures-up: start the sample compose projects in dev/workspaces with the host's docker (shop web only so it is Partial, notes; blog stays stopped)
+## fixtures-up: start the sample compose projects in dev/workspaces with the host's docker (shop web only so it is Partial, notes, ledger with Postgres and MariaDB; blog stays stopped)
 fixtures-up:
 	docker compose -f dev/workspaces/shop/compose.yaml up -d web
 	docker compose -f dev/workspaces/notes/compose.yml up -d
+	docker compose -f dev/workspaces/ledger/compose.yaml up -d --wait
 
 ## fixtures-down: stop and remove every sample compose project (errors ignored)
 fixtures-down:
 	-docker compose -f dev/workspaces/shop/compose.yaml down
 	-docker compose -f dev/workspaces/blog/docker-compose.yml down
 	-docker compose -f dev/workspaces/notes/compose.yml down
+	-docker compose -f dev/workspaces/ledger/compose.yaml down -v
 	-docker compose -f dev/workspaces/clients/acme/web/compose.yaml down
 
 ## ci: everything CI runs, ending with a check that the generated types are committed

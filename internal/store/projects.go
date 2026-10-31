@@ -47,7 +47,10 @@ type Tracked struct {
 	Self            bool
 	ComposeFiles    []string // base names: the main file, then the override
 	Services        []string
-	Databases       []project.Database
+	// ServiceDetails is the services with their image, ports and volumes, from
+	// the same config as Services; [] when the config could not be read.
+	ServiceDetails []project.Service
+	Databases      []project.Database
 	// MissingSince is set when a rescan could not find the folder; nil when
 	// the project is present.
 	MissingSince *time.Time
@@ -165,6 +168,10 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 		if err := json.Unmarshal([]byte(details), &d); err != nil {
 			return nil, fmt.Errorf("store: project %d details: %w", t.ID, err)
 		}
+		t.ServiceDetails = d.Services
+		if t.ServiceDetails == nil {
+			t.ServiceDetails = []project.Service{}
+		}
 		t.Services = make([]string, 0, len(d.Services))
 		for _, sv := range d.Services {
 			t.Services = append(t.Services, sv.Name)
@@ -179,7 +186,7 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 	_ = rows.Close()
 
 	drows, err := tx.QueryContext(ctx,
-		`SELECT d.project_id, d.type, d.name, d.location_kind, d.location, d.sources
+		`SELECT d.project_id, d.type, d.name, d.name_explicit, d.location_kind, d.location, d.sources
 		 FROM databases d JOIN projects p ON p.id = d.project_id WHERE p.state = 'tracked' AND (? = 0 OR p.id = ?) ORDER BY d.id`, only, only)
 	if err != nil {
 		return nil, fmt.Errorf("store: list databases: %w", err)
@@ -191,7 +198,7 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 			d       project.Database
 			sources string
 		)
-		if err := drows.Scan(&pid, &d.Type, &d.Name, &d.LocationKind, &d.Location, &sources); err != nil {
+		if err := drows.Scan(&pid, &d.Type, &d.Name, &d.NameExplicit, &d.LocationKind, &d.Location, &sources); err != nil {
 			return nil, fmt.Errorf("store: list databases: %w", err)
 		}
 		if err := json.Unmarshal([]byte(sources), &d.Sources); err != nil {

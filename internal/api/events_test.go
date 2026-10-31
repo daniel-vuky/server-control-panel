@@ -77,7 +77,7 @@ func TestEventsEmptyStateIsArrays(t *testing.T) {
 	r, closeFn := openSSE(t, srv.URL+"/api/events")
 	defer closeFn()
 	ev, ok := r.next()
-	if !ok || ev.kind != "state" || ev.data != `{"dockerUp":true,"projects":[]}` {
+	if !ok || ev.kind != "state" || ev.data != `{"dockerUp":true,"projects":[],"backups":[],"drive":{"state":"not_connected","email":"","folder":null,"reason":""}}` {
 		t.Errorf("first event = %+v", ev)
 	}
 }

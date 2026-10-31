@@ -5,12 +5,14 @@ import { FakeEventSource } from '../test/fakeEventSource'
 import { LiveProvider, useLive } from './live'
 
 function Probe() {
-  const { dockerUp, projects, checking, recheckDocker, connection } = useLive()
+  const { dockerUp, projects, backups, drive, checking, recheckDocker, connection } = useLive()
   return (
     <div>
       <span data-testid="connection">{connection}</span>
       <span data-testid="docker">{String(dockerUp)}</span>
       <span data-testid="projects">{projects === null ? 'null' : projects.length}</span>
+      <span data-testid="backups">{backups.length}</span>
+      <span data-testid="drive">{drive === null ? 'null' : drive.state}</span>
       <span data-testid="checking">{String(checking)}</span>
       <button type="button" onClick={() => void recheckDocker()}>
         recheck
@@ -21,6 +23,8 @@ function Probe() {
 
 const state: LiveState = {
   dockerUp: true,
+  backups: [],
+  drive: { state: 'connected', email: 'ops@example.com', folder: null, reason: '' },
   projects: [
     {
       id: 1,
@@ -41,6 +45,7 @@ const state: LiveState = {
       memBytes: null,
       upSince: '',
       containers: [],
+      driveFolder: 'shop',
     },
   ],
 }
@@ -70,6 +75,38 @@ describe('LiveProvider', () => {
     act(() => FakeEventSource.instances[0].emit('state', { dockerUp: false, projects: [] }))
     expect(screen.getByTestId('docker')).toHaveTextContent('false')
     expect(screen.getByTestId('projects')).toHaveTextContent('0')
+  })
+
+  it('exposes the Drive status and the active backups', () => {
+    render(
+      <LiveProvider>
+        <Probe />
+      </LiveProvider>,
+    )
+    expect(screen.getByTestId('drive')).toHaveTextContent('null')
+    expect(screen.getByTestId('backups')).toHaveTextContent('0')
+    act(() =>
+      FakeEventSource.instances[0].emit('state', {
+        ...state,
+        backups: [{ id: 7 }],
+        drive: { ...state.drive, state: 'expired' },
+      }),
+    )
+    expect(screen.getByTestId('drive')).toHaveTextContent('expired')
+    expect(screen.getByTestId('backups')).toHaveTextContent('1')
+  })
+
+  it('defaults backups to none and drive to null when the state lacks them', () => {
+    render(
+      <LiveProvider>
+        <Probe />
+      </LiveProvider>,
+    )
+    act(() => FakeEventSource.instances[0].emit('state', state))
+    expect(screen.getByTestId('drive')).toHaveTextContent('connected')
+    act(() => FakeEventSource.instances[0].emit('state', { dockerUp: true, projects: [] }))
+    expect(screen.getByTestId('drive')).toHaveTextContent('null')
+    expect(screen.getByTestId('backups')).toHaveTextContent('0')
   })
 
   it('ignores a malformed state event', () => {

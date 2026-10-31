@@ -51,6 +51,54 @@ normalize_aud() {
   printf '%s\n' "$a"
 }
 
+# normalize_public_url <raw>: prints the panel's public origin, or returns 1
+# with a message on stderr. Same rules as parsePublicURL in
+# internal/config/drive.go: trim, drop one trailing /, then https://<host>[:port]
+# or http://localhost|127.0.0.1[:port], with no path, query or fragment. The
+# scheme and host are lower-cased. An empty value is the caller's business.
+normalize_public_url() {
+  local u scheme rest host port
+  u=$(trim_space "${1-}")
+  u=${u%/}
+  if [[ "$u" =~ ^([A-Za-z]+)://([^/?#@]+)$ ]]; then
+    scheme=${BASH_REMATCH[1],,}
+    rest=${BASH_REMATCH[2],,}
+    host=${rest%%:*}
+    port=""
+    [[ "$rest" == *:* ]] && port=${rest#*:}
+    if [[ "$host" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && ("$rest" != *:* || "$port" =~ ^[0-9]{1,5}$) ]]; then
+      if [[ "$scheme" == https ]] ||
+        [[ "$scheme" == http && ("$host" == localhost || "$host" == 127.0.0.1) ]]; then
+        printf '%s://%s\n' "$scheme" "$rest"
+        return 0
+      fi
+    fi
+  fi
+  echo "public URL '${1-}' must be https://<host>[:port] (or http://localhost[:port]) with no path" >&2
+  return 1
+}
+
+# normalize_google_value <raw>: prints a Google OAuth client ID or secret
+# trimmed, or returns 1. Only the characters Google uses are accepted, so the
+# value is safe in an env file.
+normalize_google_value() {
+  local v
+  v=$(trim_space "${1-}")
+  if [[ ! "$v" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+    echo "a Google client ID or secret may only contain letters, digits and . _ ~ -" >&2
+    return 1
+  fi
+  printf '%s\n' "$v"
+}
+
+# gen_secret_key: prints 32 random bytes as 64 hex characters.
+gen_secret_key() {
+  local k
+  k=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+  [[ "$k" =~ ^[0-9a-f]{64}$ ]] || die "could not generate the panel secret key from /dev/urandom"
+  printf '%s\n' "$k"
+}
+
 # root_refused <absolute normalised path>: succeeds when mounting the path
 # would mask part of the panel container's own filesystem. /var is refused on
 # its own (it would cover /var/run and /var/lib) while /var/www stays allowed.
@@ -295,6 +343,43 @@ answer() {
   done
 }
 
+# answer_optional <var> <prompt> <normaliser> [secret]: like answer, but the
+# value is optional. ANSWER is the normalised value of the environment variable
+# or of a line read from the terminal; it is empty when neither exists. With no
+# terminal, an empty line or the end of the input is an empty answer; a bad
+# answer is asked again. With "secret" the typed line is not shown.
+answer_optional() {
+  local var=$1 prompt=$2 norm=$3 mode=${4:-} raw value
+  ANSWER=""
+  if [[ -n "${!var:-}" ]]; then
+    value=$("$norm" "${!var}") || die "$var is not valid"
+    ANSWER=$value
+    return 0
+  fi
+  if [[ "${TTY_OPEN:-0}" != 1 ]]; then
+    if ! { exec 3<"${SCP_TTY:-/dev/tty}"; } 2>/dev/null; then
+      return 0
+    fi
+    TTY_OPEN=1
+  fi
+  while :; do
+    printf '%s' "$prompt" >&2
+    raw=""
+    if [[ "$mode" == secret ]]; then
+      IFS= read -r -s -u 3 raw || true
+      echo >&2
+    else
+      IFS= read -r -u 3 raw || true
+    fi
+    raw=$(trim_space "$raw")
+    [[ -n "$raw" ]] || return 0
+    if value=$("$norm" "$raw"); then
+      ANSWER=$value
+      return 0
+    fi
+  done
+}
+
 # normalize_roots_answer <raw>: an empty answer means the default roots; the
 # result must keep at least one existing root.
 normalize_roots_answer() {
@@ -310,15 +395,27 @@ normalize_roots_answer() {
 }
 
 # write_panel_env: asks for (or reads from the environment) the Cloudflare
-# values and workspace roots, then writes panel.env, mode 0600.
+# values and workspace roots, then the optional public URL and Google values,
+# generates the secret key and writes panel.env, mode 0600.
 write_panel_env() {
-  local team aud roots
+  local team aud roots key url gid gsecret
   answer CF_ACCESS_TEAM_DOMAIN "Cloudflare Access team domain (myteam.cloudflareaccess.com): " normalize_team_domain
   team=$ANSWER
   answer CF_ACCESS_AUD "Cloudflare Access application AUD tag: " normalize_aud
   aud=$ANSWER
   answer WORKSPACE_ROOTS "Workspace roots, comma-separated [$(default_roots)]: " normalize_roots_answer
   roots=$ANSWER
+  echo "Optional: Google Drive for backups (press Enter to skip; set them later in panel.env, see docs/google-drive.md)." >&2
+  answer_optional PANEL_PUBLIC_URL "Panel public URL (https://panel.example.com), optional: " normalize_public_url
+  url=$ANSWER
+  answer_optional GOOGLE_CLIENT_ID "Google OAuth client ID, optional: " normalize_google_value
+  gid=$ANSWER
+  answer_optional GOOGLE_CLIENT_SECRET "Google OAuth client secret, optional: " normalize_google_value secret
+  gsecret=$ANSWER
+  if [[ -n "$gid" && -z "$gsecret" ]] || [[ -z "$gid" && -n "$gsecret" ]]; then
+    die "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together: give both or neither"
+  fi
+  key=$(gen_secret_key)
   write_file "$SCP_DIR/panel.env" 0600 "# Settings for the server control panel, read by the panel container.
 # install.sh writes this file once and never overwrites it: edit it here,
 # then re-run install.sh (new workspace roots are mounted on the next run).
@@ -328,7 +425,29 @@ WORKSPACE_ROOTS=$roots
 # The address the panel listens on. The Cloudflare Tunnel route must point
 # at the same address.
 # PANEL_ADDR=127.0.0.1:8471
+# Encrypts the Google Drive token. Keep it with the server's secrets: if it is
+# lost, the only cost is connecting Google Drive again.
+PANEL_SECRET_KEY=$key
+# Google Drive backups (optional, see docs/google-drive.md). Leave empty to set
+# them up later: PANEL_PUBLIC_URL is the panel's address, https://<your-domain>.
+PANEL_PUBLIC_URL=$url
+GOOGLE_CLIENT_ID=$gid
+GOOGLE_CLIENT_SECRET=$gsecret
 "
+}
+
+# ensure_secret_key: appends PANEL_SECRET_KEY to an existing panel.env that has
+# none (or an empty one). Nothing else in the file changes.
+ensure_secret_key() {
+  local f="$SCP_DIR/panel.env" key
+  [[ -n "$(env_file_value "$f" PANEL_SECRET_KEY)" ]] && return 0
+  key=$(gen_secret_key)
+  # A last line without a newline needs one first, or the key would join it.
+  if [[ -s "$f" && -n "$(tail -c 1 "$f")" ]]; then
+    printf '\n' >>"$f"
+  fi
+  printf 'PANEL_SECRET_KEY=%s\n' "$key" >>"$f"
+  echo "Added PANEL_SECRET_KEY to $f"
 }
 
 # env_file_value <file> <key>: prints the last value of KEY=value in an env
@@ -485,6 +604,7 @@ main() {
     write_panel_env
   else
     echo "Keeping $SCP_DIR/panel.env"
+    ensure_secret_key
   fi
 
   # 6: the workspace roots, as panel.env names them now.

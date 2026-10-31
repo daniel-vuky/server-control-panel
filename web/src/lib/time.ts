@@ -25,6 +25,33 @@ export function formatLastScan(iso: string, now: Date = new Date()): string {
   return `${part(day, d, 'day')} ${part(day, d, 'month')} ${hhmm}`
 }
 
+/** clock is "HH:MM" of a valid date, in local time. */
+const clock = (d: Date) => `${part(time, d, 'hour')}:${part(time, d, 'minute')}`
+
+const parse = (iso: string): Date | null => {
+  const d = new Date(iso)
+  return iso === '' || Number.isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * formatWhen is a backup's time as design 02 shows it, in local time:
+ * "Oct 28 02:00", with the year when it is not this year. An empty or invalid
+ * time is "—".
+ */
+export function formatWhen(iso: string, now: Date = new Date()): string {
+  const d = parse(iso)
+  if (d === null) return '—'
+  const date = `${part(day, d, 'month')} ${part(day, d, 'day')}`
+  const year = d.getFullYear() === now.getFullYear() ? '' : ` ${d.getFullYear()}`
+  return `${date}${year} ${clock(d)}`
+}
+
+/** formatClock is "HH:MM" of a time in local time; an empty or invalid time is "—". */
+export function formatClock(iso: string): string {
+  const d = parse(iso)
+  return d === null ? '—' : clock(d)
+}
+
 /** folderMissing is the Not found line of a project whose folder a rescan could not find. */
 export function folderMissing(missingSince: string): string {
   const since =

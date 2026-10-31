@@ -1,6 +1,8 @@
 // Package runner is the only place the panel starts a process (ADR 0005,
 // enforced by depguard). It runs the docker commands listed in registry.go,
-// with every value as a separate argument and never through a shell.
+// with every value as a separate argument and never through a shell on the
+// panel's side. The database actions run a fixed script in the database's own
+// container (ADR 0011).
 package runner
 
 import (
@@ -63,6 +65,24 @@ var timeoutFor = func(a Action, fallback time.Duration) time.Duration {
 	return fallback
 }
 
+// The limits of a dump through RunTo. A dump has no total timeout: it fails
+// when stdout stays silent for dumpStall, and is killed at dumpCeiling. They are
+// variables only so that tests in this package can shorten them.
+var (
+	dumpStall   = 5 * time.Minute
+	dumpCeiling = 6 * time.Hour
+)
+
+// StallError means a dump wrote nothing to stdout for After and was killed.
+type StallError struct{ After time.Duration }
+
+func (e *StallError) Error() string {
+	return "docker command wrote nothing for " + e.After.String()
+}
+
+// errStalled is the cancel cause RunTo's stall watchdog sets.
+var errStalled = errors.New("runner: stalled")
+
 // TimeoutError means the command ran past its deadline and was killed.
 type TimeoutError struct{ After time.Duration }
 
@@ -106,6 +126,9 @@ type Runner struct {
 func (r *Runner) Run(ctx context.Context, s Stack, a Action, v Values, secrets []string) (Result, error) {
 	if isFollow(a) {
 		return Result{}, fmt.Errorf("%w: %s only runs through Stream", ErrUnknownCommand, a)
+	}
+	if isDump(a) {
+		return Result{}, fmt.Errorf("%w: %s only runs through RunTo", ErrUnknownCommand, a)
 	}
 	bin, args, env, timeout, err := r.prepare(s, a, v)
 	if err != nil {
@@ -221,6 +244,82 @@ func (r *Runner) Stream(ctx context.Context, s Stack, a Action, v Values, secret
 		return &ExitError{Code: cmd.ProcessState.ExitCode(), Stderr: stderr}
 	}
 	return fmt.Errorf("docker %s: %s", a, Mask(runErr.Error(), secrets))
+}
+
+// RunTo runs the dump action a and writes its stdout to stdout as it comes,
+// with no cap, so a dump of any size streams straight to its file. It returns
+// stderr, masked of secrets and capped at 4 MiB. There is no total timeout: a
+// dump fails with a *StallError when it writes no stdout byte for 5 minutes,
+// and with a *TimeoutError at the 6-hour ceiling; both kill the whole process
+// group. A failed write to stdout stops the dump at once and is returned,
+// wrapped. A non-zero exit is an *ExitError, and cancelling ctx gives an error
+// wrapping ctx.Err(). Any other action is ErrUnknownCommand.
+func (r *Runner) RunTo(ctx context.Context, s Stack, a Action, v Values, secrets []string, stdout io.Writer) ([]byte, error) {
+	if !isDump(a) {
+		return nil, fmt.Errorf("%w: %s does not run through RunTo", ErrUnknownCommand, a)
+	}
+	bin, args, env, _, err := r.prepare(s, a, v)
+	if err != nil {
+		return nil, err
+	}
+	stall, ceiling := dumpStall, dumpCeiling
+
+	runCtx, cancel := context.WithTimeout(ctx, ceiling)
+	defer cancel()
+	cmdCtx, kill := context.WithCancelCause(runCtx)
+	defer kill(nil)
+	watchdog := time.AfterFunc(stall, func() { kill(errStalled) })
+	defer watchdog.Stop()
+
+	out := &dumpWriter{w: stdout, wrote: func() { watchdog.Reset(stall) }, failed: kill}
+	var stderrKept capWriter
+	cmd := r.command(cmdCtx, bin, args, env)
+	cmd.Stdout, cmd.Stderr = out, &stderrKept
+
+	runErr := cmd.Run()
+	stderr := []byte(Mask(stderrKept.buf.String(), secrets))
+	switch {
+	case out.err != nil:
+		return stderr, fmt.Errorf("docker %s: write output: %w", a, out.err)
+	case runErr == nil:
+		return stderr, nil
+	case ctx.Err() != nil:
+		return stderr, fmt.Errorf("docker %s: %w", a, ctx.Err())
+	case errors.Is(context.Cause(cmdCtx), errStalled):
+		return stderr, &StallError{After: stall}
+	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
+		return stderr, &TimeoutError{After: ceiling}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		return stderr, &ExitError{Code: cmd.ProcessState.ExitCode(), Stderr: strings.TrimRight(string(stderr), "\n")}
+	}
+	return stderr, fmt.Errorf("docker %s: %s", a, Mask(runErr.Error(), secrets))
+}
+
+// dumpWriter passes a dump's stdout on, calls wrote after every write so the
+// stall watchdog starts over, and on the first failed write keeps the error
+// and calls failed, which kills the command: the child would otherwise block
+// on a pipe nobody reads.
+type dumpWriter struct {
+	w      io.Writer
+	wrote  func()
+	failed context.CancelCauseFunc
+	err    error // set only by exec's single copy goroutine, read after Wait
+}
+
+func (d *dumpWriter) Write(p []byte) (int, error) {
+	n, err := d.w.Write(p)
+	if err == nil && n < len(p) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		d.err = err
+		d.failed(err)
+		return n, err
+	}
+	d.wrote()
+	return n, nil
 }
 
 // finishLine masks a line. A line that was cut at maxLine first loses what the

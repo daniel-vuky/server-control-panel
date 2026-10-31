@@ -79,8 +79,8 @@ func TestMigration0003OnPopulatedDB(t *testing.T) {
 		t.Fatalf("reopen with 0003 pending: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 4 {
-		t.Fatalf("schema_migrations has %d rows, want 4", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 6 {
+		t.Fatalf("schema_migrations has %d rows, want 6", n)
 	}
 	ts, err := s.TrackedProjects(ctx)
 	if err != nil || len(ts) != 1 || ts[0].DisplayName != "Shop" || ts[0].MissingSince != nil {
@@ -259,6 +259,41 @@ func TestApplyRescanRefreshKeepsName(t *testing.T) {
 	w, err := s.WorkspaceByID(ctx, wsID)
 	if err != nil || !w.LastScanAt.Equal(laterTime) {
 		t.Fatalf("last scan = %v, %v", w.LastScanAt, err)
+	}
+}
+
+// A database's explicit-name flag is stored when the workspace is added and
+// replaced by a rescan's refresh; the key does not change with it.
+func TestDatabaseNameExplicitRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	explicit := project.Database{Type: "mysql", Name: "db", NameExplicit: true, LocationKind: "container", Location: "db", Sources: []string{"service db"}}
+	np := NewProject{Path: "/srv/apps/crm", ComposeFiles: []string{"compose.yaml"}, ComposeProject: "crm", DisplayName: "CRM", Tracked: true,
+		Databases: []project.Database{explicit, {Type: "mysql", Name: "my2", LocationKind: "container", Location: "my2", Sources: []string{"service my2"}}}}
+	wsID, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "apps", Path: "/srv/apps", Depth: 2, LastScanAt: scanTime}, []NewProject{np})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts, err := s.TrackedProjects(ctx)
+	if err != nil || len(ts) != 1 || len(ts[0].Databases) != 2 {
+		t.Fatalf("TrackedProjects = %+v, %v", ts, err)
+	}
+	if !ts[0].Databases[0].NameExplicit || ts[0].Databases[1].NameExplicit {
+		t.Fatalf("flags after add = %+v", ts[0].Databases)
+	}
+
+	r := ProjectRefresh{Path: "/srv/apps/crm", Config: &ConfigRefresh{ComposeFiles: []string{"compose.yaml"}, ComposeProject: "crm",
+		Databases: []project.Database{{Type: "mysql", Name: "db", LocationKind: "container", Location: "db", Sources: []string{"service db"}}}}}
+	apply := RescanApply{Workspaces: []WorkspaceApply{{ID: wsID, LastScanAt: laterTime, Refresh: []ProjectRefresh{r}, Found: []string{"/srv/apps/crm"}}}}
+	if err := s.ApplyRescan(ctx, apply, laterTime); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.TrackedProject(ctx, ts[0].ID)
+	if err != nil || len(got.Databases) != 1 || got.Databases[0].NameExplicit {
+		t.Fatalf("after refresh = %+v, %v", got.Databases, err)
+	}
+	if project.DatabaseKey(got.Databases[0]) != project.DatabaseKey(explicit) {
+		t.Errorf("key changed: %s", project.DatabaseKey(got.Databases[0]))
 	}
 }
 

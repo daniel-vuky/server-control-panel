@@ -73,9 +73,12 @@ type observer interface {
 	// down.
 	recent(maxAge time.Duration) (cs []project.Container, dockerUp bool, ok bool)
 	// lockChanged is called after a lock is taken (fresh nil) or released
-	// (fresh is the re-read container list, or nil when it failed), except
-	// after a successful WithLocks write: its caller refreshes the hub.
+	// (fresh is the re-read container list, or nil when it failed).
 	lockChanged(fresh []project.Container)
+	// storeChanged is called after a successful WithLocks write, while its
+	// locks are still held: the tracked list the observer cached (or is
+	// reading) may predate the write.
+	storeChanged()
 }
 
 const (
@@ -339,12 +342,12 @@ func lockedRefusal(t store.Tracked, l projectLock, status project.Status) *Refus
 // every path, a panic in fn included (the panic goes on). fn's error is
 // returned as is.
 //
-// The observer hears of the take, and of the release only when fn failed or
-// panicked, so the projects get their actions back. After a successful write
-// it is not told: its cached list still holds the rows fn changed, and a
-// publish from it would show them again with their actions. The caller must
-// call Hub.Refresh after a successful write instead; the generation bump on
-// release makes a tick already running read again.
+// The observer hears of the take and of the release. After a successful
+// write it first hears storeChanged, while the locks are still held: a hub
+// tick that read the tracked list before the write then counts as stale and
+// cannot publish the dropped rows, now unlocked, with their actions; and the
+// release's lockChanged makes the hub read the store again instead of
+// publishing its cached list. The caller need not call Hub.Refresh.
 func (c *Controller) WithLocks(ids []int64, fn func() error) (err error) {
 	c.mu.Lock()
 	for _, id := range ids {
@@ -365,7 +368,6 @@ func (c *Controller) WithLocks(ids []int64, fn func() error) (err error) {
 	c.mu.Unlock()
 	c.notify(nil)
 
-	succeeded := false // stays false on a panic
 	defer func() {
 		c.mu.Lock()
 		for _, id := range ids {
@@ -373,12 +375,12 @@ func (c *Controller) WithLocks(ids []int64, fn func() error) (err error) {
 		}
 		c.gen++
 		c.mu.Unlock()
-		if !succeeded {
-			c.notify(nil)
-		}
+		c.notify(nil)
 	}()
-	err = fn()
-	succeeded = err == nil
+	if err = fn(); err == nil && c.obs != nil {
+		// Before the release, and without mu: the hub takes hub.mu.
+		c.obs.storeChanged()
+	}
 	return err
 }
 
@@ -388,8 +390,7 @@ func (c *Controller) WithLocks(ids []int64, fn func() error) (err error) {
 // refused (locked) while a command runs on it, and no command can start
 // meanwhile. It records project.untrack, or project.remove for a missing
 // project, as ok or refused. It returns store.ErrNotFound for an unknown or
-// ignored project. After it succeeds the caller must call Hub.Refresh: the
-// release does not tell the hub (see WithLocks).
+// ignored project. The write runs in WithLocks, which tells the hub.
 func (c *Controller) Untrack(ctx context.Context, id int64, actor string) (store.Tracked, error) {
 	t, err := c.st.TrackedProject(ctx, id)
 	if err != nil {

@@ -1,6 +1,6 @@
 import { act } from '@testing-library/react'
 import { useLocation } from 'react-router'
-import type { Container, Project } from '../api/types.gen'
+import type { Backup, Container, Database, DriveStatus, Project } from '../api/types.gen'
 import { projectRoute } from '../app/App'
 import { FakeEventSource } from './fakeEventSource'
 import { renderApp } from './renderApp'
@@ -26,6 +26,59 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     memBytes: null,
     upSince: '',
     containers: [],
+    driveFolder: 'shop',
+    ...overrides,
+  }
+}
+
+/** makeDatabase is a container Postgres database; key defaults from type, location and name, backup to null. */
+export function makeDatabase(overrides: Partial<Database> = {}): Database {
+  const d = {
+    type: 'postgresql',
+    name: 'shop',
+    locationKind: 'container',
+    location: 'db',
+    sources: [],
+    ...overrides,
+  }
+  return { key: `${d.type}:${d.location}:${d.name}`, backup: null, ...d }
+}
+
+/**
+ * makeBackup is backup 7 of shop's Postgres database, queued first in line,
+ * with its four steps waiting; overrides win.
+ */
+export function makeBackup(overrides: Partial<Backup> = {}): Backup {
+  return {
+    id: 7,
+    projectId: 1,
+    projectName: 'shop',
+    database: {
+      type: 'postgresql',
+      name: 'shop',
+      locationKind: 'container',
+      location: 'db',
+      key: 'postgresql:db:shop',
+    },
+    state: 'queued',
+    failedStep: '',
+    steps: ['dump', 'compress', 'upload', 'prune'].map((step) => ({
+      step,
+      state: 'waiting',
+      detail: '',
+    })),
+    error: '',
+    hint: '',
+    rawBytes: 0,
+    sizeBytes: 0,
+    fileName: '',
+    driveLink: '',
+    startedBy: 'dev@localhost',
+    createdAt: '2026-10-31T10:00:00Z',
+    startedAt: '',
+    finishedAt: '',
+    durationMs: 0,
+    queuePosition: 1,
     ...overrides,
   }
 }
@@ -64,11 +117,20 @@ export function renderProject(path: string) {
 }
 
 /** pushState sends one live state on the app's /api/events source. */
-export function pushState(projects: Project[], dockerUp = true) {
+export function pushState(
+  projects: Project[],
+  dockerUp = true,
+  extra: { backups?: Backup[]; drive?: DriveStatus } = {},
+) {
   act(() => {
     const es = FakeEventSource.latest('/api/events')
     if (!es) throw new Error('no /api/events source')
     if (es.readyState === FakeEventSource.CONNECTING) es.open()
-    es.emit('state', { dockerUp, projects })
+    es.emit('state', {
+      dockerUp,
+      projects,
+      backups: extra.backups ?? [],
+      drive: extra.drive ?? { state: 'not_connected', email: '', folder: null, reason: '' },
+    })
   })
 }

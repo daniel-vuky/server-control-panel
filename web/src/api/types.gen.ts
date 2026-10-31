@@ -5,6 +5,14 @@
 
 
 //////////
+// source: backups.go
+
+
+//////////
+// source: drive.go
+
+
+//////////
 // source: events.go
 
 
@@ -174,7 +182,9 @@ export interface ScanRow {
 }
 /**
  * Database is a database a project uses. It holds names only, never values:
- * Sources lists the variables or services it was found in.
+ * Sources lists the variables or services it was found in. Key identifies it
+ * within its project (type:location:name). Backup says whether a backup may
+ * start now; it is null on a scan row and set on a tracked project's row.
  */
 export interface Database {
   type: string; // postgresql | mysql | mongodb | sqlite
@@ -182,6 +192,21 @@ export interface Database {
   locationKind: string; // container | host | external | file | unknown
   location: string; // service or container name, host name or file path
   sources: string[];
+  key: string;
+  backup: BackupRule | null;
+}
+/**
+ * BackupRule says whether a database can be backed up now. Allowed is true
+ * only when Reason is "". Reason is not_found (the project's folder is
+ * missing), not_supported, no_db_name, docker_down, db_not_running,
+ * drive_not_connected, drive_expired or folder_missing. Service is the compose
+ * service the database resolved to ("" when none did), for words such as
+ * "Start <service> first".
+ */
+export interface BackupRule {
+  allowed: boolean;
+  reason: string;
+  service: string;
 }
 /**
  * TrackRequest is the body of POST /api/scans/{id}/track. For a first-time
@@ -244,6 +269,8 @@ export interface Workspace {
  * could not be read). GET /api/projects reads only docker ps, so there
  * metrics are null, UpSince is "" and each container has no restart count,
  * start time or health; the live state fills them in.
+ * DriveFolder is the project's sub-folder on Drive, under the destination
+ * folder, that its backups go to (the slugged display name).
  */
 export interface Project {
   id: number /* int64 */;
@@ -264,6 +291,7 @@ export interface Project {
   memBytes: number | null;
   upSince: string;
   containers: Container[];
+  driveFolder: string;
 }
 /**
  * Container is one row of Project.Containers. Status is the word for the
@@ -379,15 +407,170 @@ export interface RemoveResponse {
 }
 /**
  * LiveState is the data of the "state" event of GET /api/events: whether
- * Docker answers, and every tracked project as GET /api/projects returns it.
+ * Docker answers, every tracked project as GET /api/projects returns it, the
+ * active backups (running first, then the queue in order) and the Drive
+ * connection as GET /api/drive returns it.
  */
 export interface LiveState {
   dockerUp: boolean;
   projects: Project[];
+  backups: Backup[];
+  drive: DriveStatus;
 }
 /**
  * DockerCheck is the body of POST /api/docker/check.
  */
 export interface DockerCheck {
   dockerUp: boolean;
+}
+/**
+ * DriveFolder is a Google Drive folder the panel created.
+ */
+export interface DriveFolder {
+  id: string;
+  name: string;
+}
+/**
+ * DriveStatus is the body of GET /api/drive and LiveState.Drive. State is
+ * not_configured, not_connected, connected or expired. Email is the connected
+ * account ("" when none), Folder the destination folder (null until chosen)
+ * and Reason why Drive is not configured ("" otherwise). It never carries a
+ * token.
+ */
+export interface DriveStatus {
+  state: string;
+  email: string;
+  folder: DriveFolder | null;
+  reason: string;
+}
+/**
+ * DriveConnectRequest is the body of POST /api/drive/connect: the same-site
+ * path to come back to; anything else becomes /settings.
+ */
+export interface DriveConnectRequest {
+  returnTo: string;
+}
+/**
+ * DriveConnectResponse is the 200 body of POST /api/drive/connect: the
+ * consent page the browser navigates to.
+ */
+export interface DriveConnectResponse {
+  url: string;
+}
+/**
+ * DriveFolderRequest is the body of POST /api/drive/folder: ID selects one of
+ * the panel's folders; without an ID, Name (trimmed, 1 to 100 characters, no
+ * /) creates a folder in My Drive root, or selects the panel's folder of that
+ * name, and selects it.
+ */
+export interface DriveFolderRequest {
+  id?: string;
+  name?: string;
+}
+/**
+ * DriveTestResult is the 200 body of POST /api/drive/test: OK, or the Drive
+ * code (token_expired, no_access, folder_missing, quota, unreachable,
+ * not_configured or not_connected) and its words.
+ */
+export interface DriveTestResult {
+  ok: boolean;
+  code?: string;
+  message?: string;
+}
+/**
+ * DriveError is the body of a Drive route or a download that Drive (or the
+ * connection) refused: Error is the code (not_configured, not_connected,
+ * busy, or a Drive code such as token_expired), Message its words.
+ */
+export interface DriveError {
+  error: string;
+  message: string;
+}
+/**
+ * BackupRequest is the body of POST /api/projects/{id}/backups: the key of
+ * the database to back up (Database.Key).
+ */
+export interface BackupRequest {
+  database: string;
+}
+/**
+ * BackupStarted is the 202 body of POST /api/projects/{id}/backups and POST
+ * /api/backups/{id}/retry: the queued backup.
+ */
+export interface BackupStarted {
+  id: number /* int64 */;
+}
+/**
+ * BackupRefused is the 409 body of a backup that was not queued. Error is the
+ * code: not_found, not_supported, no_db_name, drive_not_connected,
+ * drive_expired, folder_missing, already_running, docker_down,
+ * db_not_running, disk_short or not_retryable; Message its words. ID is the
+ * backup already running (only for already_running), NeedBytes and FreeBytes
+ * are set for disk_short, and Service is the database's compose service once
+ * it is resolved.
+ */
+export interface BackupRefused {
+  error: string;
+  message: string;
+  id?: number /* int64 */;
+  needBytes?: number /* int64 */;
+  freeBytes?: number /* int64 */;
+  service?: string;
+}
+/**
+ * BackupDatabase is the snapshot of the database a backup was taken of.
+ */
+export interface BackupDatabase {
+  type: string;
+  name: string;
+  locationKind: string;
+  location: string;
+  key: string;
+}
+/**
+ * BackupStep is one step of a backup: Step is dump, compress, upload or
+ * prune; State is waiting, running, done, failed or skipped; Detail is the
+ * line shown under it.
+ */
+export interface BackupStep {
+  step: string;
+  state: string;
+  detail: string;
+}
+/**
+ * Backup is one backup run: GET /api/backups/{id}, an element of
+ * BackupHistory and of LiveState.Backups. State is queued, running, ok,
+ * failed, refused or interrupted; FailedStep is the step that failed ("" when
+ * none). Error and Hint are masked. The times are UTC RFC 3339 ("" when not
+ * reached). QueuePosition is 0 when running or finished, and N ≥ 1 while
+ * waiting.
+ */
+export interface Backup {
+  id: number /* int64 */;
+  projectId: number /* int64 */;
+  projectName: string;
+  database: BackupDatabase;
+  state: string;
+  failedStep: string;
+  steps: BackupStep[];
+  error: string;
+  hint: string;
+  rawBytes: number /* int64 */;
+  sizeBytes: number /* int64 */;
+  fileName: string;
+  driveLink: string;
+  startedBy: string;
+  createdAt: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number /* int64 */;
+  queuePosition: number /* int */;
+}
+/**
+ * BackupHistory is the body of GET /api/projects/{id}/backups: a page of the
+ * project's backups, newest first, and whether older ones remain.
+ */
+export interface BackupHistory {
+  backups: Backup[];
+  more: boolean;
 }

@@ -222,7 +222,7 @@ func statsLine(proj, service, cpu, mem string) string {
 	return containerID(proj, service) + "\t" + cpu + "\t" + mem + " / 7.6GiB\n"
 }
 
-// fakeObserver records the observer calls. Each lockChanged call also reads
+// fakeObserver records the observer calls. Each lockChanged and storeChanged call also reads
 // the Controller, which would deadlock if the Controller held its mutex.
 type fakeObserver struct {
 	ctl *Controller
@@ -234,6 +234,14 @@ type fakeObserver struct {
 	ok        bool
 	recentAge []time.Duration
 	changes   []lockChange
+	stores    []storeChange
+}
+
+// storeChange is one storeChanged call: whether the observed project was held
+// then, and the generation.
+type storeChange struct {
+	held bool
+	gen  uint64
 }
 
 type lockChange struct {
@@ -255,4 +263,12 @@ func (o *fakeObserver) lockChanged(fresh []project.Container) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.changes = append(o.changes, lockChange{fresh: fresh, inFlight: in, gen: gen})
+}
+
+func (o *fakeObserver) storeChanged() {
+	_, held, _ := o.ctl.Lock(o.id)
+	gen := o.ctl.Generation()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.stores = append(o.stores, storeChange{held: held, gen: gen})
 }

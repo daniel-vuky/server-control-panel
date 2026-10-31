@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -87,7 +88,7 @@ func TestViewsMissingIsNotFound(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vs := Views(ts, cs, tt.readErr, tt.dockerUp, lock, nil, nil)
+			vs := Views(ts, cs, tt.readErr, tt.dockerUp, lock, nil, nil, drive.Status{})
 			for i, v := range vs {
 				if v.Status != tt.want[i].status || !slices.Equal(v.Actions, tt.want[i].actions) || v.Actions == nil {
 					t.Errorf("view %s = %s %v, want %s %v", v.DisplayName, v.Status, v.Actions, tt.want[i].status, tt.want[i].actions)
@@ -111,7 +112,7 @@ func TestViewsHeldHasNoActions(t *testing.T) {
 		}
 		return "", false, false
 	}
-	vs := Views(ts, cs, nil, true, lock, nil, nil)
+	vs := Views(ts, cs, nil, true, lock, nil, nil, drive.Status{})
 	want := []struct {
 		status  project.Status
 		actions []project.Action
@@ -385,11 +386,14 @@ func TestWithLocksHoldsAndReleases(t *testing.T) {
 		obs.changes[0].gen != gen+1 || obs.changes[1].gen != gen+2 {
 		t.Fatalf("lockChanged calls = %+v, want take then release", obs.changes)
 	}
+	if len(obs.stores) != 0 {
+		t.Fatalf("storeChanged calls = %+v after a failed write, want none", obs.stores)
+	}
 }
 
-// A successful write does not tell the observer of the release: its cached
-// list still holds the changed rows. The generation still moves.
-func TestWithLocksSuccessSkipsReleaseNotify(t *testing.T) {
+// A successful write tells the observer storeChanged while the locks are
+// still held, then the release; Untrack goes through the same path.
+func TestWithLocksSuccessTellsStoreChangedBeforeRelease(t *testing.T) {
 	e := newEnv(t)
 	shop := e.ids["shop"]
 	obs := &fakeObserver{ctl: e.ctl, id: shop}
@@ -404,13 +408,27 @@ func TestWithLocksSuccessSkipsReleaseNotify(t *testing.T) {
 	if g := e.ctl.Generation(); g != gen+2 {
 		t.Fatalf("generation = %d, want %d", g, gen+2)
 	}
+	obs.mu.Lock()
+	if len(obs.stores) != 1 || !obs.stores[0].held || obs.stores[0].gen != gen+1 {
+		t.Fatalf("storeChanged calls = %+v, want one with shop held at generation %d", obs.stores, gen+1)
+	}
+	if len(obs.changes) != 2 || obs.changes[0].gen != gen+1 || obs.changes[1].gen != gen+2 {
+		t.Fatalf("lockChanged calls = %+v, want take then release", obs.changes)
+	}
+	obs.mu.Unlock()
+
+	blog := &fakeObserver{ctl: e.ctl, id: e.ids["blog"]}
+	e.ctl.setObserver(blog)
 	if _, err := e.ctl.Untrack(context.Background(), e.ids["blog"], actor); err != nil {
 		t.Fatalf("Untrack: %v", err)
 	}
-	obs.mu.Lock()
-	defer obs.mu.Unlock()
-	if len(obs.changes) != 2 || obs.changes[0].gen != gen+1 || obs.changes[1].gen != gen+3 {
-		t.Fatalf("lockChanged calls = %+v, want only the two takes", obs.changes)
+	blog.mu.Lock()
+	defer blog.mu.Unlock()
+	if len(blog.stores) != 1 || !blog.stores[0].held || blog.stores[0].gen != gen+3 {
+		t.Fatalf("storeChanged calls = %+v, want one with blog held at generation %d", blog.stores, gen+3)
+	}
+	if len(blog.changes) != 2 || blog.changes[0].gen != gen+3 || blog.changes[1].gen != gen+4 {
+		t.Fatalf("lockChanged calls = %+v, want the untrack's take and release", blog.changes)
 	}
 }
 
@@ -438,8 +456,8 @@ func TestWithLocksReleasesOnPanic(t *testing.T) {
 	}
 	obs.mu.Lock()
 	defer obs.mu.Unlock()
-	if len(obs.changes) != 2 {
-		t.Fatalf("lockChanged calls = %+v, want 2", obs.changes)
+	if len(obs.changes) != 2 || len(obs.stores) != 0 {
+		t.Fatalf("lockChanged calls = %+v and storeChanged calls = %+v, want 2 and none", obs.changes, obs.stores)
 	}
 }
 
@@ -480,8 +498,8 @@ func TestWithLocksRefusesWhenOneInFlight(t *testing.T) {
 			}
 			obs.mu.Lock()
 			defer obs.mu.Unlock()
-			if len(obs.changes) != 0 {
-				t.Fatalf("lockChanged calls = %+v, want none", obs.changes)
+			if len(obs.changes) != 0 || len(obs.stores) != 0 {
+				t.Fatalf("lockChanged calls = %+v and storeChanged calls = %+v, want none", obs.changes, obs.stores)
 			}
 		})
 	}
@@ -493,7 +511,7 @@ func TestHubRefreshRepublishesWithoutStaleTs(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	gate := make(chan struct{})
 	e.cmd.on(runner.DockerPing, reply{}).
-		containers(runningOut("shop")).                                             // the subscribe tick
+		containers(runningOut("shop")).                                             // Subscribe's tick
 		on(runner.DockerContainers, reply{stdout: stoppedOut("shop"), gate: gate}). // the stale tick
 		containers(stoppedOut("shop"))                                              // the tick after
 	cur, updates := subscribe(t, h)
@@ -531,12 +549,73 @@ func TestHubRefreshRepublishesWithoutStaleTs(t *testing.T) {
 	}
 }
 
-// A successful Untrack never republishes the removed project with actions:
-// the take shows it held (no actions), and the Refresh tick drops it.
-func TestHubUntrackThenRefresh(t *testing.T) {
+// A tick that read the store before an untrack and lands after the lock
+// release, with no Refresh call at all, must not publish the removed project
+// with its actions: the write tells the hub while its lock is still held, so
+// that tick is stale and its runner ticks again.
+func TestHubTickBeforeUntrackLandsAfterRelease(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
-	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	gate := make(chan struct{})
+	e.cmd.on(runner.DockerPing, reply{}).
+		containers(runningOut("shop")).                                             // Subscribe's tick
+		on(runner.DockerContainers, reply{stdout: runningOut("shop"), gate: gate}). // the tick that read the store first
+		containers(runningOut("shop"))                                              // every read after
 	_, updates := subscribe(t, h)
+
+	checked := make(chan State, 1)
+	go func() { checked <- h.Check(context.Background()) }()
+	e.cmd.waitRunning(t, runner.DockerContainers, 1) // it has read the store with shop
+	shop := e.ids["shop"]
+	if _, err := e.ctl.Untrack(context.Background(), shop, actor); err != nil {
+		t.Fatalf("Untrack: %v", err)
+	}
+	close(gate)
+
+	hasShop := func(s State) (found, withActions bool) {
+		for _, v := range s.Projects {
+			if v.ID == shop {
+				return true, len(v.Actions) > 0
+			}
+		}
+		return false, false
+	}
+	if s := <-checked; len(s.Projects) != 4 {
+		if _, bad := hasShop(s); bad {
+			t.Fatal("the Check returned the untracked shop with its actions")
+		}
+		t.Fatalf("Check = %+v, want 4 projects without shop", s)
+	}
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case u := <-updates:
+			found, bad := hasShop(u)
+			if bad {
+				t.Fatal("published the untracked shop with its actions")
+			}
+			if !found {
+				if len(u.Projects) != 4 {
+					t.Fatalf("update = %+v, want 4 projects", u)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("no update without shop")
+		}
+	}
+}
+
+// A successful Untrack never republishes the removed project with actions,
+// and needs no Refresh: the take shows it held (no actions), and the release
+// publishes nothing from the cache but starts one tick, which drops it.
+func TestHubUntrackCatchesUp(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	gate := make(chan struct{})
+	e.cmd.on(runner.DockerPing, reply{}).
+		containers(runningOut("shop")).                                            // Subscribe's tick
+		on(runner.DockerContainers, reply{stdout: runningOut("shop"), gate: gate}) // the catch-up tick
+	_, updates := subscribe(t, h)
+	pings, reads := e.cmd.count(runner.DockerPing), e.cmd.count(runner.DockerContainers)
 
 	if _, err := e.ctl.Untrack(context.Background(), e.ids["shop"], actor); err != nil {
 		t.Fatalf("Untrack: %v", err)
@@ -545,12 +624,17 @@ func TestHubUntrackThenRefresh(t *testing.T) {
 	if v := viewOf(t, u, "shop"); v.Status != project.StatusRunning || len(v.Actions) != 0 {
 		t.Fatalf("shop after the take = %s %v, want running with no actions", v.Status, v.Actions)
 	}
-	noUpdate(t, updates) // the release published nothing
+	e.cmd.waitRunning(t, runner.DockerContainers, 1) // the release started a tick
+	noUpdate(t, updates)                             // and published nothing from the cache
 
-	h.Refresh()
+	close(gate)
 	u = nextUpdate(t, updates, time.Second)
 	if len(u.Projects) != 4 || slices.ContainsFunc(u.Projects, func(v ProjectView) bool { return v.DisplayName == "shop" }) {
-		t.Fatalf("update after Refresh = %+v, want 4 projects without shop", u)
+		t.Fatalf("update after the catch-up tick = %+v, want 4 projects without shop", u)
+	}
+	time.Sleep(20 * time.Millisecond) // room for a second tick, which must not come
+	if p, r := e.cmd.count(runner.DockerPing)-pings, e.cmd.count(runner.DockerContainers)-reads; p != 1 || r != 1 {
+		t.Fatalf("%d pings and %d containers reads after the untrack, want one tick reading once", p, r)
 	}
 }
 
@@ -591,10 +675,11 @@ func TestHubRefreshNoLoopInvalidates(t *testing.T) {
 		t.Fatal("the cache is still ready after Refresh")
 	}
 
-	// The next subscriber reads fresh instead of reusing the cache.
+	// The next subscriber reads fresh instead of reusing the cache: one tick,
+	// and the 4 projects show it.
 	cur, _ := subscribe(t, h)
-	if n := e.cmd.count(runner.DockerPing); n != pings+1 {
-		t.Fatalf("subscribe ran %d ticks, want 1", n-pings)
+	if n := e.cmd.count(runner.DockerPing) - pings; n != 1 {
+		t.Fatalf("subscribe ran %d ticks, want 1", n)
 	}
 	if len(cur.Projects) != 4 {
 		t.Fatalf("state = %+v, want 4 projects without shop", cur)

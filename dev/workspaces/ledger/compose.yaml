@@ -1,0 +1,35 @@
+name: scp-fixture-ledger
+
+# Two databases for the backup flow (dump, gzip, upload to the fake Drive).
+# Their passwords come from .env next to this file (dev-only values).
+services:
+  pg:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ledger
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init/postgres.sql:/docker-entrypoint-initdb.d/10-ledger.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d ledger"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  maria:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: books
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    volumes:
+      - mariadata:/var/lib/mysql
+      - ./init/mariadb.sql:/docker-entrypoint-initdb.d/10-books.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+  mariadata:

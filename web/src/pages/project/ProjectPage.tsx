@@ -1,15 +1,17 @@
 import { CloudUpload, Folder, Globe, Play, RotateCw, Square } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from 'react'
-import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router'
+import { Link, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import type { Project } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import MonitorOnlyTag from '../../components/MonitorOnlyTag'
 import StatusBadge from '../../components/StatusBadge'
+import { projectRule } from '../../lib/backup'
 import { isNotCreated } from '../../lib/containers'
 import { formatUptime } from '../../lib/format'
 import { plural } from '../../lib/plural'
 import { disabledReason } from '../../lib/status'
 import { folderMissing } from '../../lib/time'
+import { type BackupFlow, useBackup } from '../../lib/useBackup'
 import { useNow } from '../../lib/useNow'
 import { useProjectActions } from '../../lib/useProjectActions'
 import {
@@ -31,6 +33,7 @@ export default function ProjectPage() {
   const { project, loading } = useProjectFromLive(id)
   const live = useLive()
   const actions = useProjectActions()
+  const backup = useBackup()
   const navigate = useNavigate()
 
   // A project removed from here has no page any more: back to the list.
@@ -38,6 +41,8 @@ export default function ProjectPage() {
   useEffect(() => {
     if (removed) navigate('/', { replace: true })
   }, [removed, navigate])
+
+  useBackupParam(project, backup)
 
   let body: ReactNode
   if (removed) {
@@ -54,11 +59,19 @@ export default function ProjectPage() {
       raw: project,
       dockerDown: live.dockerUp === false,
       actions,
+      backup,
     }
     body = (
       <>
         <Breadcrumb name={shown.displayName} />
-        <Header project={shown} raw={project} dockerDown={outlet.dockerDown} actions={actions} />
+        <Header
+          project={shown}
+          raw={project}
+          dockerDown={outlet.dockerDown}
+          actions={actions}
+          backup={backup}
+          driveState={live.drive?.state}
+        />
         <Tabs base={`/projects/${project.id}`} databases={shown.databases.length}>
           <Outlet context={outlet} />
         </Tabs>
@@ -70,8 +83,43 @@ export default function ProjectPage() {
     <div className="flex max-w-[1040px] flex-col gap-5">
       {body}
       {actions.dialogs}
+      {backup.dialogs}
     </div>
   )
+}
+
+/** The ?drive= outcomes the app-wide Drive return handles (and then removes). */
+const DRIVE_OUTCOMES = new Set(['connected', 'declined', 'error'])
+
+/**
+ * useBackupParam reopens the backup the Drive dialog left for: ?backup=<key>
+ * (the return from Google) opens the chooser with that database chosen, once,
+ * and removes the parameter. Nothing starts on its own. It waits until the
+ * Drive return has removed its own parameters, so the two never overwrite
+ * each other's URL.
+ */
+function useBackupParam(project: Project | null, backup: BackupFlow) {
+  const [params, setParams] = useSearchParams()
+  const wanted = params.get('backup')
+  const driveOutcome = params.get('drive')
+  const waiting = driveOutcome !== null && DRIVE_OUTCOMES.has(driveOutcome)
+  const ready = project !== null
+  const latest = useRef({ project, choose: backup.choose })
+  latest.current = { project, choose: backup.choose }
+
+  useEffect(() => {
+    if (wanted === null || waiting || !ready) return
+    const p = latest.current.project
+    if (p) latest.current.choose(p, wanted)
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('backup')
+        return next
+      },
+      { replace: true },
+    )
+  }, [wanted, waiting, ready, setParams])
 }
 
 function Loading() {
@@ -132,14 +180,18 @@ type HeaderProps = {
   raw: Project
   dockerDown: boolean
   actions: ProjectActions
+  backup: BackupFlow
+  driveState: string | undefined
 }
 
 /** Header is design 02's: name, status, containers, path, domain, uptime and the buttons. */
-function Header({ project: p, raw, dockerDown, actions }: HeaderProps) {
+function Header({ project: p, raw, dockerDown, actions, backup, driveState }: HeaderProps) {
   const now = useNow(60_000)
   const containers = p.containers.filter((c) => !isNotCreated(c)).length
   const reason = disabledReason(p.status, p.self, dockerDown)
   const allowed = (action: string) => p.actions.includes(action)
+  const backupRule = projectRule(p, driveState)
+  const backingUp = backup.pendingProjectId === p.id
 
   return (
     <header
@@ -216,11 +268,20 @@ function Header({ project: p, raw, dockerDown, actions }: HeaderProps) {
         </button>
         <button
           type="button"
-          disabled
-          title="Backups are not set up yet"
+          disabled={!backupRule.enabled || backingUp}
+          aria-busy={backingUp || undefined}
+          title={backupRule.enabled ? undefined : backupRule.reason}
+          onClick={() => backup.start(raw)}
           className={`${BUTTON} border-transparent bg-text px-4 font-semibold text-bg`}
         >
-          <CloudUpload aria-hidden="true" size={15} strokeWidth={2} />
+          {backingUp ? (
+            <span
+              aria-hidden="true"
+              className="box-border size-[13px] flex-none rounded-full border-2 border-current border-r-transparent motion-safe:animate-[spin_0.8s_linear_infinite]"
+            />
+          ) : (
+            <CloudUpload aria-hidden="true" size={15} strokeWidth={2} />
+          )}
           Back up now
         </button>
       </div>
