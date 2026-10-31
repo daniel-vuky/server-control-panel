@@ -1050,6 +1050,98 @@ func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
 	})
 }
 
+// RecentStats and RecentInspect hand the metrics sampler copies of the last
+// reads while they are fresh; they never read Docker and never wait for a
+// tick in progress.
+func TestHubRecentStatsAndInspect(t *testing.T) {
+	setMetrics(t, time.Hour, time.Hour)
+	e, h := newHubEnv(t, time.Hour)
+	if use, _, ok := h.RecentStats(time.Hour); ok || use != nil {
+		t.Fatalf("RecentStats before any read = %v %v, want nothing", use, ok)
+	}
+	if in, _, ok := h.RecentInspect(time.Hour); ok || in != nil {
+		t.Fatalf("RecentInspect before any read = %v %v, want nothing", in, ok)
+	}
+
+	started := "2026-10-30T08:00:00Z"
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
+		on(runner.DockerInspect, reply{stdout: inspectLine("shop", "app", 3, started) + inspectLine("shop", "db", 1, started)}).
+		on(runner.DockerStats, reply{stdout: statsLine("shop", "app", "1.50%", "100MiB") + statsLine("shop", "db", "2.50%", "200MiB")})
+	before := time.Now()
+	cur, updates, cancel := h.Subscribe()
+	if cpuOf(t, cur, "shop") == nil {
+		untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "shop") != nil })
+	}
+	cancel()
+	waitLoops(t, h)
+	after := time.Now()
+	total := func() int {
+		e.cmd.mu.Lock()
+		defer e.cmd.mu.Unlock()
+		return len(e.cmd.calls)
+	}
+	calls := total()
+
+	app, db := containerID("shop", "app"), containerID("shop", "db")
+	use, at, ok := h.RecentStats(time.Hour)
+	if !ok || len(use) != 2 || use[app] != (project.Usage{CPUPercent: 1.5, MemBytes: 100 << 20}) ||
+		use[db] != (project.Usage{CPUPercent: 2.5, MemBytes: 200 << 20}) {
+		t.Fatalf("RecentStats = %v %v, want shop's two containers", use, ok)
+	}
+	if at.Before(before) || at.After(after) {
+		t.Fatalf("stats read at %s, want between %s and %s", at, before, after)
+	}
+	in, inAt, ok := h.RecentInspect(time.Hour)
+	if !ok || len(in) != 2 || in[app].RestartCount != 3 || in[app].NetworkMode != "bridge" || in[db].RestartCount != 1 {
+		t.Fatalf("RecentInspect = %v %v, want shop's two containers", in, ok)
+	}
+	if inAt.Before(before) || inAt.After(after) {
+		t.Fatalf("inspect read at %s, want between %s and %s", inAt, before, after)
+	}
+
+	// Copies: changing them leaves the hub's maps as they were.
+	use[app] = project.Usage{}
+	delete(use, db)
+	in[app] = project.Inspect{}
+	delete(in, db)
+	if again, _, _ := h.RecentStats(time.Hour); len(again) != 2 || again[app].CPUPercent != 1.5 {
+		t.Fatalf("RecentStats after changing the copy = %v", again)
+	}
+	if again, _, _ := h.RecentInspect(time.Hour); len(again) != 2 || again[app].RestartCount != 3 {
+		t.Fatalf("RecentInspect after changing the copy = %v", again)
+	}
+
+	// Older than maxAge: nothing to reuse.
+	time.Sleep(5 * time.Millisecond)
+	if use, _, ok := h.RecentStats(time.Millisecond); ok || use != nil {
+		t.Fatalf("stale RecentStats = %v %v, want nothing", use, ok)
+	}
+	if in, _, ok := h.RecentInspect(time.Millisecond); ok || in != nil {
+		t.Fatalf("stale RecentInspect = %v %v, want nothing", in, ok)
+	}
+	if n := total(); n != calls {
+		t.Fatalf("%d commands run by RecentStats and RecentInspect, want 0", n-calls)
+	}
+
+	// A tick in progress (held at its ping) does not hold them up.
+	gate := make(chan struct{})
+	e.cmd.set(runner.DockerPing, reply{gate: gate})
+	checked := make(chan struct{})
+	go func() {
+		defer close(checked)
+		h.Check(context.Background())
+	}()
+	e.cmd.waitRunning(t, runner.DockerPing, 1)
+	if _, _, ok := h.RecentStats(time.Hour); !ok {
+		t.Fatal("RecentStats during a tick: want the last read")
+	}
+	if _, _, ok := h.RecentInspect(time.Hour); !ok {
+		t.Fatal("RecentInspect during a tick: want the last read")
+	}
+	close(gate)
+	<-checked
+}
+
 func TestHubContainers(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))

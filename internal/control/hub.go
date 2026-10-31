@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -298,6 +299,7 @@ type Hub struct {
 
 	// Container details and metrics by container id.
 	insp         map[string]project.Inspect
+	inspAt       time.Time // when insp was last replaced by a read
 	use          map[string]project.Usage
 	useAt        time.Time // when use was last read
 	metricsBusy  bool      // a docker.stats read is running
@@ -633,6 +635,7 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 		var cs []project.Container
 		var readErr error
 		var insp map[string]project.Inspect
+		var inspAt time.Time
 		if up {
 			cs, readErr = scan.ReadContainers(ctx, h.cmd)
 			if ctx.Err() != nil {
@@ -645,7 +648,7 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 				if tsErr != nil {
 					tracked = cachedTS
 				}
-				insp = h.inspect(ctx, cs, tracked)
+				insp, inspAt = h.inspect(ctx, cs, tracked), time.Now()
 				if ctx.Err() != nil {
 					return State{}, false, false
 				}
@@ -676,7 +679,7 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 			h.cs, h.csOK, h.at = cs, up && readErr == nil, time.Now()
 			if h.csOK {
 				if len(insp) > 0 {
-					h.insp = insp
+					h.insp, h.inspAt = insp, inspAt
 				}
 				listed := make(map[string]bool, len(cs))
 				for _, c := range cs {
@@ -858,6 +861,33 @@ func (h *Hub) expireMetricsLocked(now time.Time) bool {
 	}
 	h.use = nil
 	return true
+}
+
+// RecentStats returns a copy of the last docker.stats read and when it ended,
+// when that is at most maxAge ago; ok is false when there is none (no
+// subscriber has asked for metrics, or they were cleared) or it is older. It
+// never reads Docker and never waits for a read: it takes the mutex only to
+// copy, so the metrics sampler can reuse the live read.
+func (h *Hub) RecentStats(maxAge time.Duration) (use map[string]project.Usage, at time.Time, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.use == nil || time.Since(h.useAt) > maxAge {
+		return nil, time.Time{}, false
+	}
+	return maps.Clone(h.use), h.useAt, true
+}
+
+// RecentInspect returns a copy of the last docker.inspect data (the
+// containers of tracked, present projects) and when it was read, when that is
+// at most maxAge ago; ok is false otherwise. Like RecentStats it never reads
+// Docker or waits for a read.
+func (h *Hub) RecentInspect(maxAge time.Duration) (insp map[string]project.Inspect, at time.Time, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.insp == nil || time.Since(h.inspAt) > maxAge {
+		return nil, time.Time{}, false
+	}
+	return maps.Clone(h.insp), h.inspAt, true
 }
 
 // recent returns the cached container list when it is at most maxAge old.

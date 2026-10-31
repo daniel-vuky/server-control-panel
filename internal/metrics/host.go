@@ -1,7 +1,9 @@
 // Package metrics reads the server's own numbers: the host's CPU, memory,
 // disk I/O and network from /proc (decision 9) and its disks from the host's
-// mount table (decision 10). Everything here is a plain file read or a statfs;
-// no process runs (ADR 0005).
+// mount table (decision 10), and samples them with the projects' usage into
+// the store (the Sampler). The host readings are plain file reads or a statfs;
+// Docker is read only through the runner and the hub: this package never
+// starts a process itself (ADR 0005).
 package metrics
 
 import (
