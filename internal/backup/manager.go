@@ -47,6 +47,7 @@ const (
 	CodeFolderMissing     = "folder_missing"
 	CodeAlreadyRunning    = "already_running"
 	CodeDBNotRunning      = "db_not_running"
+	CodeDockerDown        = "docker_down"
 	CodeDiskShort         = "disk_short"
 	CodeNotRetryable      = "not_retryable"
 )
@@ -89,6 +90,7 @@ const (
 	wordsType            = "Backups of this database type are not supported yet"
 	wordsNoService       = "The database's service could not be found"
 	wordsNoCompose       = "The project has no compose file."
+	wordsDockerDown      = "Docker is not responding."
 	wordsNoDBName        = "The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan."
 	wordsNoDBNamePG      = "The database name is not usable. Set POSTGRES_DB on the service, then rescan."
 	wordsNotConfigured   = "Google Drive is not set up on this server."
@@ -372,7 +374,8 @@ func (m *Manager) waiters(projectID int64, key string) int {
 //  6. the database is reserved: an active backup of it (one queued since
 //     check 4) is already_running with its id, and an Enqueue already checking
 //     it is waited for (honouring ctx) and its outcome returned;
-//  7. its service resolves and runs (not_supported, no_db_name, db_not_running);
+//  7. its service resolves and runs (not_supported, no_db_name, docker_down,
+//     db_not_running);
 //  8. the disk has room for the dump (disk_short).
 //
 // Checks 1-3 are input errors and write nothing, and already_running writes
@@ -527,6 +530,8 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 		return plan{}, &Refusal{Code: CodeNotSupported, Words: words}
 	case project.ReasonNoDBName:
 		return plan{service: service}, &Refusal{Code: CodeNoDBName, Words: noDBNameWords(db.Type), Service: service}
+	case project.ReasonDockerDown:
+		return plan{service: service}, &Refusal{Code: CodeDockerDown, Words: wordsDockerDown, Service: service}
 	case project.ReasonDBNotRunning:
 		return plan{service: service}, &Refusal{Code: CodeDBNotRunning, Words: "Start " + service + " first", Service: service}
 	}

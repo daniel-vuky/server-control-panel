@@ -936,7 +936,7 @@ func TestRefusalsWriteRowsAndActivity(t *testing.T) {
 			e.hub.up, e.hub.cs = false, nil
 			e.hub.mu.Unlock()
 			return e.shop, keyPG
-		}, CodeDBNotRunning, "Start db first", true, "db"},
+		}, CodeDockerDown, "Docker is not responding.", true, "db"},
 		{"disk short", func(e *env) (store.Tracked, string) {
 			e.free.Store(1)
 			return e.shop, keyPG
@@ -1407,7 +1407,7 @@ func TestServiceResolvedFromContainerName(t *testing.T) {
 	e.hub.up, e.hub.cs = false, nil
 	e.hub.mu.Unlock()
 	_, err := e.m.Enqueue(context.Background(), e.shop, keyMySQL, actor)
-	if r := refusalOf(t, err); r.Code != CodeDBNotRunning || r.Service != "mysql" || r.Words != "Start mysql first" {
+	if r := refusalOf(t, err); r.Code != CodeDockerDown || r.Service != "mysql" || r.Words != "Docker is not responding." {
 		t.Errorf("refusal = %+v", r)
 	}
 }

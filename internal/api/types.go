@@ -129,10 +129,10 @@ type Database struct {
 
 // BackupRule says whether a database can be backed up now. Allowed is true
 // only when Reason is "". Reason is not_found (the project's folder is
-// missing), not_supported, no_db_name, db_not_running, drive_not_connected,
-// drive_expired or folder_missing. Service is the compose service the
-// database resolved to ("" when none did), for words such as "Start <service>
-// first".
+// missing), not_supported, no_db_name, docker_down, db_not_running,
+// drive_not_connected, drive_expired or folder_missing. Service is the compose
+// service the database resolved to ("" when none did), for words such as
+// "Start <service> first".
 type BackupRule struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason"`
@@ -411,10 +411,11 @@ type BackupStarted struct {
 
 // BackupRefused is the 409 body of a backup that was not queued. Error is the
 // code: not_found, not_supported, no_db_name, drive_not_connected,
-// drive_expired, folder_missing, already_running, db_not_running, disk_short or
-// not_retryable; Message its words. ID is the backup already running (only
-// for already_running), NeedBytes and FreeBytes are set for disk_short, and
-// Service is the database's compose service once it is resolved.
+// drive_expired, folder_missing, already_running, docker_down,
+// db_not_running, disk_short or not_retryable; Message its words. ID is the
+// backup already running (only for already_running), NeedBytes and FreeBytes
+// are set for disk_short, and Service is the database's compose service once
+// it is resolved.
 type BackupRefused struct {
 	Error     string `json:"error"`
 	Message   string `json:"message"`

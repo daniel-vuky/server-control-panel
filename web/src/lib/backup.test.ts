@@ -51,6 +51,8 @@ describe('databaseRule', () => {
       makeDatabase({ location: 'pg', backup: rule('db_not_running') }),
       'Start pg first',
     ],
+    // Docker down is not the service being stopped: no "Start db first".
+    [makeDatabase({ backup: rule('docker_down', 'db') }), 'Docker is not responding.'],
     [makeDatabase({ backup: rule('not_found') }), "This project's folder is missing."],
     [makeDatabase({ backup: rule('folder_missing') }), 'Choose a destination folder in Settings.'],
     [makeDatabase({ backup: null }), 'Backups are not available for this database.'],

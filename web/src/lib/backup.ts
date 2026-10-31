@@ -39,6 +39,8 @@ function reasonWords(db: Database, reason: string): string {
         return 'The database name is not usable. Set POSTGRES_DB on the service, then rescan.'
       }
       return 'The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan.'
+    case 'docker_down':
+      return 'Docker is not responding.'
     case 'db_not_running':
       return `Start ${db.backup?.service || db.location || 'the database service'} first`
     case 'not_found':

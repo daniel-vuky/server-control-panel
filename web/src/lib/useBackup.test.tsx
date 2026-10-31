@@ -333,6 +333,7 @@ describe('useBackup', () => {
   it.each([
     ['disk_short', 1],
     ['db_not_running', 1],
+    ['docker_down', 1],
     ['no_db_name', 1],
     ['not_supported', 1],
     ['drive_not_connected', 1],

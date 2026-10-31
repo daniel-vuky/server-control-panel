@@ -136,7 +136,8 @@ func TestBackupReason(t *testing.T) {
 		{"no_db_name wins over docker down", my("db"), svcs, nil, false, "db", "no_db_name"},
 
 		{"stopped", pg("shop"), svcs, stopped, true, "db", "db_not_running"},
-		{"docker down", pg("shop"), svcs, running, false, "db", "db_not_running"},
+		{"docker down", pg("shop"), svcs, running, false, "db", "docker_down"},
+		{"docker down with no container list", pg("shop"), svcs, nil, false, "db", "docker_down"},
 		{"container of another project", pg("shop"), svcs, otherProject, true, "db", "db_not_running"},
 		{"only a one-off container runs", pg("shop"), svcs, oneOff, true, "db", "db_not_running"},
 	}

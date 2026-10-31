@@ -8,6 +8,7 @@ import "github.com/daniel-vuky/server-control-panel/internal/runner"
 const (
 	ReasonNotSupported = "not_supported"
 	ReasonNoDBName     = "no_db_name"
+	ReasonDockerDown   = "docker_down"
 	ReasonDBNotRunning = "db_not_running"
 )
 
@@ -54,7 +55,8 @@ func NameIsPlaceholder(d Database, service string) bool {
 // BackupReason is the one rule for whether a database can be backed up now,
 // used by the project views and by the backup manager. It returns the resolved
 // compose service and the reason, which is "" when the backup may run. Order:
-// not_supported, then no_db_name, then db_not_running.
+// not_supported, then no_db_name, then docker_down (Docker cannot be read, so
+// whether the service runs is not known), then db_not_running.
 //
 // A PostgreSQL database with a placeholder name is allowed: it dumps the image
 // default database. MySQL and MongoDB need the name.
@@ -79,7 +81,7 @@ func BackupReason(d Database, composeProject string, services []Service, cs []Co
 		return service, ReasonNoDBName
 	}
 	if !dockerUp {
-		return service, ReasonDBNotRunning
+		return service, ReasonDockerDown
 	}
 	for _, c := range cs {
 		if c.Project == composeProject && c.Service == service && !c.OneOff && c.State == "running" {

@@ -30,6 +30,7 @@ const DRIVE_CODES = new Set(['drive_not_connected', 'drive_expired'])
 const ROW_CODES = new Set([
   'disk_short',
   'db_not_running',
+  'docker_down',
   'no_db_name',
   'not_supported',
   'drive_not_connected',

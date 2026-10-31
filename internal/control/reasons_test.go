@@ -15,6 +15,7 @@ func TestBackupReasonsMatchRefusalCodes(t *testing.T) {
 		control.ReasonNotFound:          backup.CodeNotFound,
 		project.ReasonNotSupported:      backup.CodeNotSupported,
 		project.ReasonNoDBName:          backup.CodeNoDBName,
+		project.ReasonDockerDown:        backup.CodeDockerDown,
 		project.ReasonDBNotRunning:      backup.CodeDBNotRunning,
 		control.ReasonDriveNotConnected: backup.CodeDriveNotConnected,
 		control.ReasonDriveExpired:      backup.CodeDriveExpired,
