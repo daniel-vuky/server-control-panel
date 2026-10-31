@@ -6,6 +6,7 @@ import { connectDrive, type DriveIssue, driveIssue } from '../api/drive'
 import type { Backup, BackupSummary, DriveStatus } from '../api/types.gen'
 import { useLive } from '../app/live'
 import { BackupSteps } from '../components/BackupProgress'
+import CloudUploadIcon from '../components/CloudUploadIcon'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
 import { formatClock } from '../lib/time'
 import { useBackup } from '../lib/useBackup'
@@ -30,10 +31,11 @@ const byQueue = (a: Backup, b: Backup) =>
   a.id - b.id
 
 /**
- * useSummary is GET /api/backups/summary, read on mount and again whenever
- * `changed` changes; a failed re-read keeps the last summary.
+ * useSummary is GET /api/backups/summary, read once `ready` (the first live
+ * state arrived) and again whenever `changed` changes; a failed re-read keeps
+ * the last summary.
  */
-function useSummary(changed: string) {
+function useSummary(changed: string, ready: boolean) {
   const [summary, setSummary] = useState<BackupSummary | null>(null)
   const [error, setError] = useState('')
   const ctl = useRef<AbortController | null>(null)
@@ -56,8 +58,8 @@ function useSummary(changed: string) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: changed re-reads the summary.
   useEffect(() => {
-    read()
-  }, [changed, read])
+    if (ready) read()
+  }, [changed, ready, read])
   useEffect(() => () => ctl.current?.abort(), [])
 
   return { summary, error, retry: read }
@@ -88,8 +90,11 @@ export default function BackupsPage() {
     b ? `${b.id}:${b.done}:${b.finishedAt ?? ''}` : '',
     flow.refusals,
   ].join('|')
-  const summary = useSummary(changed)
-  const table = useAllBackups(filters, changed)
+  // The first live state is the baseline of `changed`: read once it arrived, not twice.
+  const ready = live.projects !== null
+  const summary = useSummary(changed, ready)
+  const table = useAllBackups(filters, changed, ready)
+  const timeZone = zone.state === 'ok' ? zone.data.timeZone : null
 
   const setFilter = (key: 'project' | 'result' | 'from' | 'to', value: string) => {
     const next = new URLSearchParams(params)
@@ -124,7 +129,7 @@ export default function BackupsPage() {
 
       <BackupSummaryCards
         summary={summary.summary}
-        zone={zone.state === 'ok' ? zone.data.timeZone : null}
+        zone={timeZone}
         error={summary.error}
         onRetry={summary.retry}
       />
@@ -137,7 +142,12 @@ export default function BackupsPage() {
         <NoBackups all={all} />
       ) : (
         <>
-          <BackupFilters filters={filters} projects={live.projects ?? []} set={setFilter} />
+          <BackupFilters
+            filters={filters}
+            projects={live.projects ?? []}
+            zone={timeZone}
+            set={setFilter}
+          />
           <BackupsTable all={table} flow={flow} projects={live.projects ?? []} />
         </>
       )}
@@ -150,20 +160,7 @@ export default function BackupsPage() {
 function NoBackups({ all }: { all: BackupAll }) {
   return (
     <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
-      <svg
-        aria-hidden="true"
-        width="44"
-        height="44"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="#4A515C"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 7 4.5 4.5 0 0 1 18 18z" />
-        <path d="M12 11v6M9.5 13.5 12 11l2.5 2.5" />
-      </svg>
+      <CloudUploadIcon size={44} strokeWidth={1.4} stroke="#4A515C" />
       <p className="m-0 font-semibold">No backups yet</p>
       <p className="m-0 text-[13px] leading-normal text-muted">
         Run the first one now or set up a daily schedule.
@@ -174,16 +171,37 @@ function NoBackups({ all }: { all: BackupAll }) {
 }
 
 /**
- * DriveBanner is design 04's banner for Drive not connected or not set up.
- * None when connected, and none when expired: the app shell shows that one
- * on every page.
+ * DriveBanner is design 04's banner for Drive not connected or not set up,
+ * and for Drive connected with no folder chosen (Back up all is disabled
+ * then). None when ready, and none when expired: the app shell shows that
+ * one on every page.
  */
 function DriveBanner({ drive }: { drive: DriveStatus }) {
   const [busy, setBusy] = useState(false)
   const [issue, setIssue] = useState<DriveIssue | null>(null)
   usePageRestore(() => setBusy(false))
 
-  if (drive.state === 'connected' || drive.state === 'expired') return null
+  if (drive.state === 'expired') return null
+  if (drive.state === 'connected') {
+    if (drive.folder !== null) return null
+    return (
+      <div
+        role="alert"
+        className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5"
+      >
+        <DriveGlyph />
+        <div className="flex flex-col gap-0.5">
+          <span className="font-semibold">No Drive folder chosen</span>
+          <span className="text-[13px] text-muted">
+            Backups need a folder to upload into. Choose one in Settings.
+          </span>
+        </div>
+        <Link to="/settings" className={`${BUTTON} ml-auto bg-text text-bg no-underline`}>
+          Choose a folder in Settings
+        </Link>
+      </div>
+    )
+  }
   if (drive.state === 'not_configured') {
     return (
       <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5 text-[13px] text-text-2">

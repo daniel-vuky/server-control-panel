@@ -247,6 +247,51 @@ describe('BackupsTable filters', () => {
     expect(router.state.location.search).toBe('')
   })
 
+  it('drops a page that answers after the filters changed', async () => {
+    const pending: ((r: Response) => void)[] = []
+    const stub = serveBackups([], {
+      list: (url) => {
+        if (url === '/api/backups') return json(200, { backups: [ok(10)], more: false })
+        return undefined as unknown as Response
+      },
+    })
+    const inner = stub.getMockImplementation() as (u: string, i?: RequestInit) => Promise<Response>
+    stub.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/backups?result=')) {
+        return new Promise<Response>((resolve) => pending.push(resolve))
+      }
+      return inner(url, init)
+    })
+    openBackups(connected, { projects })
+    await table()
+
+    fireEvent.click(chip('Failed'))
+    await waitFor(() => expect(pending).toHaveLength(1))
+    fireEvent.click(chip('Succeeded'))
+    await waitFor(() => expect(pending).toHaveLength(2))
+
+    const failedRow = makeBackup({ id: 20, state: 'failed', failedStep: 'dump', queuePosition: 0 })
+    // The Succeeded page answers first, then the stale Failed one.
+    pending[1](json(200, { backups: [ok(21)], more: false }))
+    const t = await table()
+    await waitFor(() => expect(bodyRows(t).map((r) => r.getAttribute('data-id'))).toEqual(['21']))
+    pending[0](json(200, { backups: [failedRow], more: false }))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(bodyRows(await table()).map((r) => r.getAttribute('data-id'))).toEqual(['21'])
+    expect(listCalls(stub)).toEqual([
+      '/api/backups',
+      '/api/backups?result=failed',
+      '/api/backups?result=ok',
+    ])
+  })
+
+  it('names the server zone the dates are read in', async () => {
+    serveBackups([ok(10)])
+    openBackups(connected, { projects })
+    await table()
+    expect(await screen.findByText('Dates in Asia/Ho_Chi_Minh, UTC+07:00')).toBeInTheDocument()
+  })
+
   it('lists the tracked projects in the Project filter', async () => {
     serveBackups([ok(10)])
     openBackups(connected, { projects })

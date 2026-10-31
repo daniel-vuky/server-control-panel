@@ -154,6 +154,25 @@ describe('Back up all now', () => {
     expect(allButton()).toBeDisabled()
   })
 
+  it('is disabled while Drive has no folder, pointing to Settings', () => {
+    serveBackups([okRow(1)])
+    openBackups({ ...connected, folder: null })
+    expect(allButton()).toBeDisabled()
+    expect(allButton()).toHaveAttribute('title', 'Choose a Drive folder in Settings first')
+    const banner = screen.getByRole('alert')
+    expect(banner).toHaveTextContent('No Drive folder chosen')
+    expect(
+      within(banner).getByRole('link', { name: 'Choose a folder in Settings' }),
+    ).toHaveAttribute('href', '/settings')
+    expect(screen.queryByText(/stored in/)).toBeNull()
+  })
+
+  it('names why it is disabled without Drive', () => {
+    serveBackups([okRow(1)])
+    openBackups(drive('not_connected'))
+    expect(allButton()).toHaveAttribute('title', 'Connect Google Drive first')
+  })
+
   it('posts and shows the batch at once', async () => {
     const stub = serveBackups([okRow(1)], {
       all: () => json(202, { id: 4, total: 6, skipped: 2 }),
@@ -299,9 +318,35 @@ describe('summary and active backups', () => {
     push(connected, { backups: [runningCrm] })
     await waitFor(() => expect(callsTo(stub, '/api/backups/summary')).toHaveLength(2))
     // Progress of the same backup does not re-read it.
-    push(connected, { backups: [{ ...runningCrm, steps: uploading.slice() }] })
+    push(connected, {
+      backups: [
+        {
+          ...runningCrm,
+          steps: uploading.map((x) =>
+            x.step === 'upload' ? { ...x, detail: '30 / 38 MB · 79%' } : x,
+          ),
+        },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(callsTo(stub, '/api/backups/summary')).toHaveLength(2)
     push(connected, { batch: batch({ done: 1 }) })
     await waitFor(() => expect(callsTo(stub, '/api/backups/summary')).toHaveLength(3))
+  })
+
+  it('reads the summary and the table once, after the first live state', async () => {
+    const stub = serveBackups([okRow(1)])
+    openBackups(null)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(callsTo(stub, '/api/backups/summary')).toHaveLength(0)
+    expect(listCalls(stub)).toHaveLength(0)
+
+    push(connected, { backups: [runningCrm], batch: batch({ done: 1 }) })
+    await screen.findByRole('table', { name: 'All backups' })
+    await screen.findByRole('region', { name: 'Drive usage' })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(callsTo(stub, '/api/backups/summary')).toHaveLength(1)
+    expect(listCalls(stub)).toHaveLength(1)
   })
 
   it('shows one card per active backup, running first, above the filters', async () => {

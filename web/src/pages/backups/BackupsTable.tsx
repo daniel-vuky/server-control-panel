@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { type BackupQuery, listBackups } from '../../api/backups'
-import type { Backup, Project } from '../../api/types.gen'
+import type { Backup, Project, TimeZone } from '../../api/types.gen'
 import { useLive } from '../../app/live'
+import { BackupRow, byNewest, HEAD, mergeNewest, ROW_BUTTON } from '../../components/BackupRow'
 import LoadError from '../../components/LoadError'
+import { zoneLabel } from '../../lib/schedule'
 import type { BackupFlow } from '../../lib/useBackup'
-import { BackupRow, HEAD, mergeNewest, ROW_BUTTON } from '../project/BackupHistory'
 
 /** Filters are the table's filters, as the URL query holds them. */
 export type Filters = {
@@ -47,8 +48,6 @@ const queryOf = (f: Filters): BackupQuery => ({
 const matches = (b: Backup, f: Filters): boolean =>
   f.result === '' && f.to === '' && (f.project === null || b.projectId === f.project)
 
-const byNewest = (a: Backup, b: Backup) => b.id - a.id
-
 const message = (err: unknown) =>
   err instanceof Error && err.message ? err.message : 'Something went wrong.'
 
@@ -56,13 +55,14 @@ type State = { rows: Backup[]; more: boolean; loaded: boolean; error: string }
 const EMPTY: State = { rows: [], more: false, loaded: false, error: '' }
 
 /**
- * useAllBackups is the Backups page's table (spec decision 21): the newest
- * page under the filters, older pages on demand, and the newest page read
- * again each time `changed` changes (an active backup came or went, the
- * batch moved, a refusal was stored). Active backups show their live value;
+ * useAllBackups is the Backups page's table (spec decision 21): once
+ * `ready` (the first live state arrived), the newest page under the filters,
+ * older pages on demand, and the newest page read again each time `changed`
+ * changes (an active backup came or went, the batch moved, a refusal was
+ * stored). Active backups show their live value;
  * ones the list has not read yet are added while no filter would hide them.
  */
-export function useAllBackups(filters: Filters, changed: string) {
+export function useAllBackups(filters: Filters, changed: string, ready: boolean) {
   const live = useLive()
   const [state, setState] = useState<State>(EMPTY)
   const [older, setOlder] = useState({ busy: false, error: '' })
@@ -90,25 +90,32 @@ export function useAllBackups(filters: Filters, changed: string) {
     )
   }, [project, result, from, to])
 
+  // The `changed` the last read saw: a read for new filters (or the first,
+  // once ready) counts as the re-read for a change that came with it.
+  const lastChanged = useRef(changed)
+  const changedNow = useRef(changed)
+  changedNow.current = changed
+
   useEffect(() => {
     olderCtl.current?.abort()
     olderCtl.current = null
     setState(EMPTY)
     setOlder({ busy: false, error: '' })
+    if (!ready) return
+    lastChanged.current = changedNow.current
     readNewest()
     return () => {
       newestCtl.current?.abort()
       olderCtl.current?.abort()
     }
-  }, [readNewest])
+  }, [readNewest, ready])
 
   // Something changed in the live state: read the newest page again.
-  const lastChanged = useRef(changed)
   useEffect(() => {
-    if (lastChanged.current === changed) return
+    if (!ready || lastChanged.current === changed) return
     lastChanged.current = changed
     readNewest()
-  }, [changed, readNewest])
+  }, [changed, ready, readNewest])
 
   // An active backup that ended keeps its last live value until the re-read answers.
   const filtersRef = useRef(filters)
@@ -181,12 +188,14 @@ const CHIPS: [Filters['result'], string][] = [
 type FilterProps = {
   filters: Filters
   projects: Project[]
+  /** The server zone From and To are read in; null until known. */
+  zone: TimeZone | null
   /** set writes one filter into the URL; '' removes it. */
   set(key: 'project' | 'result' | 'from' | 'to', value: string): void
 }
 
 /** BackupFilters are design 04's filters: Project, All / Succeeded / Failed, From and To. */
-export function BackupFilters({ filters: f, projects, set }: FilterProps) {
+export function BackupFilters({ filters: f, projects, zone, set }: FilterProps) {
   const projectId = useId()
   const fromId = useId()
   const toId = useId()
@@ -250,6 +259,7 @@ export function BackupFilters({ filters: f, projects, set }: FilterProps) {
           className={`${INPUT} [color-scheme:dark]`}
         />
       </label>
+      {zone && <span className="text-[12.5px] text-muted">Dates in {zoneLabel(zone)}</span>}
     </div>
   )
 }

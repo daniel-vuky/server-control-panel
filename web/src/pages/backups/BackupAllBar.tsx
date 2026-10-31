@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { backUpAll, backupRefusal } from '../../api/backups'
 import type { BackupAllResult, BackupBatch } from '../../api/types.gen'
 import { useLive } from '../../app/live'
+import CloudUploadIcon from '../../components/CloudUploadIcon'
 import { useToast } from '../../components/Toast'
 
 /** DISMISSED is the localStorage key of the last Back up all result the Operator dismissed. */
@@ -66,7 +67,7 @@ function shownBatch(live: BackupBatch | null, started: BackupAllResult | null): 
 
 /**
  * useBackupAll is Back up all now (spec decisions 17 to 19): enabled only
- * while Drive is connected and no batch runs, the POST, the batch as the
+ * while Drive is connected with a folder and no batch runs, the POST, the batch as the
  * live state reports it, the result's dismissal per batch id (kept in
  * localStorage when it can be) and the toast in the tab that started it.
  */
@@ -90,6 +91,8 @@ export function useBackupAll() {
   const batch = shownBatch(live.batch, started)
   const running = batch !== null && batch.finishedAt === null
   const connected = live.drive?.state === 'connected'
+  // The server refuses a batch with no folder to upload into (folder_missing).
+  const folder = connected && live.drive?.folder != null
 
   const finished = live.batch?.finishedAt ? live.batch : null
   // biome-ignore lint/correctness/useExhaustiveDependencies: started re-runs it for a batch that ended before its POST answered.
@@ -123,11 +126,17 @@ export function useBackupAll() {
     writeId(local, DISMISSED, id)
   }, [])
 
-  const reason = !connected ? 'Connect Google Drive first' : running ? 'Back up all is running' : ''
+  const reason = !connected
+    ? 'Connect Google Drive first'
+    : !folder
+      ? 'Choose a Drive folder in Settings first'
+      : running
+        ? 'Back up all is running'
+        : ''
 
   return {
     start,
-    enabled: connected && !running && !posting,
+    enabled: folder && !running && !posting,
     posting,
     reason,
     /** The batch to show: running, or finished and not dismissed. */
@@ -137,23 +146,6 @@ export function useBackupAll() {
 }
 
 export type BackupAll = ReturnType<typeof useBackupAll>
-
-const CLOUD = (
-  <svg
-    aria-hidden="true"
-    width="15"
-    height="15"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 7 4.5 4.5 0 0 1 18 18z" />
-    <path d="M12 11v6M9.5 13.5 12 11l2.5 2.5" />
-  </svg>
-)
 
 /** BackUpAllButton is design 04's header button (and the empty state's). */
 export function BackUpAllButton({ all }: { all: BackupAll }) {
@@ -166,7 +158,7 @@ export function BackUpAllButton({ all }: { all: BackupAll }) {
       onClick={() => void all.start()}
       className="flex h-[38px] flex-none cursor-pointer items-center gap-2 rounded-lg border-0 bg-text px-4 font-semibold text-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:bg-[#262c35] disabled:text-muted"
     >
-      {CLOUD}
+      <CloudUploadIcon size={15} strokeWidth={2} />
       Back up all now
     </button>
   )
