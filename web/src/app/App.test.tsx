@@ -18,7 +18,7 @@ describe('app shell', () => {
   it.each([
     ['/', 'Dashboard'],
     ['/projects', 'Projects'],
-    ['/onboarding', 'Add a workspace'],
+    ['/onboarding', 'Add project folder'],
     ['/backups', 'Backups'],
     ['/server', 'Server'],
     ['/activity', 'Activity'],

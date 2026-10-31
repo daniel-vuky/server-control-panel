@@ -187,13 +187,27 @@ afterEach(() => {
 })
 
 describe('onboarding, step 1', () => {
-  it('renders the page heading and the two steps', () => {
+  it('renders the card title as the h1 under the brand row, and the two steps', () => {
     renderPage()
-    expect(screen.getByRole('heading', { level: 1, name: 'Add a workspace' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Add project folder' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Add a workspace' })).toBeNull()
+    expect(screen.getByText('· Add a workspace').parentElement).toHaveTextContent(
+      'Server Control Panel· Add a workspace',
+    )
     const steps = screen.getByRole('list', { name: 'Setup steps' })
     expect(within(steps).getByText('Workspace')).toBeInTheDocument()
     expect(within(steps).getByText('Scan results')).toBeInTheDocument()
     expect(screen.getByText('Detects: docker compose')).toBeInTheDocument()
+  })
+
+  it('draws the path field and the depth control on the field colour, the selected depth on selected', () => {
+    renderPage()
+    expect(pathInput().parentElement).toHaveClass('bg-field')
+    const selected = screen.getByText('1 level')
+    expect(selected).toHaveClass('peer-checked:bg-selected')
+    expect(selected.closest('div')).toHaveClass('bg-field')
   })
 
   it('shows a 422 message under the field, with aria-invalid', async () => {
@@ -280,6 +294,14 @@ describe('onboarding, step 1', () => {
       expect(posts('/api/scans')[1].body).toEqual({ path: '/srv', depth: 2 })
     },
   )
+
+  it('shows the failure as the error banner', async () => {
+    const error = 'docker is not reachable'
+    await scanToEnd(job({ state: 'failed', error, result: undefined }))
+    const banner = (await screen.findByText(error)).closest('[role="alert"]')
+    expect(banner).toHaveClass('bg-error-bg', 'border-error-border')
+    expect(screen.getByRole('button', { name: 'Scan again' })).toHaveClass('border-error-strong')
+  })
 
   it('editing the path after a failed scan dismisses the failure; Scan posts the new path', async () => {
     const error = 'docker is not reachable'
@@ -460,6 +482,17 @@ describe('onboarding, step 2', () => {
     expect(screen.getAllByText('Monitor only')).toHaveLength(1)
   })
 
+  it('draws the results with divider rows, the plain status and a done first step', async () => {
+    await scanToResults()
+    const shop = checkbox('/srv/shop').closest('tr') as HTMLElement
+    expect(shop).toHaveClass('border-divider')
+    const status = within(shop).getByText('Running').parentElement as HTMLElement
+    expect(status).not.toHaveClass('rounded-full')
+    expect(status).toHaveClass('text-[13px]')
+    const first = within(screen.getByRole('list', { name: 'Setup steps' })).getByText('✓')
+    expect(first).toHaveClass('border-success-bg', 'bg-success-bg')
+  })
+
   it('shows a row warning on several lines', async () => {
     await scanToResults()
     const broken = checkbox('/srv/broken').closest('tr') as HTMLElement
@@ -489,12 +522,22 @@ describe('onboarding, nothing found', () => {
     expect(
       await screen.findByText(
         (_, el) =>
-          el?.textContent === 'No compose project found in /srv at depth 1.' && el.tagName === 'H2',
+          el?.textContent === 'No compose project found in /srv at depth 1.' && el.tagName === 'H1',
       ),
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Scan again at depth 2' }))
     await waitFor(() => expect(posts('/api/scans')).toHaveLength(2))
     expect(posts('/api/scans')[1].body).toEqual({ path: '/srv', depth: 2 })
+  })
+
+  it('is the dashed empty card with secondary buttons', async () => {
+    await scanToEnd(empty(1))
+    const title = await screen.findByRole('heading', { level: 1, name: /^No compose project/ })
+    expect(title.parentElement).toHaveClass('border-dashed')
+    expect(screen.getByRole('button', { name: 'Scan again at depth 2' })).toHaveClass(
+      'bg-surface-2',
+    )
+    expect(screen.getByRole('button', { name: 'Check the path' })).toHaveClass('bg-surface-2')
   })
 
   it('at depth 3 offers no depth+1 button', async () => {

@@ -171,12 +171,14 @@ describe('app shell connection state', () => {
     expectNotDimmed()
   })
 
-  it('shows the badge on the onboarding page above its title', () => {
+  it('shows the badge on the onboarding page, in the brand row beside the card title', () => {
     renderApp('/onboarding')
     ready()
     expect(screen.getByRole('main')).toContainElement(screen.getByText('Realtime'))
     expect(content()).not.toContainElement(screen.getByText('Realtime'))
-    expect(screen.getByRole('heading', { level: 1, name: 'Add a workspace' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Add project folder' }),
+    ).toBeInTheDocument()
   })
 
   it('shows the badge on the rescan page', () => {

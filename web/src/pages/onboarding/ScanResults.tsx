@@ -1,7 +1,8 @@
-import { FolderSearch, TriangleAlert } from 'lucide-react'
+import { Search, TriangleAlert } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import type { ScanJob, ScanResult, ScanRow, TrackItem } from '../../api/types.gen'
 import DatabaseCell from '../../components/DatabaseCell'
+import EmptyState, { EmptyStateButton } from '../../components/EmptyState'
 import MonitorOnlyTag from '../../components/MonitorOnlyTag'
 import StatusBadge from '../../components/StatusBadge'
 import { plural } from '../../lib/plural'
@@ -16,6 +17,23 @@ function notShown(r: ScanResult): string {
   return parts.length ? `${parts.join(' · ')}, not shown` : ''
 }
 
+/** foldersScanned is "N folders scanned". */
+const foldersScanned = (r: ScanResult) => `${plural(r.foldersScanned, 'folder', 'folders')} scanned`
+
+/** Warnings is the scan's warnings, in the warning colour. */
+export function Warnings({ result }: { result: ScanResult }) {
+  if (result.warnings.length === 0) return null
+  return (
+    <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12.5px] text-warning-text">
+      {result.warnings.map((w) => (
+        <li key={w} className="whitespace-pre-line">
+          {w}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 /** Summary is the line under the step 2 heading; `where` adds the path and depth. */
 export function Summary({
   job,
@@ -27,7 +45,7 @@ export function Summary({
   where: boolean
 }) {
   const hidden = notShown(result)
-  const scanned = `${plural(result.foldersScanned, 'folder', 'folders')} scanned`
+  const scanned = foldersScanned(result)
   return (
     <>
       <p className="text-muted">
@@ -41,15 +59,7 @@ export function Summary({
         )}
       </p>
       {hidden && <p className="text-[12.5px] text-muted">{hidden}</p>}
-      {result.warnings.length > 0 && (
-        <ul className="flex flex-col gap-1 text-[12.5px] text-warning">
-          {result.warnings.map((w) => (
-            <li key={w} className="whitespace-pre-line">
-              {w}
-            </li>
-          ))}
-        </ul>
-      )}
+      <Warnings result={result} />
     </>
   )
 }
@@ -98,9 +108,9 @@ export default function ScanResults({ job, busy, error, onRescan, onAdd }: Props
       className="flex w-full max-w-[980px] flex-col rounded-[14px] border border-border bg-surface"
     >
       <div className="flex flex-col gap-1.5 px-6 pt-6 pb-[18px]">
-        <h2 id="results-title" className="text-xl font-semibold tracking-tight">
+        <h1 id="results-title" className="m-0 text-xl font-semibold tracking-tight">
           Found {plural(rows.length, 'project', 'projects')}
-        </h2>
+        </h1>
         <Summary job={job} result={job.result} where />
       </div>
 
@@ -188,7 +198,7 @@ export function Row({
   const invalid = choice.checked && choice.name.trim() === ''
   return (
     <tr
-      className={`border-b border-border align-top last:border-b-0 ${choice.checked ? '' : 'opacity-55'}`}
+      className={`border-b border-divider align-top last:border-b-0 ${choice.checked ? '' : 'opacity-55'}`}
     >
       <td className="py-3 pl-4">
         <span className="flex h-8 items-center justify-center">
@@ -211,7 +221,7 @@ export function Row({
             spellCheck={false}
             aria-label={`Display name for ${row.path}`}
             aria-invalid={invalid ? true : undefined}
-            className={`h-8 w-full min-w-0 rounded-md border bg-bg px-2 font-mono font-semibold text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
+            className={`h-8 w-full min-w-0 rounded-md border bg-field px-2 font-mono font-semibold text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
               invalid ? 'border-field-error' : 'border-border-strong'
             }`}
           />
@@ -224,7 +234,7 @@ export function Row({
           {row.path}
         </span>
         {row.warning && (
-          <span className="mt-1 flex items-start gap-1.5 text-[12.5px] text-warning">
+          <span className="mt-1 flex items-start gap-1.5 text-[12.5px] text-warning-text">
             <TriangleAlert
               aria-hidden="true"
               size={14}
@@ -237,7 +247,7 @@ export function Row({
       </td>
       <td className="px-3 py-3">
         <span className="flex h-8 items-center">
-          <StatusBadge status={row.status} />
+          <StatusBadge status={row.status} variant="plain" />
         </span>
       </td>
       <td className="py-3 pr-6 pl-3 text-[13px]">
@@ -249,7 +259,7 @@ export function Row({
   )
 }
 
-/** NothingFound is step 2 when the scan found no compose project. */
+/** NothingFound is step 2 when the scan found no compose project: design 10's empty card. */
 export function NothingFound({
   job,
   busy,
@@ -261,38 +271,30 @@ export function NothingFound({
   onDeeper(): void
   onCheckPath(): void
 }) {
+  const hidden = notShown(job.result)
   return (
-    <section
-      aria-labelledby="results-title"
-      className="flex w-full max-w-[640px] flex-col gap-[18px] rounded-[14px] border border-border bg-surface p-8"
-    >
-      <FolderSearch aria-hidden="true" size={28} strokeWidth={1.6} className="text-muted" />
-      <div className="flex flex-col gap-1.5">
-        <h2 id="results-title" className="text-xl font-semibold tracking-tight">
-          No compose project found in <span className="font-mono">{job.path}</span> at depth{' '}
-          {job.depth}.
-        </h2>
-        <Summary job={job} result={job.result} where={false} />
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        {job.depth < 3 && (
-          <button
-            type="button"
-            onClick={onDeeper}
-            disabled={busy}
-            className="h-10 cursor-pointer rounded-lg bg-text px-5 font-semibold text-bg disabled:cursor-default disabled:opacity-50"
-          >
-            Scan again at depth {job.depth + 1}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onCheckPath}
-          className="h-10 cursor-pointer rounded-lg border border-border-strong px-4 text-text"
-        >
-          Check the path
-        </button>
-      </div>
-    </section>
+    <div className="w-full max-w-[640px]">
+      <EmptyState
+        icon={Search}
+        titleAs="h1"
+        title={`No compose project found in ${job.path} at depth ${job.depth}.`}
+        action={
+          <>
+            <Warnings result={job.result} />
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {job.depth < 3 && (
+                <EmptyStateButton onClick={onDeeper} disabled={busy}>
+                  Scan again at depth {job.depth + 1}
+                </EmptyStateButton>
+              )}
+              <EmptyStateButton onClick={onCheckPath}>Check the path</EmptyStateButton>
+            </div>
+          </>
+        }
+      >
+        {foldersScanned(job.result)}
+        {hidden && ` · ${hidden}`}
+      </EmptyState>
+    </div>
   )
 }

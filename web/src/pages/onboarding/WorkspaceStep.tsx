@@ -45,9 +45,9 @@ export default function WorkspaceStep({
       className="flex w-full max-w-[640px] flex-col gap-[22px] rounded-[14px] border border-border bg-surface p-8"
     >
       <div className="flex flex-col gap-2">
-        <h2 id="workspace-title" className="text-[22px] font-semibold tracking-tight">
+        <h1 id="workspace-title" className="m-0 text-[22px] font-semibold tracking-tight">
           Add project folder
-        </h2>
+        </h1>
         <p className="leading-relaxed text-muted">
           Enter the root folder containing projects on the server. The panel only reads inside this
           folder and never moves or modifies any files.
@@ -60,7 +60,7 @@ export default function WorkspaceStep({
             Root folder path
           </label>
           <span
-            className={`flex h-11 items-center gap-2 rounded-lg border bg-bg px-3 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent ${
+            className={`flex h-11 items-center gap-2 rounded-lg border bg-field px-3 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent ${
               errors.path ? 'border-field-error' : 'border-border-strong'
             } ${locked ? 'opacity-60' : ''}`}
           >
@@ -91,7 +91,7 @@ export default function WorkspaceStep({
         <fieldset className="flex flex-col gap-2" aria-describedby="depth-hint">
           <legend className="mb-2 text-[13px] text-text-2">Scan depth</legend>
           <div
-            className={`flex w-fit rounded-lg border bg-bg p-[3px] ${
+            className={`flex w-fit rounded-lg border bg-field p-[3px] ${
               errors.depth ? 'border-field-error' : 'border-border-strong'
             }`}
           >
@@ -107,7 +107,7 @@ export default function WorkspaceStep({
                   aria-invalid={errors.depth ? true : undefined}
                   className="peer absolute inset-0 cursor-pointer opacity-0 disabled:cursor-default"
                 />
-                <span className="flex h-8 items-center rounded-md px-4 text-[13px] text-muted peer-checked:bg-border-strong peer-checked:text-white peer-focus-visible:outline-2 peer-focus-visible:outline-accent peer-disabled:opacity-60">
+                <span className="flex h-8 items-center rounded-md px-4 text-[13px] text-muted peer-checked:bg-selected peer-checked:text-white peer-focus-visible:outline-2 peer-focus-visible:outline-accent peer-disabled:opacity-60">
                   {depthLabel(d)}
                 </span>
               </label>

@@ -9,7 +9,7 @@ export default function ScanProgressView({ progress }: { progress: ScanProgress 
   const { examined, total, current, workspace, workspaces } = progress
   const pct = total > 0 ? Math.min(100, Math.round((examined / total) * 100)) : 0
   return (
-    <div className="flex flex-col gap-2.5 rounded-[10px] border border-border bg-bg p-3.5">
+    <div className="flex flex-col gap-2.5 rounded-[10px] border border-border bg-field p-3.5">
       <span role="status" className="sr-only">
         Scanning folders…
       </span>

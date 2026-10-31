@@ -1,6 +1,6 @@
-import { CircleAlert } from 'lucide-react'
+import { TriangleAlert } from 'lucide-react'
 
-/** ScanFailed is the failed-scan box: the error and a button that repeats the scan. */
+/** ScanFailed is the failed-scan banner (design 10's error banner): the error and a button that repeats the scan. */
 export default function ScanFailed({
   error,
   busy,
@@ -15,22 +15,20 @@ export default function ScanFailed({
   return (
     <div
       role="alert"
-      className="flex flex-col gap-3 rounded-[10px] border border-danger/40 bg-danger/10 p-3.5"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-error-border bg-error-bg px-4 py-3 text-error-fg"
     >
-      <p className="flex items-start gap-2 text-[13px] text-text">
-        <CircleAlert
-          aria-hidden="true"
-          size={16}
-          strokeWidth={2}
-          className="mt-0.5 flex-none text-danger"
-        />
-        <span>{error}</span>
-      </p>
+      <TriangleAlert
+        aria-hidden="true"
+        size={18}
+        strokeWidth={2}
+        className="flex-none text-danger"
+      />
+      <span className="min-w-0 flex-1">{error}</span>
       <button
         type="button"
         onClick={onRetry}
         disabled={busy}
-        className="h-9 w-fit cursor-pointer rounded-lg border border-border-strong px-4 text-text disabled:cursor-default disabled:opacity-50"
+        className="h-8 cursor-pointer rounded-md border border-error-strong bg-transparent px-3 text-error-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:opacity-50"
       >
         {label}
       </button>
