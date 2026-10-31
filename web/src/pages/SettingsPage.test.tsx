@@ -43,12 +43,13 @@ const backupSettings = () =>
 const METRICS_SETTINGS = '/api/metrics-settings'
 const metricsSettings = () => json(200, { retentionDays: 7 })
 
-/** serve answers GET /api/workspaces in order, the last repeating; the defaults and metrics cards get their settings. */
+/** serve answers GET /api/workspaces in order, the last repeating; the defaults and metrics cards get their settings and every other path a 404. */
 function serve(...answers: Array<[number, unknown]>) {
   let n = 0
   const fetchStub = vi.fn(async (url: string) => {
     if (url === BACKUP_SETTINGS) return backupSettings()
     if (url === METRICS_SETTINGS) return metricsSettings()
+    if (url !== '/api/workspaces') return json(404, { error: `unrouted ${url}` })
     const [status, body] = answers[Math.min(n++, answers.length - 1)]
     return new Response(JSON.stringify(body), { status })
   })

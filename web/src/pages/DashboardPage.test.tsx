@@ -6,6 +6,7 @@ import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
 import { makeBackup, makeDatabase } from '../test/projects'
 import { renderApp } from '../test/renderApp'
+import { makeSeries, makeServerInfo } from '../test/server'
 import DashboardPage from './DashboardPage'
 
 const projects: Project[] = [
@@ -72,15 +73,22 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 
 /**
  * serve stubs fetch by URL. GET /api/projects answers one entry per call, the
- * last one repeating; GET /api/workspaces answers the list given (one
- * workspace by default), so that load can never take a queued projects answer.
+ * last one repeating; the other reads (workspaces, server, server metrics,
+ * latest backups) answer by path, so none of them can take a queued projects
+ * answer.
  */
 function serve(...answers: Array<[number, unknown]>) {
   let n = 0
   const fetchStub = vi.fn(async (url: string) => {
     if (url === '/api/workspaces') return json(200, workspaces)
-    const [status, body] = answers[Math.min(n++, answers.length - 1)]
-    return json(status, body)
+    if (url === '/api/server') return json(200, makeServerInfo())
+    if (url.startsWith('/api/server/metrics')) return json(200, makeSeries({ range: '1h' }))
+    if (url === '/api/backups/latest') return json(200, { projects: [] })
+    if (url === '/api/projects') {
+      const [status, body] = answers[Math.min(n++, answers.length - 1)]
+      return json(status, body)
+    }
+    return json(404, { error: `unrouted ${url}` })
   })
   vi.stubGlobal('fetch', fetchStub)
   return fetchStub

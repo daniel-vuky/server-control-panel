@@ -11,16 +11,19 @@ export default function EmptyState({
   title,
   children,
   action,
+  titleAs: Title = 'h2',
 }: {
   icon: LucideIcon
   title: string
   children?: ReactNode
   action?: ReactNode
+  /** The heading level of the title; a page that has no other h1 passes 'h1'. */
+  titleAs?: 'h1' | 'h2'
 }) {
   return (
     <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
       <Icon aria-hidden="true" size={44} strokeWidth={1.4} className="text-[#4a515c]" />
-      <h2 className="m-0 text-sm font-semibold">{title}</h2>
+      <Title className="m-0 text-sm font-semibold">{title}</Title>
       {children ? <p className="m-0 text-[13px] leading-normal text-muted">{children}</p> : null}
       {action}
     </div>

@@ -21,6 +21,11 @@ describe('EmptyState', () => {
     expect(container.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
   })
 
+  it('renders the title as a level 1 heading when asked', () => {
+    render(<EmptyState icon={Search} title="Page not found" titleAs="h1" />)
+    expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeTruthy()
+  })
+
   it('works without a line or an action', () => {
     render(<EmptyState icon={Search} title="Nothing here" />)
     expect(screen.getByRole('heading', { level: 2, name: 'Nothing here' })).toBeTruthy()

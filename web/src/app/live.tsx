@@ -253,3 +253,20 @@ export function useLive(): Live {
   if (!ctx) throw new Error('useLive must be used inside LiveProvider')
   return ctx
 }
+
+/** The dim of design 10 while the values on screen may be stale. */
+const STALE_STYLE = { opacity: 0.55, filter: 'saturate(0.6)' }
+
+/**
+ * LiveDim wraps a page's body (below its header): it dims while the connection
+ * is lost or expired. The header, the banners and the dialogs stay outside it.
+ */
+export function LiveDim({ children, className }: { children: ReactNode; className?: string }) {
+  const { connection } = useLive()
+  const stale = connection === 'lost' || connection === 'expired'
+  return (
+    <div data-live-content="" className={className} style={stale ? STALE_STYLE : undefined}>
+      {children}
+    </div>
+  )
+}

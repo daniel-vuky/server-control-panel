@@ -4,6 +4,8 @@ import { ApiError } from '../api/client'
 import { getScan, isScanBusy, trackScan, watchScan } from '../api/scans'
 import type { ScanJob, ScanProgress, ScanResult, TrackItem } from '../api/types.gen'
 import { startRescan } from '../api/workspaces'
+import { LiveDim } from '../app/live'
+import { BadgeRow } from '../components/PageHeader'
 import { useToast } from '../components/Toast'
 import { plural } from '../lib/plural'
 import ScanFailed from './onboarding/ScanFailed'
@@ -220,11 +222,14 @@ function Rescan({ id }: { id: number }) {
   }
 
   return (
-    <div className="flex flex-col items-center gap-8">
-      <header className="flex w-full max-w-[980px] items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Rescan</h1>
-      </header>
-      {body}
+    <div className="flex flex-col gap-4">
+      <BadgeRow />
+      <div className="flex flex-col items-center gap-8">
+        <header className="flex w-full max-w-[980px] items-center justify-between gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight">Rescan</h1>
+        </header>
+        <LiveDim className="flex w-full flex-col items-center gap-8">{body}</LiveDim>
+      </div>
     </div>
   )
 }

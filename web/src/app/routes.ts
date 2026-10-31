@@ -1,11 +1,11 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   Activity,
-  DatabaseBackup,
-  FolderKanban,
+  Database,
+  Folder,
   LayoutDashboard,
   Server,
-  Settings,
+  SlidersHorizontal,
 } from 'lucide-react'
 
 export type AppRoute = {
@@ -21,14 +21,14 @@ export const appRoutes: AppRoute[] = [
   {
     path: '/',
     title: 'Dashboard',
-    issues: [4, 11, 23, 24, 25, 33, 39, 40, 41, 42, 43, 44, 72],
+    issues: [4, 11, 23, 24, 25, 27, 28, 29, 30, 33, 39, 40, 41, 42, 43, 44, 72, 73],
     nav: { label: 'Dashboard', icon: LayoutDashboard },
   },
   {
     path: '/projects',
     title: 'Projects',
     issues: [4],
-    nav: { label: 'Projects', icon: FolderKanban },
+    nav: { label: 'Projects', icon: Folder },
   },
   {
     path: '/projects/:id',
@@ -41,7 +41,7 @@ export const appRoutes: AppRoute[] = [
     path: '/backups',
     title: 'Backups',
     issues: [6, 45, 49, 52, 57],
-    nav: { label: 'Backups', icon: DatabaseBackup },
+    nav: { label: 'Backups', icon: Database },
   },
   {
     path: '/server',
@@ -54,6 +54,6 @@ export const appRoutes: AppRoute[] = [
     path: '/settings',
     title: 'Settings',
     issues: [3, 6, 8, 17, 19, 63],
-    nav: { label: 'Settings', icon: Settings },
+    nav: { label: 'Settings', icon: SlidersHorizontal },
   },
 ]

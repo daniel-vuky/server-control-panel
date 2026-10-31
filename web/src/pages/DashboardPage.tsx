@@ -4,11 +4,12 @@ import { Link, useNavigate } from 'react-router'
 import { listProjects } from '../api/projects'
 import type { Project, Workspace } from '../api/types.gen'
 import { listWorkspaces } from '../api/workspaces'
-import { useLive } from '../app/live'
+import { LiveDim, useLive } from '../app/live'
 import ActionMenu from '../components/ActionMenu'
 import DatabaseCell from '../components/DatabaseCell'
 import LoadError from '../components/LoadError'
 import MonitorOnlyTag from '../components/MonitorOnlyTag'
+import PageHeader from '../components/PageHeader'
 import ProjectSwitch from '../components/ProjectSwitch'
 import StatusBadge from '../components/StatusBadge'
 import { projectRule } from '../lib/backup'
@@ -77,28 +78,30 @@ export default function DashboardPage() {
   useScrollMemory(rows !== undefined && rows.length > 0)
 
   return (
-    <section className="flex max-w-[1040px] flex-col gap-[18px]">
+    <section className="flex flex-col gap-[18px]">
       <Header workspaces={workspaces.state === 'ok' ? workspaces.data : null} />
 
-      {rows === undefined && load.state === 'loading' && <Loading />}
-      {rows === undefined && load.state === 'error' && (
-        <LoadError title="Could not load projects." message={load.message} onRetry={retry} />
-      )}
-      {rows !== undefined &&
-        (rows.length === 0 ? (
-          <Empty />
-        ) : (
-          <ProjectTable
-            projects={rows}
-            dockerDown={dockerDown}
-            onStart={actions.start}
-            onStop={actions.stop}
-            onRestart={actions.restart}
-            onUntrack={actions.leave}
-            backup={backup}
-            driveState={live.drive?.state}
-          />
-        ))}
+      <LiveDim className="flex flex-col gap-[18px]">
+        {rows === undefined && load.state === 'loading' && <Loading />}
+        {rows === undefined && load.state === 'error' && (
+          <LoadError title="Could not load projects." message={load.message} onRetry={retry} />
+        )}
+        {rows !== undefined &&
+          (rows.length === 0 ? (
+            <Empty />
+          ) : (
+            <ProjectTable
+              projects={rows}
+              dockerDown={dockerDown}
+              onStart={actions.start}
+              onStop={actions.stop}
+              onRestart={actions.restart}
+              onUntrack={actions.leave}
+              backup={backup}
+              driveState={live.drive?.state}
+            />
+          ))}
+      </LiveDim>
 
       {actions.dialogs}
       {backup.dialogs}
@@ -121,7 +124,7 @@ function latestScan(workspaces: Workspace[]): string {
 }
 
 /**
- * Header is the title, the workspace line of design 01 and the Rescan button.
+ * Header is the page header: the title, the workspace line of design 01 and the Rescan button.
  * Without the workspaces (loading, failed or none) it keeps the plain subtitle
  * and no button.
  */
@@ -130,38 +133,38 @@ function Header({ workspaces }: { workspaces: Workspace[] | null }) {
   const known = workspaces !== null && workspaces.length > 0
 
   return (
-    <header className="flex flex-wrap items-end justify-between gap-4">
-      <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-[13px] text-muted">
-          {known ? (
-            <>
-              {workspaces.length === 1 ? (
-                <>
-                  Workspace <span className="font-mono text-text-2">{workspaces[0].path}</span>
-                </>
-              ) : (
-                `${workspaces.length} workspaces`
-              )}{' '}
-              · last scanned {formatLastScan(latestScan(workspaces))}
-            </>
-          ) : (
-            'Tracked projects and their status'
-          )}
-        </p>
-      </div>
-      {known && (
-        <button
-          type="button"
-          disabled={starting}
-          onClick={() => void rescan()}
-          className="flex h-9 cursor-pointer items-center gap-2 rounded-[7px] border border-border-strong bg-surface-2 px-3.5 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <RotateCw aria-hidden="true" size={16} strokeWidth={1.8} />
-          Rescan
-        </button>
-      )}
-    </header>
+    <PageHeader
+      title="Dashboard"
+      subtitle={
+        known ? (
+          <>
+            {workspaces.length === 1 ? (
+              <>
+                Workspace <span className="font-mono text-text-2">{workspaces[0].path}</span>
+              </>
+            ) : (
+              `${workspaces.length} workspaces`
+            )}{' '}
+            · last scanned {formatLastScan(latestScan(workspaces))}
+          </>
+        ) : (
+          'Tracked projects and their status'
+        )
+      }
+      actions={
+        known && (
+          <button
+            type="button"
+            disabled={starting}
+            onClick={() => void rescan()}
+            className="flex h-9 cursor-pointer items-center gap-2 rounded-[7px] border border-border-strong bg-surface-2 px-3.5 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RotateCw aria-hidden="true" size={16} strokeWidth={1.8} />
+            Rescan
+          </button>
+        )
+      }
+    />
   )
 }
 

@@ -4,9 +4,10 @@ import { Link, useSearchParams } from 'react-router'
 import { getBackupSettings, getBackupSummary } from '../api/backups'
 import { connectDrive, type DriveIssue, driveIssue } from '../api/drive'
 import type { Backup, BackupSummary, DriveStatus } from '../api/types.gen'
-import { useLive } from '../app/live'
+import { LiveDim, useLive } from '../app/live'
 import { BackupSteps } from '../components/BackupProgress'
 import CloudUploadIcon from '../components/CloudUploadIcon'
+import PageHeader from '../components/PageHeader'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
 import { formatClock } from '../lib/time'
 import { useBackup } from '../lib/useBackup'
@@ -107,11 +108,11 @@ export default function BackupsPage() {
     table.loaded && table.error === '' && table.rows.length === 0 && !isFiltered(filters)
 
   return (
-    <div className="flex max-w-[1240px] flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-1.5">
-          <h1 className="m-0 text-2xl font-semibold tracking-tight">Backups</h1>
-          <p className="m-0 text-[13px] text-muted">
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="Backups"
+        subtitle={
+          <>
             All project database backups
             {folder && (
               <>
@@ -119,38 +120,40 @@ export default function BackupsPage() {
                 <span className="font-mono text-text-2">Drive/{folder.name}</span>
               </>
             )}
-          </p>
-        </div>
-        <BackUpAllButton all={all} />
-      </header>
-
-      {drive && <DriveBanner drive={drive} />}
-      <BackupAllBar all={all} />
-
-      <BackupSummaryCards
-        summary={summary.summary}
-        zone={timeZone}
-        error={summary.error}
-        onRetry={summary.retry}
+          </>
+        }
+        actions={<BackUpAllButton all={all} />}
       />
 
-      {active.map((x) => (
-        <ActiveCard key={x.id} backup={x} />
-      ))}
+      <LiveDim className="flex flex-col gap-5">
+        {drive && <DriveBanner drive={drive} />}
+        <BackupAllBar all={all} />
 
-      {empty ? (
-        <NoBackups all={all} />
-      ) : (
-        <>
-          <BackupFilters
-            filters={filters}
-            projects={live.projects ?? []}
-            zone={timeZone}
-            set={setFilter}
-          />
-          <BackupsTable all={table} flow={flow} projects={live.projects ?? []} />
-        </>
-      )}
+        <BackupSummaryCards
+          summary={summary.summary}
+          zone={timeZone}
+          error={summary.error}
+          onRetry={summary.retry}
+        />
+
+        {active.map((x) => (
+          <ActiveCard key={x.id} backup={x} />
+        ))}
+
+        {empty ? (
+          <NoBackups all={all} />
+        ) : (
+          <>
+            <BackupFilters
+              filters={filters}
+              projects={live.projects ?? []}
+              zone={timeZone}
+              set={setFilter}
+            />
+            <BackupsTable all={table} flow={flow} projects={live.projects ?? []} />
+          </>
+        )}
+      </LiveDim>
       {flow.dialogs}
     </div>
   )

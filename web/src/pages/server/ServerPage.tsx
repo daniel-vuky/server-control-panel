@@ -1,8 +1,9 @@
 import { CircleAlert } from 'lucide-react'
 import { getServer, getServerMetrics, getServerUsage } from '../../api/metrics'
 import type { ServerInfo } from '../../api/types.gen'
-import { useLive } from '../../app/live'
+import { LiveDim, useLive } from '../../app/live'
 import LoadError from '../../components/LoadError'
+import PageHeader from '../../components/PageHeader'
 import RangeSwitch from '../../components/RangeSwitch'
 import { formatBytes } from '../../lib/format'
 import { useRangeParam } from '../../lib/range'
@@ -64,54 +65,54 @@ export default function ServerPage() {
   const info = server.data
 
   return (
-    <div className="flex max-w-[1240px] min-w-0 flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <h1 className="m-0 text-2xl font-semibold tracking-tight">Server</h1>
-          {info && <p className="m-0 text-[13px] text-muted">{headerLine(info)}</p>}
-        </div>
-        <RangeSwitch value={range} onChange={setRange} />
-      </header>
+    <div className="flex min-w-0 flex-col gap-5">
+      <PageHeader
+        title="Server"
+        subtitle={info ? headerLine(info) : undefined}
+        actions={<RangeSwitch value={range} onChange={setRange} />}
+      />
 
-      {info === null && server.error === '' && (
-        <p role="status" className="m-0 text-[13px] text-muted">
-          Loading the server…
-        </p>
-      )}
-      {server.error !== '' && (
-        <LoadError
-          title="Could not load the server."
-          message={server.error}
-          onRetry={server.refresh}
-        />
-      )}
+      <LiveDim className="flex min-w-0 flex-col gap-5">
+        {info === null && server.error === '' && (
+          <p role="status" className="m-0 text-[13px] text-muted">
+            Loading the server…
+          </p>
+        )}
+        {server.error !== '' && (
+          <LoadError
+            title="Could not load the server."
+            message={server.error}
+            onRetry={server.refresh}
+          />
+        )}
 
-      {info && !info.available && <NotAvailable reason={info.reason} />}
-      {info?.available && series.data && <ServerCharts series={series.data} info={info} />}
-      {info?.available && series.data === null && series.error === '' && <ChartsLoading />}
-      {info?.available && series.error !== '' && (
-        <LoadError
-          title="Could not load the charts."
-          message={series.error}
-          onRetry={series.refresh}
-        />
-      )}
+        {info && !info.available && <NotAvailable reason={info.reason} />}
+        {info?.available && series.data && <ServerCharts series={series.data} info={info} />}
+        {info?.available && series.data === null && series.error === '' && <ChartsLoading />}
+        {info?.available && series.error !== '' && (
+          <LoadError
+            title="Could not load the charts."
+            message={series.error}
+            onRetry={series.refresh}
+          />
+        )}
 
-      {usage.data && <UsageTable report={usage.data} dockerUp={live.dockerUp} />}
-      {usage.error !== '' && (
-        <LoadError
-          title="Could not load the usage by app."
-          message={usage.error}
-          onRetry={usage.refresh}
-        />
-      )}
+        {usage.data && <UsageTable report={usage.data} dockerUp={live.dockerUp} />}
+        {usage.error !== '' && (
+          <LoadError
+            title="Could not load the usage by app."
+            message={usage.error}
+            onRetry={usage.refresh}
+          />
+        )}
 
-      {info && (
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] gap-3.5">
-          <SystemInfoCard info={info} />
-          <ServicesCard info={info} dockerUp={live.dockerUp} />
-        </div>
-      )}
+        {info && (
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] gap-3.5">
+            <SystemInfoCard info={info} />
+            <ServicesCard info={info} dockerUp={live.dockerUp} />
+          </div>
+        )}
+      </LiveDim>
     </div>
   )
 }
