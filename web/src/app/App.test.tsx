@@ -90,6 +90,6 @@ describe('app shell', () => {
 
   it('renders Page not found for unknown paths', () => {
     renderAt('/nope')
-    expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Page not found' })).toBeInTheDocument()
   })
 })
