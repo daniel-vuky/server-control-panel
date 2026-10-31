@@ -126,7 +126,10 @@ var (
 // InsertSamples stores one tick: the server sample (nil when it could not be
 // read) and the project samples, in one transaction. Each ts is truncated to
 // its 30-second slot; a slot already stored is kept (INSERT OR IGNORE), so a
-// clock that went back never overwrites.
+// clock that went back never overwrites. A project row is stored only while
+// the project is still tracked and present: one deleted, untracked or gone
+// missing since the sampler read the list is skipped, so it neither fails the
+// tick nor leaves a sample a re-track would inherit.
 func (s *Store) InsertSamples(ctx context.Context, srv *ServerSample, ps []ProjectSample) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -143,8 +146,10 @@ func (s *Store) InsertSamples(ctx context.Context, srv *ServerSample, ps []Proje
 	}
 	for _, p := range ps {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO project_samples (project_id, ts, cpu, mem, net_in, net_out) VALUES (?, ?, ?, ?, ?, ?)`,
-			p.ProjectID, slot(p.TS), p.CPU, p.Mem, p.NetIn, p.NetOut); err != nil {
+			`INSERT OR IGNORE INTO project_samples (project_id, ts, cpu, mem, net_in, net_out)
+			 SELECT ?, ?, ?, ?, ?, ?
+			 WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND state = 'tracked' AND missing_since IS NULL)`,
+			p.ProjectID, slot(p.TS), p.CPU, p.Mem, p.NetIn, p.NetOut, p.ProjectID); err != nil {
 			return fmt.Errorf("store: insert samples: %w", err)
 		}
 	}

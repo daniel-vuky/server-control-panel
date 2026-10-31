@@ -152,6 +152,43 @@ func TestInsertSamplesIgnoresDuplicateTS(t *testing.T) {
 	}
 }
 
+// A project deleted, untracked to ignored or gone missing between the
+// sampler's tracked-list read and its insert gets no row, and the rest of the
+// tick (the server row, the other projects) is still stored: a re-tracked
+// project starts a fresh history (D6).
+func TestInsertSamplesOnlyForTrackedPresentProjects(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	_, shopID, blogID := seedApps(t, s)
+	if _, err := s.db.Exec(`UPDATE projects SET state = 'ignored' WHERE id = ?`, blogID); err != nil {
+		t.Fatal(err)
+	}
+	const deletedID = 9999
+	srv := cpuAt(clock(12, 0, 10), 10)
+	if err := s.InsertSamples(ctx, &srv, []ProjectSample{
+		{ProjectID: deletedID, TS: clock(12, 0, 10), CPU: f64(1)},
+		{ProjectID: blogID, TS: clock(12, 0, 10), CPU: f64(2)},
+		{ProjectID: shopID, TS: clock(12, 0, 10), CPU: f64(3)},
+	}); err != nil {
+		t.Fatalf("a gone project must not fail the tick: %v", err)
+	}
+	if got, want := rows(t, s, "server_samples"), []string{"Oct 31 12:00:00:0:10"}; !slices.Equal(got, want) {
+		t.Fatalf("server_samples = %v, want %v", got, want)
+	}
+	if got, want := rows(t, s, "project_samples"), []string{fmt.Sprintf("Oct 31 12:00:00:%d:3", shopID)}; !slices.Equal(got, want) {
+		t.Fatalf("project_samples = %v, want %v", got, want)
+	}
+
+	// Gone missing meanwhile: no row either.
+	if _, err := s.db.Exec(`UPDATE projects SET missing_since = '2026-10-31T12:00:00Z' WHERE id = ?`, shopID); err != nil {
+		t.Fatal(err)
+	}
+	mustInsert(t, s, nil, ProjectSample{ProjectID: shopID, TS: clock(12, 0, 40), CPU: f64(4)})
+	if n := count(t, s.db, `SELECT count(*) FROM project_samples`); n != 1 {
+		t.Fatalf("project_samples = %d rows, want 1", n)
+	}
+}
+
 func TestServerSeriesDenseWithGaps(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
@@ -335,6 +372,7 @@ func TestRollupIdempotentAndBoundary(t *testing.T) {
 func TestRollupLateTrackedProject(t *testing.T) {
 	s := open(t)
 	_, a, b := seedApps(t, s)
+	mustExec(t, s.db, `UPDATE projects SET state = 'tracked' WHERE id = ?`, b) // blog is seeded ignored
 	mustInsert(t, s, nil,
 		ProjectSample{ProjectID: a, TS: clock(11, 52, 0), CPU: f64(1)},
 		ProjectSample{ProjectID: a, TS: clock(11, 57, 0), CPU: f64(2)})
