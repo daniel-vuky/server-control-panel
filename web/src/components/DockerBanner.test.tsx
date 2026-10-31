@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeEventSource } from '../test/fakeEventSource'
 import { renderApp } from '../test/renderApp'
+import { holdShellReads } from '../test/server'
 
 const renderSettings = () => renderApp('/settings')
 
@@ -21,6 +22,7 @@ describe('DockerBanner', () => {
   beforeEach(() => {
     FakeEventSource.instances = []
     vi.stubGlobal('EventSource', FakeEventSource)
+    holdShellReads()
   })
   afterEach(() => vi.unstubAllGlobals())
 

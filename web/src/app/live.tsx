@@ -17,7 +17,8 @@ import type { Backup, BackupBatch, DriveStatus, LiveState, Project } from '../ap
  */
 export type Connection = 'connecting' | 'open' | 'lost' | 'expired'
 
-type Live = {
+/** Live is what useLive returns. */
+export type Live = {
   connection: Connection
   /** null until the first state event arrives. */
   dockerUp: boolean | null

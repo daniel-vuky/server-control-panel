@@ -9,6 +9,7 @@ import { BackupSteps } from '../components/BackupProgress'
 import CloudUploadIcon from '../components/CloudUploadIcon'
 import PageHeader from '../components/PageHeader'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
+import { backupChanges } from '../lib/backupChanges'
 import { formatClock } from '../lib/time'
 import { useBackup } from '../lib/useBackup'
 import { useLoad } from '../lib/useLoad'
@@ -85,12 +86,7 @@ export default function BackupsPage() {
 
   // What the summary and the table re-read on: a backup queued, started or
   // ended, the batch moved, or a refusal stored a row (never mere progress).
-  const b = live.batch
-  const changed = [
-    live.backups.map((x) => `${x.id}:${x.state}`).join(','),
-    b ? `${b.id}:${b.done}:${b.finishedAt ?? ''}` : '',
-    flow.refusals,
-  ].join('|')
+  const changed = backupChanges(live, flow.refusals)
   // The first live state is the baseline of `changed`: read once it arrived, not twice.
   const ready = live.projects !== null
   const summary = useSummary(changed, ready)

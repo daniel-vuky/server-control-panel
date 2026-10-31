@@ -4,6 +4,7 @@ import { LiveProvider } from '../app/live'
 import { FakeEventSource } from '../test/fakeEventSource'
 import { makeProject } from '../test/projects'
 import { renderApp } from '../test/renderApp'
+import { holdShellReads } from '../test/server'
 import ConnectionBadge from './ConnectionBadge'
 
 const EVENTS = '/api/events'
@@ -106,6 +107,8 @@ describe('ConnectionBadge', () => {
 })
 
 describe('app shell connection state', () => {
+  beforeEach(holdShellReads)
+
   it.each([
     ['/', 'Dashboard'],
     ['/backups', 'Backups'],

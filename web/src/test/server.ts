@@ -1,3 +1,4 @@
+import { vi } from 'vitest'
 import type { ServerInfo, ServerPoint, ServerSeries, UsageReport, UsageRow } from '../api/types.gen'
 
 export const MB = 1024 * 1024
@@ -100,4 +101,22 @@ export function makeUsage(rows: UsageRow[]): UsageReport {
     totals: { cpuPercent: 40, memBytes: 6400 * MB, diskUsedBytes: 100 * GB, netBps: 4 * MB },
     rows,
   }
+}
+
+/**
+ * holdShellReads makes the shell's two reads (`/api/server` and
+ * `/api/backups/latest`) wait forever and leaves every other request to the
+ * fetch stub in place, for the tests of one banner or badge that render the
+ * whole shell and must not see a state update land after they ended.
+ */
+export function holdShellReads() {
+  const inner = fetch
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      input === '/api/server' || input === '/api/backups/latest'
+        ? new Promise<Response>(() => {})
+        : inner(input, init),
+    ),
+  )
 }
