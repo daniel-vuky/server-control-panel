@@ -141,7 +141,6 @@ func (s *server) removeWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.record(r, rec, store.ResultOK, "")
-	s.Hub.Refresh() // the lock release did not publish; see Controller.WithLocks
 	s.log.Info("workspace removed", "workspace", id, "path", removed.Path, "tracked", removed.Tracked)
 	writeJSON(w, http.StatusOK, RemoveResponse{Removed: removed.Tracked})
 }
@@ -184,7 +183,6 @@ func (s *server) untrackProject(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	s.Hub.Refresh() // the lock release did not publish; see Controller.WithLocks
 	s.log.Info("project untracked", "project", id, "path", gone.Path, "missing", gone.MissingSince != nil)
 	writeJSON(w, http.StatusOK, UntrackResponse{Removed: true})
 }

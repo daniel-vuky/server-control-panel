@@ -77,44 +77,16 @@ func waitLoops(t *testing.T, h *Hub) {
 	}
 }
 
-// subscribe subscribes for the rest of the test.
+// subscribe subscribes for the rest of the test. From cold it runs exactly
+// one tick (one ping and the next reply of each queue), and the tick loop's
+// first tick comes tickInterval after it, so with a long interval the test's
+// Docker counts and updates move only when the test makes them. The metrics
+// loop does start at once (see quietSubscribe).
 func subscribe(t *testing.T, h *Hub) (State, <-chan State) {
 	t.Helper()
 	cur, updates, cancel := h.Subscribe()
 	t.Cleanup(cancel)
 	return cur, updates
-}
-
-// settledSubscribe subscribes for the rest of the test and returns once the
-// loop's first tick has ended, so the test's Docker counts and updates move
-// only when the test makes them. Subscribe starts the loop before it runs its
-// own tick; when the loop goroutine is scheduled after that tick ended, its
-// first shared runs one more tick that can land during the test's next step.
-// A Check first loads the cache, so Subscribe runs no tick of its own and the
-// loop's first shared always runs exactly one: one ping, and the next reply
-// from each queue (give it the same replies as the Check). The helper waits
-// for that ping, then for the tick to end.
-func settledSubscribe(t *testing.T, e *env, h *Hub) (State, <-chan State) {
-	t.Helper()
-	h.Check(context.Background())
-	pings := e.cmd.count(runner.DockerPing)
-	cur, updates := subscribe(t, h)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		// The ping first: the tick sets running before its ping and clears
-		// it at its end, so a ping then running nil means the tick ended.
-		pinged := e.cmd.count(runner.DockerPing) > pings
-		h.mu.Lock()
-		idle := h.running == nil
-		h.mu.Unlock()
-		if pinged && idle {
-			return cur, updates
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the loop's first tick did not end (pinged %v, idle %v)", pinged, idle)
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 // viewOf returns the view of the project named name.
@@ -248,7 +220,7 @@ func TestHubStopsWhenLastSubscriberLeaves(t *testing.T) {
 func TestHubSubscribeGetsState(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop") + partialOut("notes"))
-	cur, _ := settledSubscribe(t, e, h)
+	cur, _ := subscribe(t, h)
 	if !cur.DockerUp || len(cur.Projects) != 5 {
 		t.Fatalf("state = %+v, want Docker up and 5 projects", cur)
 	}
@@ -274,6 +246,45 @@ func TestHubSubscribeGetsState(t *testing.T) {
 	}
 	if got := e.cmd.count(runner.DockerContainers); got != n {
 		t.Fatalf("the second subscribe read Docker %d times", got-n)
+	}
+}
+
+// The first subscribe from cold runs one tick, not two: the loop goroutine,
+// held here until Subscribe has returned, waits the interval from that tick
+// instead of reading Docker again at once.
+func TestHubSubscribeFromColdReadsOnce(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	release := make(chan struct{})
+	h.loopStart = func() { <-release }
+	cur, _ := subscribe(t, h)
+	if viewOf(t, cur, "shop").Status != project.StatusRunning {
+		t.Fatalf("state = %+v", cur)
+	}
+	close(release)
+	time.Sleep(100 * time.Millisecond) // the loop's first shared would run now
+	if p, c := e.cmd.count(runner.DockerPing), e.cmd.count(runner.DockerContainers); p != 1 || c != 1 {
+		t.Fatalf("%d pings and %d containers reads after one subscribe, want 1 and 1", p, c)
+	}
+}
+
+// The loop keeps the interval from the last read: a subscribe on a cache read
+// a moment ago runs no tick, and the loop's first comes tickInterval after
+// that read, not after Subscribe.
+func TestHubLoopFirstTickKeepsTheInterval(t *testing.T) {
+	e, h := newHubEnv(t, 300*time.Millisecond)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	h.Check(context.Background())
+	read := time.Now()
+	time.Sleep(200 * time.Millisecond)
+	subscribe(t, h)
+	if n := e.cmd.count(runner.DockerPing); n != 1 {
+		t.Fatalf("%d pings after a subscribe on a fresh cache, want 1 (the Check)", n)
+	}
+	waitTicks(t, e.cmd, 1)
+	// About 300ms; 200ms would be a tick at once, 500ms the interval from Subscribe.
+	if d := time.Since(read); d < 250*time.Millisecond || d > 450*time.Millisecond {
+		t.Fatalf("the loop's first tick came %s after the last read, want about 300ms", d)
 	}
 }
 
@@ -304,8 +315,8 @@ func TestHubTicksNeverOverlap(t *testing.T) {
 func TestHubCheckWaitsForTheTickInProgress(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	gate := make(chan struct{})
-	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"), runningOut("shop")).on(runner.DockerContainers, reply{stdout: stoppedOut("shop"), gate: gate})
-	settledSubscribe(t, e, h)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).on(runner.DockerContainers, reply{stdout: stoppedOut("shop"), gate: gate})
+	subscribe(t, h)
 	reads := e.cmd.count(runner.DockerContainers)
 
 	first := make(chan State, 1)
@@ -347,7 +358,7 @@ func TestHubBroadcastsOnlyOnChange(t *testing.T) {
 func TestHubLockChangedPushesWithoutTick(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
-	_, updates := settledSubscribe(t, e, h)
+	_, updates := subscribe(t, h)
 	reads := e.cmd.count(runner.DockerPing) + e.cmd.count(runner.DockerContainers)
 
 	// Take the lock as Do does, then tell the hub.
@@ -391,11 +402,11 @@ func TestHubDropsStaleTick(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	gate := make(chan struct{})
 	e.cmd.on(runner.DockerPing, reply{}).
-		containers(runningOut("shop"), runningOut("shop")).                         // 1: the Check and the loop's first tick
+		containers(runningOut("shop")).                                             // 1: Subscribe's tick
 		on(runner.DockerContainers, reply{stdout: runningOut("shop"), gate: gate}). // 2: the stale hub read
 		containers(stoppedOut("shop")).                                             // 3: the controller's re-read, then the retry
 		on(runner.ComposeStop, reply{})
-	cur, updates := settledSubscribe(t, e, h)
+	cur, updates := subscribe(t, h)
 	if viewOf(t, cur, "shop").Status != project.StatusRunning {
 		t.Fatalf("state = %+v", cur)
 	}
@@ -435,7 +446,7 @@ func TestHubDropsStaleTick(t *testing.T) {
 func TestHubStaleTickGivesUpAfterThreeReads(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
-	settledSubscribe(t, e, h)
+	subscribe(t, h)
 
 	// Every read lands after a lock change: the hub publishes its cached
 	// list after the third read.
@@ -545,7 +556,7 @@ func TestNoDeadlock(t *testing.T) {
 func TestHubDockerDown(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{err: errors.New("Cannot connect to the Docker daemon")}).containers(runningOut("shop"))
-	cur, _ := settledSubscribe(t, e, h)
+	cur, _ := subscribe(t, h)
 	if cur.DockerUp || len(cur.Projects) != 5 {
 		t.Fatalf("state = %+v, want Docker down and 5 projects", cur)
 	}
@@ -723,7 +734,7 @@ func TestTickInspectPartialFailureKeepsGoodLines(t *testing.T) {
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")).
 		on(runner.DockerInspect, reply{stdout: inspectLine("shop", "app", 3, started),
 			err: &runner.ExitError{Code: 1, Stderr: "Error: No such object: " + containerID("shop", "db")}})
-	cur, _ := settledSubscribe(t, e, h)
+	cur, _ := subscribe(t, h)
 
 	v := viewOf(t, cur, "shop")
 	app := componentOf(t, v, "app")
@@ -958,7 +969,8 @@ func TestNoMetricsWithoutSubscriber(t *testing.T) {
 
 // After a successful WithLocks write the hub's cached list still holds the
 // rows the write dropped; a metrics merge must not publish them with their
-// actions before the caller's Refresh.
+// actions before the catch-up tick has read the store (held here at its
+// containers read).
 func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
 	setMetrics(t, 5*time.Millisecond, time.Hour)
 	e, h := newHubEnv(t, time.Hour)
@@ -967,11 +979,13 @@ func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
 		rs = append(rs, reply{stdout: statsLine("blog", "app", fmt.Sprintf("%d.00%%", i%7+1), "1MiB")})
 	}
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop")+runningOut("blog")).on(runner.DockerStats, rs...)
-	cur, updates := settledSubscribe(t, e, h)
+	cur, updates := subscribe(t, h)
 	if cpuOf(t, cur, "blog") == nil {
 		untilUpdate(t, updates, func(s State) bool { return cpuOf(t, s, "blog") != nil })
 	}
 
+	gate := make(chan struct{})
+	e.cmd.set(runner.DockerContainers, reply{stdout: runningOut("shop") + runningOut("blog"), gate: gate})
 	shop := e.ids["shop"]
 	if err := e.ctl.WithLocks([]int64{shop}, func() error {
 		_, err := e.st.UntrackProject(context.Background(), shop)
@@ -996,7 +1010,7 @@ func TestMetricsDoNotRepublishAfterWithLocks(t *testing.T) {
 	if n := e.cmd.count(runner.DockerStats) - reads; n < 3 {
 		t.Fatalf("%d stats reads during the check, want at least 3", n)
 	}
-	h.Refresh()
+	close(gate)
 	untilUpdate(t, updates, func(s State) bool {
 		return !slices.ContainsFunc(s.Projects, func(v ProjectView) bool { return v.ID == shop })
 	})
@@ -1199,8 +1213,9 @@ func dockerReads(cmd *fakeCmd) int {
 
 // quietSubscribe loads the cache with one Check and registers a subscriber
 // channel without starting the loops, so the test's Docker counts move only
-// when the test makes them: Subscribe's loop may run a tick of its own after
-// Subscribe's, at any time.
+// when the test makes them: Subscribe's metrics loop reads docker.stats at
+// once, and with no loop running a store change only marks the cache not
+// ready (no catch-up tick).
 func quietSubscribe(t *testing.T, h *Hub) <-chan State {
 	t.Helper()
 	h.Check(context.Background())
@@ -1286,6 +1301,34 @@ func TestPublishFromCacheNoDockerRead(t *testing.T) {
 	}
 }
 
+// A lifecycle command does not freeze Publish: the take's lockChanged brings
+// the cache level with the Controller before the command runs, so backup
+// progress keeps flowing while it runs, with the project shown in flight.
+func TestPublishDuringALifecycleCommand(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	gate := make(chan struct{})
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"), stoppedOut("shop")).
+		on(runner.ComposeStop, reply{gate: gate})
+	src := &backupSource{}
+	h.SetBackupSource(src.get)
+	_, updates := subscribe(t, h)
+
+	done := make(chan Result, 1)
+	go func() { done <- e.do(t, "shop", project.ActionStop) }()
+	e.cmd.waitRunning(t, runner.ComposeStop, 1)
+	untilUpdate(t, updates, func(s State) bool { return viewOf(t, s, "shop").Status == project.StatusStopping })
+	for i := 1; i <= 3; i++ {
+		src.set(store.Backup{ID: int64(i), State: "running"})
+		h.Publish()
+		s := nextUpdate(t, updates, time.Second)
+		if len(s.Backups) != 1 || s.Backups[0].ID != int64(i) || viewOf(t, s, "shop").Status != project.StatusStopping {
+			t.Fatalf("update %d = %+v with shop %s, want backup %d with shop stopping", i, s.Backups, viewOf(t, s, "shop").Status, i)
+		}
+	}
+	close(gate)
+	wantResult(t, <-done, OutcomeOK, project.StatusStopped, "")
+}
+
 func TestPublishSkipsWhenNotReady(t *testing.T) {
 	e, h := newHubEnv(t, time.Hour)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
@@ -1303,20 +1346,37 @@ func TestPublishSkipsWhenNotReady(t *testing.T) {
 	}
 
 	updates := quietSubscribe(t, h)
-	// A successful WithLocks write leaves the cache behind the Controller:
-	// Publish waits for a tick or a lock change to catch up.
-	if err := e.ctl.WithLocks([]int64{e.ids["shop"]}, func() error { return nil }); err != nil {
-		t.Fatal(err)
-	}
-	nextUpdate(t, updates, time.Second) // the take
+	// A lock taken without its lockChanged yet leaves the cache behind the
+	// Controller: Publish waits for the lock change.
+	shop := e.ids["shop"]
+	e.ctl.mu.Lock()
+	e.ctl.locks[shop] = projectLock{status: project.StatusStopping}
+	e.ctl.gen++
+	e.ctl.mu.Unlock()
 	src.set(store.Backup{ID: 2, State: "running"})
 	h.Publish()
 	noUpdate(t, updates)
-
-	// The next lock change catches up and carries the backup.
 	h.lockChanged(nil)
 	if s := nextUpdate(t, updates, time.Second); len(s.Backups) != 1 || s.Backups[0].ID != 2 {
 		t.Fatalf("backups = %+v, want backup 2", s.Backups)
+	}
+	e.ctl.unlock(shop)
+	h.lockChanged(nil)
+	nextUpdate(t, updates, time.Second)
+
+	// A successful WithLocks write leaves the cache behind the store: neither
+	// Publish nor a lock change publishes it until a tick has read the store.
+	if err := e.ctl.WithLocks([]int64{shop}, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	nextUpdate(t, updates, time.Second) // the take
+	src.set(store.Backup{ID: 3, State: "running"})
+	h.Publish()
+	h.lockChanged(nil)
+	noUpdate(t, updates)
+	h.Check(context.Background())
+	if s := nextUpdate(t, updates, time.Second); len(s.Backups) != 1 || s.Backups[0].ID != 3 {
+		t.Fatalf("backups = %+v, want backup 3", s.Backups)
 	}
 }
 

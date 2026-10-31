@@ -198,8 +198,8 @@ func lookup(lock func(int64) (project.Status, bool, bool), id int64) (project.St
 
 // tickRun is one tick in progress. Callers that find it wait for done, then
 // read state; ok is false when the tick was abandoned (its context ended) or
-// stale (Refresh said the store changed while it ran, so it published
-// nothing and another tick must run).
+// stale (Refresh or storeChanged said the store changed while it ran, so it
+// published nothing and another tick must run).
 type tickRun struct {
 	done  chan struct{}
 	state State
@@ -222,7 +222,8 @@ type tickRun struct {
 // Lock order: the hub calls the Controller's Lock and Generation while it
 // holds mu (hub.mu → ctl.mu), and the backup and Drive sources while it builds
 // a state (hub.mu → mgr.mu, hub.mu → drive.mu); it never runs Docker or reads
-// the store with mu held.
+// the store with mu held. The Controller calls lockChanged and storeChanged
+// without ctl.mu held (a project lock may be held: that is no mutex).
 type Hub struct {
 	st  *store.Store
 	cmd scan.Commander
@@ -237,11 +238,16 @@ type Hub struct {
 
 	loops sync.WaitGroup // running loops; tests wait on it
 
+	// loopStart, when set (tests only, before the first Subscribe), runs at
+	// the start of each tick loop goroutine, so a test can hold the loop
+	// until Subscribe has returned.
+	loopStart func()
+
 	mu       sync.Mutex
 	subs     map[chan State]struct{}
 	stopLoop context.CancelFunc // non-nil while the loop runs
 	running  *tickRun           // the tick in progress, or nil
-	tsGen    uint64             // bumped by Refresh; a tick that saw it change publishes nothing
+	tsGen    uint64             // bumped by a store change; a tick that saw it change publishes nothing
 
 	// The cache: the tracked projects and the last container list, as the
 	// last tick or lock release left them.
@@ -257,11 +263,15 @@ type Hub struct {
 	lastSent []byte // the JSON of the last state broadcast
 
 	// cacheGen is the Controller generation the cache last matched (a tick
-	// or a lock change published it). A successful WithLocks write releases
-	// its locks without telling the hub, and the cached projects then still
-	// hold the rows it dropped: the metrics merge does not publish until a
-	// tick or a lock change has caught up.
+	// or a lock change published it). Between a lock change and its
+	// lockChanged call the cached views may not match the locks, so the
+	// cache-only publishes (Publish, the metrics merge) wait for it.
 	cacheGen uint64
+	// cacheTS is the tsGen the cached tracked list was read under. While it
+	// is behind tsGen the store changed after that read: the cached list may
+	// still hold rows the store dropped, so nothing publishes it until a
+	// tick has read the store again (see storeCurrentLocked).
+	cacheTS uint64
 
 	// Container details and metrics by container id.
 	insp         map[string]project.Inspect
@@ -297,15 +307,28 @@ func (h *Hub) SetDriveSource(src func() drive.Status) {
 // Publish rebuilds the state from the cache, with the sources read again, and
 // broadcasts it when it changed; the backup manager and the Drive service call
 // it from their OnChange, never with their own lock held. It reads neither
-// Docker nor the store. Like the metrics merge it publishes only once a tick
-// has loaded the cache and while the cache matches the Controller (see
-// cacheGen); otherwise the next tick or lock change carries the change.
+// Docker nor the store. Like the metrics merge it publishes only while the
+// cache is current (cacheCurrentLocked); otherwise the next tick or lock
+// change, which reads the sources again, carries the change.
 func (h *Hub) Publish() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.ready && h.cacheGen == h.ctl.Generation() {
+	if h.cacheCurrentLocked() {
 		h.publishLocked()
 	}
+}
+
+// cacheCurrentLocked reports whether a state built from the cache alone may
+// be published: the store is current (storeCurrentLocked) and the cache
+// matches the Controller's locks. h.mu must be held.
+func (h *Hub) cacheCurrentLocked() bool {
+	return h.storeCurrentLocked() && h.cacheGen == h.ctl.Generation()
+}
+
+// storeCurrentLocked reports whether a tick has loaded the cache and no store
+// change came after its tracked list was read. h.mu must be held.
+func (h *Hub) storeCurrentLocked() bool {
+	return h.ready && h.cacheTS == h.tsGen
 }
 
 // RecentContainers returns the cached container list when it is at most
@@ -327,19 +350,26 @@ func (h *Hub) RecentContainers(ctx context.Context, maxAge time.Duration) (cs []
 // channel holds the latest state not yet received; it is never closed. The
 // first subscriber starts the tick and metrics loops and the last cancel stops
 // them. The current state comes from the last tick when it is at most
-// recentMax old, otherwise from one fresh tick.
+// recentMax old (and no store change came after it), otherwise from one fresh
+// tick.
+//
+// The tick loop starts only once that state is built, and its first tick
+// comes tickInterval after the last read (firstWaitLocked): a loop started
+// earlier could run its first tick right after Subscribe's own and read
+// Docker twice.
 func (h *Hub) Subscribe() (current State, updates <-chan State, cancel func()) {
 	ch := make(chan State, 1)
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
+	var loopCtx context.Context // set when this call starts the loops
 	if h.stopLoop == nil {
-		ctx, stop := context.WithCancel(context.Background())
+		var stop context.CancelFunc
+		loopCtx, stop = context.WithCancel(context.Background())
 		h.stopLoop = stop
 		h.loops.Add(2)
-		go h.loop(ctx)
-		go h.metricsLoop(ctx)
+		go h.metricsLoop(loopCtx)
 	}
-	fresh := h.ready && time.Since(h.at) <= recentMax
+	fresh := h.storeCurrentLocked() && time.Since(h.at) <= recentMax
 	h.mu.Unlock()
 	if !fresh {
 		h.shared(context.Background())
@@ -350,6 +380,9 @@ func (h *Hub) Subscribe() (current State, updates <-chan State, cancel func()) {
 	select { // current is at least as new as anything already queued
 	case <-ch:
 	default:
+	}
+	if loopCtx != nil { // counted in h.loops above; a cancel meanwhile ends it at once
+		go h.loop(loopCtx, h.firstWaitLocked())
 	}
 	h.mu.Unlock()
 
@@ -389,47 +422,87 @@ func (h *Hub) Containers(ctx context.Context) (cs []project.Container, ok bool) 
 }
 
 // Refresh makes the next published state reflect the store, without waiting;
-// call it after a change to the tracked list. With no subscriber it only marks
-// the cache not ready, so the next Subscribe reads fresh (the hub never reads
-// Docker without a subscriber). While a tick runs, that tick may have read the
-// store before the change: it publishes nothing and one more tick runs at
-// once. Otherwise it starts a tick on its own goroutine.
+// call it after a change to the tracked list made outside WithLocks (which
+// tells the hub itself). With no subscriber it only marks the cache not
+// ready, so the next Subscribe reads fresh (the hub never reads Docker without
+// a subscriber). While a tick runs, that tick may have read the store before
+// the change: it publishes nothing and one more tick runs at once. Otherwise
+// it starts a tick on its own goroutine.
 func (h *Hub) Refresh() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.markStoreChangedLocked()
+	h.catchUpLocked()
+}
+
+// storeChanged is the Controller's call after a successful WithLocks write,
+// with the write's locks still held. It marks the cache behind the store, so
+// a tick that read the tracked list before the write publishes nothing. It
+// starts no tick: the release's lockChanged does, once the locks are gone, so
+// that tick need not read the containers again for the release.
+func (h *Hub) storeChanged() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.markStoreChangedLocked()
+}
+
+// markStoreChangedLocked records a store change: every tick that read the
+// tracked list before it is stale, and nothing publishes from the cache until
+// a tick has read the store again (storeCurrentLocked). With no loop it also
+// marks the cache not ready. h.mu must be held.
+func (h *Hub) markStoreChangedLocked() {
 	// Bumped in every case: a Check's tick can run with no subscriber, and
 	// must not publish (or mark ready) a list read before the change.
 	h.tsGen++
-	switch {
-	case h.stopLoop == nil:
+	if h.stopLoop == nil {
 		h.ready = false
-	case h.running != nil:
-		// That tick is now stale and its runner ticks again. A Check runner
-		// whose context ends, or the maxTickReads cap, can still leave the
-		// old list until the next interval tick.
-	default:
-		// Two quick Refresh calls may start two goroutines; the second finds
-		// the first one's tick running and shares it.
-		h.loops.Add(1)
-		go func() {
-			defer h.loops.Done()
-			h.shared(context.Background())
-		}()
 	}
 }
 
-// loop ticks, then waits tickInterval, until ctx ends. It never uses a Ticker,
-// so a slow Docker stretches the cadence instead of piling up reads.
-func (h *Hub) loop(ctx context.Context) {
+// catchUpLocked makes sure a tick reads the store again: while a loop runs and
+// no tick does, it starts one on its own goroutine. A tick in progress that
+// read the store before the change is stale and its runner ticks again; a
+// Check runner whose context ends, or the maxTickReads cap, can leave the
+// cache behind until the next interval tick or lock change. h.mu must be held.
+func (h *Hub) catchUpLocked() {
+	if h.stopLoop == nil || h.running != nil {
+		return
+	}
+	// Two quick calls may start two goroutines; the second finds the first
+	// one's tick running and shares it.
+	h.loops.Add(1)
+	go func() {
+		defer h.loops.Done()
+		h.shared(context.Background())
+	}()
+}
+
+// loop waits first, then ticks and waits tickInterval, until ctx ends. It
+// never uses a Ticker, so a slow Docker stretches the cadence instead of
+// piling up reads.
+func (h *Hub) loop(ctx context.Context, first time.Duration) {
 	defer h.loops.Done()
-	for {
-		h.shared(ctx)
+	if h.loopStart != nil {
+		h.loopStart()
+	}
+	for wait := first; ; wait = tickInterval {
 		select {
-		case <-time.After(tickInterval):
+		case <-time.After(wait):
 		case <-ctx.Done():
 			return
 		}
+		h.shared(ctx)
 	}
+}
+
+// firstWaitLocked is how long a new tick loop waits before its first tick:
+// what is left of tickInterval since the containers were last read when the
+// cache is current, else 0. h.mu must be held.
+func (h *Hub) firstWaitLocked() time.Duration {
+	if !h.storeCurrentLocked() || h.at.IsZero() {
+		return 0
+	}
+	return max(0, tickInterval-time.Since(h.at))
 }
 
 // shared runs one tick, or waits for the one in progress, and returns its
@@ -492,13 +565,15 @@ func (h *Hub) runTick(ctx context.Context, run *tickRun) {
 // broadcasts in one critical section. If a lock changed during the read, the
 // container list may predate the change: it is dropped and read again, at
 // most maxTickReads times in all; after that the cached list (which the lock
-// release refreshed) is published. If Refresh ran meanwhile, the tracked
-// projects may predate a store change: the tick changes and publishes nothing
-// and returns stale. ok is false when ctx ended or the tick is stale.
+// release refreshed) is published. If the store changed meanwhile (Refresh or
+// storeChanged bumped tsGen), the tracked projects may predate the change:
+// the tick changes and publishes nothing and returns stale. ok is false when
+// ctx ended or the tick is stale. A tick that read the store without error
+// records the tsGen it read under in cacheTS.
 //
 // The publish also ends run (h.running = nil) in the same critical section:
-// a Refresh after it must start a new tick, since this one can no longer see
-// the change.
+// a store change after it must start a new tick, since this one can no longer
+// see the change.
 func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) {
 	h.mu.Lock()
 	tsGen := h.tsGen
@@ -576,6 +651,9 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 			}
 		}
 		h.cacheGen = h.ctl.Generation()
+		if tsErr == nil {
+			h.cacheTS = tsGen // checked equal to h.tsGen above
+		}
 		s = h.publishLocked()
 		if h.running == run {
 			h.running = nil
@@ -682,7 +760,7 @@ func (h *Hub) readMetrics(ctx context.Context) (wait time.Duration) {
 	}
 	if h.dockerSeen && !h.dockerUp {
 		// docker stats would only fail; the values still age out.
-		if h.expireMetricsLocked(time.Now()) && h.ready && h.cacheGen == h.ctl.Generation() {
+		if h.expireMetricsLocked(time.Now()) && h.cacheCurrentLocked() {
 			h.publishLocked()
 		}
 		h.mu.Unlock()
@@ -710,7 +788,7 @@ func (h *Hub) readMetrics(ctx context.Context) (wait time.Duration) {
 		} else {
 			_ = h.expireMetricsLocked(now)
 		}
-		if h.ready && h.cacheGen == h.ctl.Generation() {
+		if h.cacheCurrentLocked() {
 			h.publishLocked()
 		}
 		wait = max(0, metricsInterval-now.Sub(start))
@@ -758,10 +836,14 @@ func (h *Hub) recent(maxAge time.Duration) (cs []project.Container, dockerUp boo
 }
 
 // lockChanged is called by the Controller after a lock take (fresh nil) or a
-// release (fresh is the re-read list, nil when it failed), except after a
-// successful WithLocks write, whose caller calls Refresh instead. It neither reads
-// the store nor runs Docker, and must not panic: the Controller calls it from
-// its release path.
+// release (fresh is the re-read list, nil when it failed). It publishes from
+// the cache, unless the store changed after the cached list was read (the
+// release of a successful WithLocks write, or a Refresh whose tick has not
+// landed): that list may hold rows the store dropped, now unlocked, so it
+// makes sure a tick runs instead (catchUpLocked), which publishes this change
+// too. It neither reads the store nor runs Docker itself (a catch-up tick
+// runs on its own goroutine), and must not panic: the Controller calls it
+// from its release path.
 func (h *Hub) lockChanged(fresh []project.Container) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -770,8 +852,11 @@ func (h *Hub) lockChanged(fresh []project.Container) {
 		h.cs, h.csOK, h.dockerUp, h.at = fresh, true, true, time.Now()
 	}
 	h.cacheGen = h.ctl.Generation()
-	if h.ready {
+	switch {
+	case h.storeCurrentLocked():
 		h.publishLocked()
+	case h.ready:
+		h.catchUpLocked()
 	}
 }
 
