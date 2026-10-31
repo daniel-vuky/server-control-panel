@@ -16,6 +16,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /proc:/host/proc:ro
+      # The host's root, read-only, only for statfs of its disks (used and total
+      # per mount point). A plain recursive bind: rslave would make Docker
+      # refuse to start the panel when / is not a shared mount. A disk mounted
+      # after the panel started shows up after its next restart.
+      - /:/host/root:ro
       - ./data:/data
     # It runs as a normal user and needs no capability; no-new-privileges
     # stops a setuid binary from gaining any back.

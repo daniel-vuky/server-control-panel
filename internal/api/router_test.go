@@ -395,6 +395,7 @@ func newTestDepsWith(t *testing.T, wrap func(drive.Client) drive.Client) Deps {
 		Logs:     logs.New(docker, hub.Containers, time.Now),
 		Drive:    drv,
 		Backups:  backups,
+		Metrics:  &fakeMonitor{},
 	}
 }
 
@@ -496,6 +497,7 @@ func TestNewRouterPanicsOnMissingDeps(t *testing.T) {
 		{"nil Logs", func(d *Deps) { d.Logs = nil }},
 		{"nil Drive", func(d *Deps) { d.Drive = nil }},
 		{"nil Backups", func(d *Deps) { d.Backups = nil }},
+		{"nil Metrics", func(d *Deps) { d.Metrics = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -550,6 +552,12 @@ func TestNewEndpointsNeedIdentity(t *testing.T) {
 		{http.MethodPost, "/api/backups/all"},
 		{http.MethodGet, "/api/backups"},
 		{http.MethodGet, "/api/backups/summary"},
+		{http.MethodGet, "/api/server"},
+		{http.MethodGet, "/api/server/metrics?range=1h"},
+		{http.MethodGet, "/api/server/usage"},
+		{http.MethodGet, "/api/projects/1/metrics?range=1h"},
+		{http.MethodGet, "/api/metrics-settings"},
+		{http.MethodPost, "/api/metrics-settings"},
 	} {
 		if rec := do(h, tc.method, tc.path); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", tc.method, tc.path, rec.Code)

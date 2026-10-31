@@ -50,6 +50,10 @@ export interface MeResponse {
 }
 
 //////////
+// source: metrics.go
+
+
+//////////
 // source: scans.go
 
 
@@ -734,4 +738,201 @@ export interface SummaryFailure {
 export interface SummaryNextRun {
   at: string;
   projects: string[];
+}
+/**
+ * ServerInfo is the body of GET /api/server: the System info and System
+ * services cards and what the Server page's charts need. Available is false,
+ * with Reason the words to show, when the host's /proc is not mounted (no
+ * server metrics). Hostname, OS, Kernel and Docker.Version are "" before
+ * Docker has answered once. DisksPartial means the one fallback row ("/
+ * (panel data)"): re-running install.sh lists every disk. SampleSeconds is the
+ * sampling interval and RetentionDays how long history is kept.
+ */
+export interface ServerInfo {
+  available: boolean;
+  reason?: string;
+  hostname: string;
+  os: string;
+  kernel: string;
+  cores: number /* int */;
+  ramBytes: number /* int64 */;
+  docker: DockerService;
+  cloudflared: TunnelService;
+  disks: DiskInfo[];
+  disksPartial: boolean;
+  thresholds: Thresholds;
+  sampleSeconds: number /* int */;
+  retentionDays: number /* int */;
+  timeZone: TimeZone;
+}
+/**
+ * DockerService is ServerInfo.Docker: State is running, not_responding or
+ * not_installed (no Docker socket); ContainersRunning is from the last good
+ * docker info.
+ */
+export interface DockerService {
+  state: string;
+  version: string;
+  containersRunning: number /* int */;
+}
+/**
+ * TunnelService is ServerInfo.Cloudflared: State is connected, disconnected,
+ * not_running or unknown (running, its metrics server not reachable);
+ * Hostnames is null when its configuration could not be read.
+ */
+export interface TunnelService {
+  state: string;
+  hostnames: number | null;
+}
+/**
+ * DiskInfo is one disk of the server, in bytes.
+ */
+export interface DiskInfo {
+  mount: string;
+  usedBytes: number /* uint64 */;
+  totalBytes: number /* uint64 */;
+}
+/**
+ * Thresholds are the server's alert lines in percent.
+ */
+export interface Thresholds {
+  cpuPercent: number /* int */;
+  ramPercent: number /* int */;
+  diskPercent: number /* int */;
+}
+/**
+ * ServerPoint is one bucket of a ServerSeries: T is the bucket start; CPU is %
+ * of the whole machine, memory in bytes, the rates in bytes per second; a
+ * value is null where nothing was sampled (a gap).
+ */
+export interface ServerPoint {
+  t: string;
+  cpu: number | null;
+  memUsed: number | null;
+  memTotal: number | null;
+  diskRead: number | null;
+  diskWrite: number | null;
+  netIn: number | null;
+  netOut: number | null;
+}
+/**
+ * ServerLatest is ServerSeries.Latest, the newest sample (at most 90 s old):
+ * At is when it was taken, the values as in ServerPoint.
+ */
+export interface ServerLatest {
+  at: string;
+  cpu: number | null;
+  memUsed: number | null;
+  memTotal: number | null;
+  diskRead: number | null;
+  diskWrite: number | null;
+  netIn: number | null;
+  netOut: number | null;
+}
+/**
+ * ServerSeries is the body of GET /api/server/metrics: one point per bucket
+ * of the range (1h: 120 of 30 s, 24h: 288 of 5 min, 7d: 336 of 30 min), the
+ * last bucket the one containing now. From and To are the first and last
+ * bucket starts. HistoryStart is the oldest kept sample (null with none);
+ * Latest is null when there is no sample of the last 90 s. Times are RFC 3339
+ * in the server zone.
+ */
+export interface ServerSeries {
+  range: string;
+  stepSeconds: number /* int */;
+  from: string;
+  to: string;
+  historyStart: string | null;
+  latest: ServerLatest | null;
+  points: ServerPoint[];
+}
+/**
+ * ProjectPoint is one bucket of a ProjectSeries: CPU in Docker's % (100 = one
+ * core), memory in bytes, the network rates in bytes per second; null in a
+ * gap (the project was not running, Docker was down or nothing was sampled).
+ */
+export interface ProjectPoint {
+  t: string;
+  cpu: number | null;
+  mem: number | null;
+  netIn: number | null;
+  netOut: number | null;
+}
+/**
+ * ProjectLatest is ProjectSeries.Latest, the project's newest sample (at
+ * most 90 s old, while it runs).
+ */
+export interface ProjectLatest {
+  at: string;
+  cpu: number | null;
+  mem: number | null;
+  netIn: number | null;
+  netOut: number | null;
+}
+/**
+ * ProjectSeries is the body of GET /api/projects/{id}/metrics, shaped like
+ * ServerSeries.
+ */
+export interface ProjectSeries {
+  range: string;
+  stepSeconds: number /* int */;
+  from: string;
+  to: string;
+  historyStart: string | null;
+  latest: ProjectLatest | null;
+  points: ProjectPoint[];
+}
+/**
+ * UsageRow is one row of the Usage by app table: a tracked, present project,
+ * or the panel itself when its project is not tracked (ProjectID null, Name
+ * "Server Control Panel"). Self marks the panel's row. Status is the
+ * project's status from the hub's recent read, null when there is none (and
+ * for the untracked panel row). CPUPercent is a share of the whole server
+ * (Docker's % divided by the core count); NetBps is in + out. A value is null
+ * when unknown (Docker down, no recent sample, no usable network delta) and 0
+ * for a project with nothing running; the panel's own row has no NetBps in
+ * production, since the panel runs with host networking (by design, D7a).
+ * DiskBytes is its named volumes plus its folder, read hourly (null before
+ * the first read); DiskPartial means it is a lower bound; DiskAt is when it
+ * was read.
+ */
+export interface UsageRow {
+  projectId: number | null;
+  name: string;
+  status: string | null;
+  self: boolean;
+  cpuPercent: number | null;
+  memBytes: number | null;
+  netBps: number | null;
+  diskBytes: number | null;
+  diskPartial: boolean;
+  diskAt: string | null;
+}
+/**
+ * UsageTotals are the server's totals the share bars divide by: CPU % used,
+ * RAM used and network in + out from the latest server sample, and the used
+ * space of the listed disks. Null when unknown.
+ */
+export interface UsageTotals {
+  cpuPercent: number | null;
+  memBytes: number | null;
+  diskUsedBytes: number | null;
+  netBps: number | null;
+}
+/**
+ * UsageReport is the body of GET /api/server/usage: At is the latest sample
+ * the values come from (null with none in the last 90 s), RFC 3339 in the
+ * server zone.
+ */
+export interface UsageReport {
+  at: string | null;
+  totals: UsageTotals;
+  rows: UsageRow[];
+}
+/**
+ * MetricsSettings is the body of GET and POST /api/metrics-settings: how many
+ * days of history are kept (7 to 30).
+ */
+export interface MetricsSettings {
+  retentionDays: number /* int */;
 }

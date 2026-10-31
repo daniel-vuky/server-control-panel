@@ -13,6 +13,7 @@ import ProjectPage from '../pages/project/ProjectPage'
 import ProjectSettings from '../pages/project/ProjectSettings'
 import RescanPage from '../pages/RescanPage'
 import SettingsPage from '../pages/SettingsPage'
+import ServerPage from '../pages/server/ServerPage'
 import AppShell from './AppShell'
 import { appRoutes } from './routes'
 
@@ -22,6 +23,7 @@ const pages: Record<string, ReactNode> = {
   '/backups': <BackupsPage />,
   '/onboarding': <OnboardingPage />,
   '/rescan/:id': <RescanPage />,
+  '/server': <ServerPage />,
   '/settings': <SettingsPage />,
 }
 

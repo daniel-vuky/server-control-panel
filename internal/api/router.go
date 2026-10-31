@@ -12,6 +12,7 @@ import (
 	"github.com/daniel-vuky/server-control-panel/internal/control"
 	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/logs"
+	"github.com/daniel-vuky/server-control-panel/internal/metrics"
 	"github.com/daniel-vuky/server-control-panel/internal/roots"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
 	"github.com/daniel-vuky/server-control-panel/internal/store"
@@ -34,6 +35,7 @@ type Deps struct {
 
 	Drive   *drive.Service  // the Google Drive connection
 	Backups *backup.Manager // queues and runs the backups
+	Metrics Monitor         // the server metrics (*metrics.Monitor)
 
 	// Zone is the server zone schedule times, next runs and the backup page's
 	// days are read in (UTC when nil); Now is the clock (time.Now when nil).
@@ -41,6 +43,20 @@ type Deps struct {
 	Zone *time.Location
 	Now  func() time.Time
 }
+
+// Monitor is what the server metrics routes read: *metrics.Monitor. Each call
+// takes only the Monitor's own lock; a handler reads it and the hub or the
+// store in separate steps.
+type Monitor interface {
+	Latest() (metrics.Tick, bool)
+	Disk() map[int64]metrics.DiskUsage
+	Disks() (disks []metrics.Disk, fallback bool)
+	System(ctx context.Context) metrics.System
+	Prune(ctx context.Context) error
+	Thresholds() metrics.Thresholds
+}
+
+var _ Monitor = (*metrics.Monitor)(nil)
 
 // server holds what the handlers share.
 type server struct {
@@ -68,6 +84,7 @@ func NewRouter(d Deps) http.Handler {
 		{"Logs", d.Logs == nil},
 		{"Drive", d.Drive == nil},
 		{"Backups", d.Backups == nil},
+		{"Metrics", d.Metrics == nil},
 	} {
 		if dep.nil {
 			panic("api.NewRouter: Deps." + dep.name + " is nil")
@@ -105,8 +122,15 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/projects/{id}/backups", protect(requireJSON(http.HandlerFunc(s.enqueueBackup))))
 	mux.Handle("GET /api/projects/{id}/backups", protect(http.HandlerFunc(s.projectBackups)))
 	mux.Handle("POST /api/projects/{id}/backup-schedule", protect(requireJSON(http.HandlerFunc(s.backupSchedule))))
+	// GET only, so a POST to metrics reaches {action} and is its 404.
+	mux.Handle("GET /api/projects/{id}/metrics", protect(http.HandlerFunc(s.projectMetrics)))
 	mux.Handle("POST /api/projects/{id}/{action}", protect(requireJSON(http.HandlerFunc(s.projectAction))))
 	mux.Handle("GET /api/backup-settings", protect(http.HandlerFunc(s.backupSettings)))
+	mux.Handle("GET /api/server", protect(http.HandlerFunc(s.serverInfo)))
+	mux.Handle("GET /api/server/metrics", protect(http.HandlerFunc(s.serverMetrics)))
+	mux.Handle("GET /api/server/usage", protect(http.HandlerFunc(s.serverUsage)))
+	mux.Handle("GET /api/metrics-settings", protect(http.HandlerFunc(s.metricsSettings)))
+	mux.Handle("POST /api/metrics-settings", protect(requireJSON(http.HandlerFunc(s.saveMetricsSettings))))
 	mux.Handle("POST /api/backup-settings/defaults", protect(requireJSON(http.HandlerFunc(s.backupDefaults))))
 	// The literal all and summary segments win over {id}.
 	mux.Handle("POST /api/backups/all", protect(requireJSON(http.HandlerFunc(s.backupAll))))

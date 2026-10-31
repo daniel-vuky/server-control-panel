@@ -1,0 +1,208 @@
+package metrics
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
+)
+
+// Mount is one row of a mount table.
+type Mount struct {
+	Device, Point, FSType string
+	DevID                 string // major:minor, the same for every name of one filesystem
+}
+
+// ParseMountinfo reads /proc/<pid>/mountinfo: the major:minor, the mount point
+// (with its octal escapes decoded), then, after the " - " separator, the filesystem type and
+// the device. A row it cannot read is skipped.
+func ParseMountinfo(b []byte) []Mount {
+	var ms []Mount
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		left, right, ok := strings.Cut(sc.Text(), " - ")
+		if !ok {
+			continue
+		}
+		l := strings.Fields(left)
+		r := strings.Fields(right)
+		if len(l) < 5 || len(r) < 2 {
+			continue
+		}
+		ms = append(ms, Mount{Device: unescapeMount(r[1]), Point: unescapeMount(l[4]), FSType: r[0], DevID: l[2]})
+	}
+	return ms
+}
+
+// unescapeMount decodes the \040-style octal escapes of a mountinfo field.
+func unescapeMount(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+4 <= len(s) {
+			if n, err := strconv.ParseUint(s[i+1:i+4], 8, 8); err == nil {
+				sb.WriteByte(byte(n))
+				i += 3
+				continue
+			}
+		}
+		sb.WriteByte(s[i])
+	}
+	return sb.String()
+}
+
+// Disk is one filesystem of the server.
+type Disk struct {
+	Mount       string
+	Used, Total uint64
+}
+
+// diskFS are the real block filesystems a disk row is made of.
+var diskFS = map[string]bool{
+	"ext2": true, "ext3": true, "ext4": true, "xfs": true,
+	"btrfs": true, "zfs": true, "f2fs": true, "bcachefs": true,
+}
+
+// panelDataLabel names the one fallback row.
+const panelDataLabel = "/ (panel data)"
+
+// Disks lists the server's disks from the host's mount table (decision 10):
+// real block filesystems only, mount points under /snap and /boot/efi dropped,
+// one row per device (major:minor) at its shortest mount point, used and total
+// read with statfs under Root. A mount the panel cannot reach is left out, and
+// so is one that is not under Root (see reachable).
+// Without a Root (an install whose compose file predates the mount), or when
+// Root exists but the mount table is unreadable or empty, it returns the one
+// filesystem holding DataDir and fallback true.
+func (h Host) Disks() (disks []Disk, fallback bool) {
+	var mounts []Mount
+	if fi, err := os.Stat(h.Root); err == nil && fi.IsDir() {
+		if b, err := os.ReadFile(filepath.Join(h.Proc, "1", "mountinfo")); err == nil {
+			mounts = ParseMountinfo(b)
+		}
+	}
+	if mounts == nil {
+		return h.panelDataDisk(), true
+	}
+
+	best := make(map[string]string) // major:minor -> shortest mount point
+	for _, m := range mounts {
+		if !diskFS[m.FSType] || underAny(m.Point, "/snap", "/boot/efi") {
+			continue
+		}
+		if cur, ok := best[m.DevID]; !ok || len(m.Point) < len(cur) || (len(m.Point) == len(cur) && m.Point < cur) {
+			best[m.DevID] = m.Point
+		}
+	}
+	statfs := h.statfs()
+	for devID, point := range best {
+		p := filepath.Join(h.Root, point)
+		used, total, err := statfs(p)
+		if err != nil || !h.reachable(p, devID) {
+			continue
+		}
+		disks = append(disks, Disk{Mount: point, Used: used, Total: total})
+	}
+	sort.Slice(disks, func(i, j int) bool { return disks[i].Mount < disks[j].Mount })
+	return disks, false
+}
+
+func (h Host) panelDataDisk() []Disk {
+	used, total, err := h.statfs()(h.DataDir)
+	if err != nil {
+		return nil
+	}
+	return []Disk{{Mount: panelDataLabel, Used: used, Total: total}}
+}
+
+// reachable reports whether p, a mount point under Root, is that mount and not
+// the directory beneath it. Root is a bind of the host's / taken when the
+// container started, so a disk mounted later is in the mount table but not
+// under Root: its path there is a plain directory of the parent filesystem,
+// whose numbers statfs would answer. p is the mount when its device is the
+// mount table's devID, or, since btrfs and bcachefs give each subvolume its
+// own anonymous device (never the table's), when its device differs from its
+// parent directory's (a mount boundary). A device that cannot be read is not
+// reachable.
+func (h Host) reachable(p, devID string) bool {
+	dev := h.Dev
+	if dev == nil {
+		dev = lstatDev
+	}
+	d, err := dev(p)
+	if err != nil {
+		return false
+	}
+	if d == devID {
+		return true
+	}
+	parent, err := dev(filepath.Dir(p))
+	return err == nil && parent != d
+}
+
+// lstatDev is the major:minor of the filesystem p is on.
+func lstatDev(p string) (string, error) {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return "", fmt.Errorf("metrics: lstat %s: %w", p, err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", fmt.Errorf("metrics: lstat %s: no device", p)
+	}
+	return devName(uint64(st.Dev)), nil
+}
+
+// devName words a Linux dev_t as major:minor, as mountinfo does (glibc's
+// gnu_dev_major and gnu_dev_minor).
+func devName(dev uint64) string {
+	major := (dev>>8)&0xfff | (dev>>32)&^uint64(0xfff)
+	minor := dev&0xff | (dev>>12)&^uint64(0xff)
+	return strconv.FormatUint(major, 10) + ":" + strconv.FormatUint(minor, 10)
+}
+
+func (h Host) statfs() func(string) (uint64, uint64, error) {
+	if h.Statfs != nil {
+		return h.Statfs
+	}
+	return statfs
+}
+
+// underAny reports whether p is one of the roots or below one.
+func underAny(p string, roots ...string) bool {
+	p = path.Clean(p)
+	for _, r := range roots {
+		if p == r || strings.HasPrefix(p, r+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// statfs is the used and total bytes of the filesystem holding p. Blocks count
+// in fragments (Frsize), which is not always Bsize; a zero Frsize falls back to
+// Bsize.
+func statfs(p string) (used, total uint64, err error) {
+	var s syscall.Statfs_t
+	if err := syscall.Statfs(p, &s); err != nil {
+		return 0, 0, fmt.Errorf("metrics: statfs %s: %w", p, err)
+	}
+	unit := uint64(s.Frsize) //nolint:gosec // G115: statfs sizes are non-negative
+	if unit == 0 {
+		unit = uint64(s.Bsize) //nolint:gosec // G115: statfs sizes are non-negative
+	}
+	total = s.Blocks * unit
+	if s.Blocks > s.Bfree {
+		used = (s.Blocks - s.Bfree) * unit
+	}
+	return used, total, nil
+}

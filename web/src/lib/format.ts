@@ -9,12 +9,17 @@ export function formatMem(bytes: number | null): string {
 }
 
 /**
- * formatCpu is a CPU percentage rounded to a whole number ("12%"), or to
+ * formatPercent is a percentage rounded to a whole number ("34%"), or to
  * `digits` decimals ("9.8%"); null is "—".
  */
+export function formatPercent(p: number | null, digits = 0): string {
+  if (p === null) return '—'
+  return digits === 0 ? `${Math.round(p)}%` : `${p.toFixed(digits)}%`
+}
+
+/** formatCpu is a CPU percentage, as formatPercent words it. */
 export function formatCpu(percent: number | null, digits = 0): string {
-  if (percent === null) return '—'
-  return digits === 0 ? `${Math.round(percent)}%` : `${percent.toFixed(digits)}%`
+  return formatPercent(percent, digits)
 }
 
 /**
@@ -61,4 +66,33 @@ export function formatDuration(ms: number): string {
   const m = Math.floor(s / 60)
   if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+}
+
+/** formatRate is a rate in bytes per second as formatBytes words it, plus "/s"; null is "—". */
+export function formatRate(bytesPerSec: number | null): string {
+  return bytesPerSec === null ? '—' : `${formatBytes(bytesPerSec)}/s`
+}
+
+const NICE = [1, 2, 4, 5, 6, 8, 10]
+
+/**
+ * niceMax is the top of a chart's scale: the smallest round number at or
+ * above v whose half reads well too (1, 2, 4, 5, 6, 8 or 10 times a power of
+ * ten). With bytes the rounding is done in the largest 1024-based unit the
+ * value reaches (KB, MB, GB…, as formatBytes words them), so 3.1 MB tops out
+ * at 4 MB, and a result of 1024 units or more is one of the next unit.
+ * Without, it is decimal (CPU in Docker's % can pass 1,000 on a many-core
+ * host). Anything at or below 2 (and a value that is not a number) is 2, so
+ * an idle chart's labels read 2, 1 and 0 rather than repeating a rounded 1.
+ */
+export function niceMax(v: number, bytes = false): number {
+  if (!(v > 2)) return 2
+  let unit = 1
+  if (bytes) while (v / unit >= 1024) unit *= 1024
+  const m = v / unit
+  const p = 10 ** Math.floor(Math.log10(m))
+  // A small tolerance keeps 100 at 100 when the division lands just above it.
+  const f = m / p - 1e-9
+  const nice = (NICE.find((n) => n >= f) ?? 10) * p
+  return bytes && nice >= 1024 ? unit * 1024 : nice * unit
 }

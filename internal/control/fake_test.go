@@ -213,7 +213,7 @@ func exited1Out(proj string) string {
 // inspectLine is one docker.inspect line for the container of (proj, service):
 // restarts restarts, started at started (RFC 3339).
 func inspectLine(proj, service string, restarts int, started string) string {
-	return fmt.Sprintf("%s\t%d\t{\"StartedAt\":%q,\"FinishedAt\":\"0001-01-01T00:00:00Z\",\"ExitCode\":0,\"OOMKilled\":false,\"Error\":\"\"}\n",
+	return fmt.Sprintf("%s\t%d\tbridge\t{\"StartedAt\":%q,\"FinishedAt\":\"0001-01-01T00:00:00Z\",\"ExitCode\":0,\"OOMKilled\":false,\"Error\":\"\"}\n",
 		containerID(proj, service), restarts, started)
 }
 

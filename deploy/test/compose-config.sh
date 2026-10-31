@@ -90,4 +90,22 @@ if [[ "$updater_ro" != yes ]]; then
   printf 'updater service does not mount /opt/server-control-panel read-only:\n%s\n' "$updater" >&2
   exit 1
 fi
+# The panel mounts the host's root read-only at /host/root (statfs of the
+# host's disks), as a plain recursive bind: rslave would make Docker refuse to
+# start the panel when / is not a shared mount.
+root_ro=$(awk '
+  function flush() { if (s == "/" && t == "/host/root" && ro) found = 1; s = ""; t = ""; ro = 0 }
+  /^      - / { flush() }
+  /^        source: / { s = $2 }
+  /^        target: / { t = $2 }
+  /^        read_only: true$/ { ro = 1 }
+  END { flush(); if (found) print "yes" }' <<<"$panel")
+if [[ "$root_ro" != yes ]]; then
+  printf 'panel service does not mount / read-only at /host/root:\n%s\n' "$panel" >&2
+  exit 1
+fi
+if grep -qi 'rslave' <<<"$rendered"; then
+  printf 'rendered config uses rslave propagation:\n%s\n' "$rendered" >&2
+  exit 1
+fi
 echo "compose config ok"

@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project, SettingsRequest } from '../../api/types.gen'
 import { projectRoute } from '../../app/App'
 import { FakeEventSource } from '../../test/fakeEventSource'
-import { makeProject, pushState, renderProject } from '../../test/projects'
+import {
+  isChartRead,
+  leaveChartsUnanswered,
+  makeProject,
+  pushState,
+  renderProject,
+  unanswered,
+} from '../../test/projects'
 import { renderApp } from '../../test/renderApp'
 
 const SETTINGS = '/api/projects/1/settings'
@@ -20,6 +27,7 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 function serve(next: (url: string, body: unknown) => Promise<Response> | Response) {
   const stub = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') return next(url, JSON.parse(String(init.body)))
+    if (isChartRead(url)) return unanswered(init)
     return json(401, { error: 'unauthorized' })
   })
   vi.stubGlobal('fetch', stub)
@@ -53,6 +61,7 @@ const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: 
 beforeEach(() => {
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
+  leaveChartsUnanswered()
 })
 
 afterEach(() => {

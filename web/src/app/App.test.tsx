@@ -70,8 +70,15 @@ describe('app shell', () => {
     expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 
-  it('keeps the other routes as placeholders', () => {
+  it('maps /server to the Server page, not its placeholder', async () => {
     renderAt('/server')
+    // The default fetch stub answers 401, so the page ends in its error state.
+    expect(await screen.findByText('Could not load the server.')).toBeInTheDocument()
+    expect(screen.queryByText(/Coming in/)).toBeNull()
+  })
+
+  it('keeps the other routes as placeholders', () => {
+    renderAt('/activity')
     expect(screen.getByText(/Coming in/)).toBeInTheDocument()
   })
 

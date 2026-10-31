@@ -58,10 +58,11 @@ func (s *Store) RemoveWorkspace(ctx context.Context, id int64) (Workspace, error
 }
 
 // UntrackProject stops tracking a project and returns it as it was. A normal
-// tracked project becomes ignored, its databases and schedules dropped; a
-// project that a rescan could not find (missing_since set) is deleted (its
-// databases and schedules by cascade), so a gone folder does
-// not linger as an ignored row. An unknown or ignored id gives ErrNotFound.
+// tracked project becomes ignored, its databases, schedules and metrics
+// dropped; a project that a rescan could not find (missing_since set) is
+// deleted (its databases, schedules and metrics by cascade), so a gone folder
+// does not linger as an ignored row. An unknown or ignored id gives
+// ErrNotFound.
 func (s *Store) UntrackProject(ctx context.Context, id int64) (Tracked, error) {
 	if id <= 0 { // 0 would list every tracked project in trackedIn
 		return Tracked{}, ErrNotFound
@@ -80,12 +81,18 @@ func (s *Store) UntrackProject(ctx context.Context, id int64) (Tracked, error) {
 	}
 	t := ts[0]
 	if t.MissingSince != nil {
-		_, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id) // databases and schedules cascade
+		_, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id) // databases, schedules and metrics cascade
 	} else {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM databases WHERE project_id = ?`, id); err == nil {
-			// Re-tracking starts from the defaults.
-			if _, err = tx.ExecContext(ctx, `DELETE FROM backup_schedules WHERE project_id = ?`, id); err == nil {
-				_, err = tx.ExecContext(ctx, `UPDATE projects SET state = 'ignored', missing_since = NULL WHERE id = ?`, id)
+		// Re-tracking starts from the defaults and a fresh metrics history.
+		for _, q := range []string{
+			`DELETE FROM databases WHERE project_id = ?`,
+			`DELETE FROM backup_schedules WHERE project_id = ?`,
+			`DELETE FROM project_samples WHERE project_id = ?`,
+			`DELETE FROM project_rollups WHERE project_id = ?`,
+			`UPDATE projects SET state = 'ignored', missing_since = NULL WHERE id = ?`,
+		} {
+			if _, err = tx.ExecContext(ctx, q, id); err != nil {
+				break
 			}
 		}
 	}

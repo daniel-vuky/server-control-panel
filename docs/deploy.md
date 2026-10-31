@@ -110,6 +110,20 @@ To change it later, edit `TZ` in `panel.env` and run `cd /opt/server-control-pan
 
 Without the three optional values the panel runs as before and Google Drive shows as not set up. To set Drive up, follow [Connect Google Drive](google-drive.md), put the values in `panel.env` and run `cd /opt/server-control-panel && docker compose up -d`.
 
+## 4b. Server metrics: disks and cloudflared
+
+The Server page reads the host's CPU, memory, network and disks. The compose project mounts the host's `/proc` and its root (`/`) into the panel, both read-only: `/proc` for the counters, the root only to ask each disk for its used and total space. The panel never opens a file under it. A disk mounted after the panel started appears after the panel's next restart, which every release does. On a host whose `/proc` is mounted with `hidepid`, the panel cannot see other users' processes, so cloudflared may read "Not running" and a project's network "—".
+
+**An install from before this feature** has a `compose.yaml` without the root mount. The updater does not refresh `compose.yaml`, so re-run the install command (section 4) once. Until then the System info card shows one row, `/ (panel data)`, for the disk that holds the panel's data, with "Re-run install.sh to list every disk."
+
+**cloudflared** is read from the host: the panel looks for the process and asks its metrics server on the host's loopback, by default the first of `127.0.0.1:20241` to `127.0.0.1:20245`. If you moved cloudflared's metrics address (its `--metrics` option), add it to `panel.env` and re-run the install command:
+
+```text
+CLOUDFLARED_METRICS=127.0.0.1:<port>
+```
+
+It must be a loopback address (`127.0.0.1`, `localhost` or `[::1]` with a port); anything else stops the panel at start-up. The install does not ask for it. Without it, a cloudflared on another port shows as "Running · connection unknown".
+
 ## 5. Automatic updates
 
 The `updater` container wakes up every 5 minutes, pulls the panel image with the tag set in `.env` (`PANEL_TAG`, `latest` by default) and compares it with the image the panel is running. Only when they differ does it recreate the panel. Otherwise it logs `panel is up to date`. After a real update it also removes old panel images that nothing uses, so disk space does not grow. It only ever touches images that carry the panel's label.

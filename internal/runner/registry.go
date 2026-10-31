@@ -37,6 +37,8 @@ const (
 
 	DockerInspect       Action = "docker.inspect"
 	DockerStats         Action = "docker.stats"
+	DockerInfo          Action = "docker.info"
+	DockerDF            Action = "docker.df"
 	ComposeDown         Action = "compose.down"
 	ComposeDownOverride Action = "compose.down.override"
 
@@ -223,6 +225,8 @@ var registry = map[key][]arg{
 		"stats", "--no-stream", "--no-trunc",
 		"--format", statsFormat,
 	),
+	{StackDocker, DockerInfo}:           lit("info", "--format", "{{json .}}"),
+	{StackDocker, DockerDF}:             lit("system", "df", "-v", "--format", "{{json .Volumes}}"),
 	{StackCompose, ComposeDown}:         join(composeBase, lit("down")),
 	{StackCompose, ComposeDownOverride}: join(composeBaseOverride, lit("down")),
 
@@ -279,8 +283,9 @@ func isDump(a Action) bool {
 
 // inspectFormat is the --format template of DockerInspect. docker inspect runs
 // templates on the JSON map, so the id key is .Id; docker ps and docker stats
-// use {{.ID}}.
-const inspectFormat = "{{.Id}}\t{{.RestartCount}}\t{{json .State}}"
+// use {{.ID}}. The network mode comes before the State JSON so that the JSON
+// stays the last field (project.ParseInspect splits into 4).
+const inspectFormat = "{{.Id}}\t{{.RestartCount}}\t{{.HostConfig.NetworkMode}}\t{{json .State}}"
 
 // statsFormat is the --format template of DockerStats.
 const statsFormat = "{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}"

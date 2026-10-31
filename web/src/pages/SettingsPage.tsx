@@ -12,6 +12,7 @@ import { useLoad } from '../lib/useLoad'
 import { useRescan } from '../lib/useRescan'
 import BackupDefaultsCard from './settings/BackupDefaultsCard'
 import DriveCard from './settings/DriveCard'
+import MetricsHistoryCard from './settings/MetricsHistoryCard'
 
 const card = 'rounded-[10px] border border-border bg-surface'
 const rowButton =
@@ -21,7 +22,7 @@ const mono = (text: string): ReactNode => <span className="font-mono">{text}</sp
 
 const head = 'flex flex-col gap-1 border-b border-border px-[18px] py-4'
 
-/** SettingsPage is /settings: workspaces, Google Drive, alerts (still to come) and backup defaults. */
+/** SettingsPage is /settings: workspaces, Google Drive, alerts (still to come), backup defaults and metrics history. */
 export default function SettingsPage() {
   return (
     <div className="flex max-w-[1040px] flex-col gap-[18px]">
@@ -39,6 +40,7 @@ export default function SettingsPage() {
         Where the panel sends alerts.
       </Soon>
       <BackupDefaultsCard />
+      <MetricsHistoryCard />
     </div>
   )
 }
