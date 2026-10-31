@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/backup"
 	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
@@ -61,11 +62,13 @@ type ProjectView struct {
 }
 
 // DatabaseView is a detected database with its key (project.DatabaseKey) and
-// whether it can be backed up now.
+// whether it can be backed up now. Schedule is a copy of the database's backup
+// schedule, nil when it has none.
 type DatabaseView struct {
 	project.Database
-	Key    string
-	Backup BackupRule
+	Key      string
+	Backup   BackupRule
+	Schedule *store.Schedule
 }
 
 // BackupRule says whether a backup may start now. Allowed is true only when
@@ -92,12 +95,14 @@ const (
 )
 
 // State is one snapshot of the tracked projects, the active backups (queued
-// and running, from the backup source) and the Drive connection. Subscribers
-// share it, so they must not modify it.
+// and running, from the backup source), the latest Back up all batch (from the
+// batch source, nil when none ran) and the Drive connection. Subscribers share
+// it, so they must not modify it.
 type State struct {
 	DockerUp bool
 	Projects []ProjectView
 	Backups  []store.Backup
+	Batch    *backup.Batch
 	Drive    drive.Status
 }
 
@@ -165,10 +170,27 @@ func databaseViews(t store.Tracked, cs []project.Container, dockerUp bool, drv d
 		if reason == "" {
 			reason = driveReason(drv)
 		}
-		out = append(out, DatabaseView{Database: d, Key: project.DatabaseKey(d),
-			Backup: BackupRule{Allowed: reason == "", Reason: reason, Service: service}})
+		key := project.DatabaseKey(d)
+		var sched *store.Schedule
+		if sc, ok := t.Schedules[key]; ok {
+			sc.LastRunAt = copyTime(sc.LastRunAt)
+			sched = &sc
+		}
+		out = append(out, DatabaseView{Database: d, Key: key,
+			Backup:   BackupRule{Allowed: reason == "", Reason: reason, Service: service},
+			Schedule: sched})
 	}
 	return out
+}
+
+// copyTime returns a copy of *p, nil for nil, so a view never shares a stored
+// schedule's time.
+func copyTime(p *time.Time) *time.Time {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	return &c
 }
 
 // driveReason is the reason Drive gives for refusing a backup, "" when it is
@@ -234,6 +256,7 @@ type Hub struct {
 	// the first Subscribe. Both are called with mu held, so neither may call
 	// the hub, read the store or run a command.
 	backups  func() []store.Backup
+	batchNow func() *backup.Batch
 	driveNow func() drive.Status
 
 	loops sync.WaitGroup // running loops; tests wait on it
@@ -292,6 +315,16 @@ func (h *Hub) SetBackupSource(src func() []store.Backup) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.backups = src
+}
+
+// SetBatchSource sets where states get the latest Back up all batch (the
+// backup manager's CurrentBatch, which returns a copy). Call it before the
+// first Subscribe. src is called with the hub's mutex held: it must be
+// in-memory and never call the hub. Without a source, there is no batch.
+func (h *Hub) SetBatchSource(src func() *backup.Batch) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.batchNow = src
 }
 
 // SetDriveSource sets where states get the Drive connection (the Drive
@@ -894,10 +927,15 @@ func (h *Hub) buildLocked() State {
 			backups = bs
 		}
 	}
+	var batch *backup.Batch
+	if h.batchNow != nil {
+		batch = h.batchNow()
+	}
 	return State{
 		DockerUp: h.dockerUp,
 		Projects: Views(h.ts, h.cs, readErr, h.dockerUp, h.ctl.Lock, h.insp, h.use, drv),
 		Backups:  backups,
+		Batch:    batch,
 		Drive:    drv,
 	}
 }
