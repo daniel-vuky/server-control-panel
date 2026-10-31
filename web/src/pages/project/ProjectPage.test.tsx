@@ -105,6 +105,7 @@ describe('project page', () => {
     expect(domain).toHaveAttribute('href', 'https://api.shop.test')
     expect(domain).toHaveAttribute('target', '_blank')
     expect(h).toHaveTextContent('Uptime 2d 3h')
+    expect(within(h).getByTestId('header-uptime')).toHaveClass('inline-block', 'min-w-[8ch]')
     expect(within(h).queryByText('Monitor only')).toBeNull()
   })
 

@@ -104,6 +104,7 @@ function Charts({ series, range, zone, cpu, mem }: ChartsProps) {
         <MetricChart
           title="CPU"
           current={formatCpu(cpu)}
+          currentWidth={5}
           series={[{ name: 'CPU', values: values((p) => p.cpu), color: BLUE }]}
           formatValue={percentLabel}
           {...common}
@@ -113,6 +114,7 @@ function Charts({ series, range, zone, cpu, mem }: ChartsProps) {
         <MetricChart
           title="RAM"
           current={formatMem(mem)}
+          currentWidth={7}
           series={[{ name: 'RAM', values: values((p) => p.mem), color: ORANGE }]}
           formatValue={formatBytes}
           bytes

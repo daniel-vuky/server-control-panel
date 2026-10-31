@@ -191,3 +191,38 @@ describe('formatSince', () => {
     expect(formatSince('nope', now)).toEqual({ value: '—', sub: '' })
   })
 })
+
+describe('units are always stated (#73)', () => {
+  it('words a rate in MB/s', () => {
+    expect(formatRate(1048576)).toBe('1.0 MB/s')
+  })
+
+  it('words a CPU share in %', () => {
+    expect(formatCpu(12)).toBe('12%')
+    expect(formatCpu(9.84, 1)).toBe('9.8%')
+  })
+
+  it.each([0, 640 * MB, 1023 * MB, 1024 * MB, 5 * 1024 * MB])(
+    'words memory %s in MB or GB',
+    (b) => {
+      expect(formatMem(b)).toMatch(/ (MB|GB)$/)
+    },
+  )
+
+  it('words a duration in s, min or h', () => {
+    expect(formatDuration(65_000)).toBe('1m 05s')
+    expect(formatDuration(41_000)).toMatch(/s$/)
+    expect(formatDuration(3_900_000)).toBe('1h 05m')
+  })
+
+  it.each([0, 512, 38 * MB, 4.2 * 1024 * MB])('words bytes %s with a unit', (n) => {
+    expect(formatBytes(n)).toMatch(/ (B|KB|MB|GB|TB|PB)$/)
+  })
+
+  it('words an uptime in m, h and d', () => {
+    const now = new Date('2025-10-28T12:00:00Z')
+    expect(formatUptime('2025-10-28T11:15:00Z', now)).toBe('45m')
+    expect(formatUptime('2025-10-28T06:48:00Z', now)).toBe('5h 12m')
+    expect(formatUptime('2025-10-16T08:00:00Z', now)).toBe('12d 4h')
+  })
+})

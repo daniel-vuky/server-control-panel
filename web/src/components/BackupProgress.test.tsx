@@ -93,6 +93,9 @@ describe('BackupSteps', () => {
     expect(items[2]).toHaveTextContent('3. Upload to Drive')
     expect(items[2]).toHaveTextContent('23.6 / 38 MB · 62%')
     expect(within(items[2]).getByTestId('step-bar')).toHaveStyle({ width: '62%' })
+    // The percent sits in its own fixed-width box.
+    expect(within(items[2]).getByTestId('step-percent')).toHaveClass('min-w-[4ch]', 'text-right')
+    expect(within(items[2]).getByTestId('step-percent')).toHaveTextContent('62%')
     expect(within(items[3]).getByTestId('step-waiting')).toBeInTheDocument()
     expect(items[3]).toHaveTextContent('4. Remove old copies')
   })

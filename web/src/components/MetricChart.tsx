@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { TimeZone } from '../api/types.gen'
 import { niceMax } from '../lib/format'
 import { type RangeKey, rangeInfo } from '../lib/range'
@@ -19,7 +20,15 @@ type Props = {
   title: string
   /** current is the value shown big in the header, already worded ("34%", "—"). */
   current: string
-  sub?: string
+  /**
+   * currentWidth is the width, in digits (ch), of the box the current value
+   * sits in, so a change of its length moves nothing: 5 for a percentage
+   * ("1200%"), 7 for a memory size, 9 for a rate ("1023 MB/s", the default),
+   * 15 for a used / total pair.
+   */
+  currentWidth?: keyof typeof CURRENT_WIDTH
+  /** sub is the words after the value; a live number in it brings its own slot. */
+  sub?: ReactNode
   /** series are one or two lines; a legend names them when there are two. */
   series: ChartSeries[]
   /**
@@ -46,6 +55,14 @@ type Props = {
 
 const WIDTH = 600
 const PAD = 1
+
+/** The fixed boxes of the header value, one class per width (Tailwind reads whole class names). */
+const CURRENT_WIDTH = {
+  5: 'min-w-[5ch]',
+  7: 'min-w-[7ch]',
+  9: 'min-w-[9ch]',
+  15: 'min-w-[15ch]',
+} as const
 const THRESHOLD_COLOR = '#7A2F36'
 
 type Point = [x: number, y: number]
@@ -98,6 +115,7 @@ function historyBegins(iso: string, zone: TimeZone): string | null {
 export default function MetricChart({
   title,
   current,
+  currentWidth = 9,
   sub,
   series,
   max,
@@ -141,7 +159,12 @@ export default function MetricChart({
     <div className="flex min-w-0 flex-col gap-2.5 rounded-[10px] border border-border bg-surface px-4 pt-4 pb-3">
       <div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
         <span className="text-sm font-semibold">{title}</span>
-        <span className="font-mono text-xl font-semibold tabular-nums">{current}</span>
+        <span
+          data-testid="chart-current"
+          className={`inline-block text-right font-mono text-xl font-semibold tabular-nums ${CURRENT_WIDTH[currentWidth]}`}
+        >
+          {current}
+        </span>
         {sub && <span className="text-[12.5px] text-muted">{sub}</span>}
         {series.length === 2 && (
           <span data-legend="" className="ml-auto flex gap-3 text-xs text-muted">

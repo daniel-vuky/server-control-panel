@@ -119,6 +119,9 @@ describe('project overview', () => {
     expect(app[4]).toHaveTextContent('9.8%')
     expect(app[5]).toHaveTextContent('412 MB')
     expect(app[6]).toHaveTextContent('0')
+    // The live columns have a set width and right-aligned digits.
+    expect(table).toHaveClass('table-fixed')
+    for (const i of [4, 5, 6]) expect(app[i]).toHaveClass('text-right')
 
     const db = cells(rows[2])
     expect(db[0]).toHaveTextContent('shop-db-1')

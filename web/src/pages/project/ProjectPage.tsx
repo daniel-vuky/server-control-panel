@@ -251,7 +251,13 @@ function Header({ project: p, raw, dockerDown, actions, backup, driveState }: He
             </a>
           )}
           <span>
-            Uptime <span className="font-mono text-text-2">{formatUptime(p.upSince, now)}</span>
+            Uptime{' '}
+            <span
+              data-testid="header-uptime"
+              className="inline-block min-w-[8ch] font-mono text-text-2"
+            >
+              {formatUptime(p.upSince, now)}
+            </span>
           </span>
         </div>
       </div>
