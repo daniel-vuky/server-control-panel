@@ -66,7 +66,7 @@ describe('app shell', () => {
   it('maps /backups to the Backups page, not its placeholder', () => {
     renderAt('/backups')
     // No live state arrives here (no EventSource), so the page waits for it.
-    expect(screen.getByText('Loading backups…')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
     expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 

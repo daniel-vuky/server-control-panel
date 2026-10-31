@@ -1,6 +1,8 @@
-import type { LucideIcon } from 'lucide-react'
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, ComponentType, ReactNode } from 'react'
 import { Link, type LinkProps } from 'react-router'
+
+/** An icon the card draws: a lucide icon, or a hand-drawn one such as the cloud of CloudUploadIcon (both hide themselves from assistive tech). */
+type IconType = ComponentType<{ size: number; strokeWidth: number; className?: string }>
 
 const secondary =
   'inline-flex h-9 cursor-pointer items-center justify-center rounded-[7px] border border-border-strong bg-surface-2 px-3.5 text-text disabled:cursor-not-allowed disabled:opacity-60'
@@ -13,7 +15,7 @@ export default function EmptyState({
   action,
   titleAs: Title = 'h2',
 }: {
-  icon: LucideIcon
+  icon: IconType
   title: string
   children?: ReactNode
   action?: ReactNode
@@ -22,7 +24,7 @@ export default function EmptyState({
 }) {
   return (
     <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
-      <Icon aria-hidden="true" size={44} strokeWidth={1.4} className="text-icon-muted" />
+      <Icon size={44} strokeWidth={1.4} className="text-icon-muted" />
       <Title className="m-0 text-sm font-semibold">{title}</Title>
       {children ? <p className="m-0 text-[13px] leading-normal text-muted">{children}</p> : null}
       {action}

@@ -140,6 +140,58 @@ describe('BackupsTable rows', () => {
     expect(within(r6).queryByRole('link', { name: 'Download' })).toBeNull()
   })
 
+  it('follows design 04: fixed layout, 12 px gaps, plain links, text Retry', async () => {
+    const failed = makeBackup({
+      id: 9,
+      state: 'failed',
+      failedStep: 'dump',
+      error: 'wrong DB password',
+      queuePosition: 0,
+      createdAt: at(27, 2, 0),
+    })
+    serveBackups([ok(10), failed])
+    openBackups(connected, { projects })
+    const t = await table()
+    expect(t).toHaveClass('table-fixed')
+    const cols = t.querySelectorAll('colgroup > col')
+    expect([...cols].map((c) => (c as HTMLElement).style.width)).toEqual([
+      '13%',
+      '11%',
+      '13%',
+      '9%',
+      '8%',
+      '18%',
+      '12%',
+      '13%',
+    ])
+    const [r10, r9] = bodyRows(t)
+    const cell = r10.querySelector('td') as HTMLElement
+    expect(cell).toHaveClass('px-1.5', 'first:pl-4', 'last:pr-4')
+    expect(cell).not.toHaveClass('px-3')
+    for (const name of ['Open in Drive', 'Download']) {
+      const link = within(r10).getByRole('link', { name })
+      expect(link).toHaveClass('text-text-2', 'underline', 'hover:text-white')
+      expect(link).not.toHaveClass('text-accent')
+    }
+    const retry = within(r9).getByRole('button', { name: 'Retry' })
+    expect(retry).toHaveClass('h-7', 'px-2.5', 'rounded-md', 'text-[12.5px]')
+    expect(retry.querySelector('svg')).toBeNull()
+    // The dot takes the state's text colour: failed danger-text, succeeded success.
+    const dot = (r: HTMLElement) => r.querySelector('span[aria-hidden="true"]')
+    expect(dot(r9)).toHaveClass('bg-danger-text')
+    expect(dot(r10)).toHaveClass('bg-success')
+  })
+
+  it('shows a skeleton card while the first page loads', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    )
+    openBackups(connected, { projects })
+    expect(await screen.findByRole('status', { name: 'Loading' })).toBeInTheDocument()
+    expect(screen.queryByText('Loading backups…')).toBeNull()
+  })
+
   it('shows an active backup with its live progress', async () => {
     const queued = makeBackup({ id: 11, state: 'queued', queuePosition: 0 })
     serveBackups([queued, ok(10)])

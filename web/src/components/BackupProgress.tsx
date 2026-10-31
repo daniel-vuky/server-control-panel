@@ -152,11 +152,32 @@ function StepItem({ step, backup }: { step: BackupStep; backup: Backup }) {
 }
 
 /**
+ * The step grids: the Backups page's active card (design 04, 180 px auto-fit
+ * columns), the progress dialog (design 09, four fixed columns) and the
+ * compact default (160 px auto-fit).
+ */
+export type StepGrid = 'page' | 'dialog' | 'compact'
+
+const GRID: Record<StepGrid, string> = {
+  page: 'grid-cols-[repeat(auto-fit,minmax(min(180px,100%),1fr))]',
+  dialog: 'grid-cols-[repeat(4,minmax(0,1fr))]',
+  compact: 'grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))]',
+}
+
+/**
  * BackupSteps shows a backup's four steps (designs 04 and 09): done, running
  * (with the server's progress detail), waiting, failed (with the error and
  * hint) or skipped. Compact is the one-line form ("Uploading to Drive · 62%").
  */
-export function BackupSteps({ backup, compact = false }: { backup: Backup; compact?: boolean }) {
+export function BackupSteps({
+  backup,
+  compact = false,
+  grid = 'compact',
+}: {
+  backup: Backup
+  compact?: boolean
+  grid?: StepGrid
+}) {
   if (compact) {
     const active = isActive(backup)
     return (
@@ -169,7 +190,7 @@ export function BackupSteps({ backup, compact = false }: { backup: Backup; compa
     )
   }
   return (
-    <ol className="m-0 grid list-none grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))] gap-2.5 p-0">
+    <ol className={`m-0 grid list-none ${GRID[grid]} gap-2.5 p-0`}>
       {shownSteps(backup).map((s) => (
         <StepItem key={s.step} step={s} backup={backup} />
       ))}
@@ -313,7 +334,7 @@ export default function BackupProgress({ id, retrying, onClose, onRetry }: Props
               {b.hint !== '' && <span>{b.hint}</span>}
             </p>
           )}
-          <BackupSteps backup={b} />
+          <BackupSteps backup={b} grid="dialog" />
         </>
       )}
 

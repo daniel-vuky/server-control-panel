@@ -7,6 +7,7 @@ import type { Backup, BackupSummary, DriveStatus } from '../api/types.gen'
 import { LiveDim, useLive } from '../app/live'
 import { BackupSteps } from '../components/BackupProgress'
 import CloudUploadIcon from '../components/CloudUploadIcon'
+import EmptyState, { EmptyStateButton } from '../components/EmptyState'
 import PageHeader from '../components/PageHeader'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
 import { backupChanges } from '../lib/backupChanges'
@@ -158,14 +159,22 @@ export default function BackupsPage() {
 /** NoBackups is design 10's empty Backups page, with Back up all now. */
 function NoBackups({ all }: { all: BackupAll }) {
   return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
-      <CloudUploadIcon size={44} strokeWidth={1.4} className="text-icon-muted" />
-      <p className="m-0 font-semibold">No backups yet</p>
-      <p className="m-0 text-[13px] leading-normal text-muted">
-        Run the first one now or set up a daily schedule.
-      </p>
-      <BackUpAllButton all={all} />
-    </div>
+    <EmptyState
+      icon={CloudUploadIcon}
+      title="No backups yet"
+      action={
+        <EmptyStateButton
+          disabled={!all.enabled}
+          aria-busy={all.posting || undefined}
+          title={all.reason || undefined}
+          onClick={() => void all.start()}
+        >
+          Back up all now
+        </EmptyStateButton>
+      }
+    >
+      Run the first one now or set up a daily schedule.
+    </EmptyState>
   )
 }
 
@@ -311,7 +320,7 @@ function ActiveCard({ backup: b }: { backup: Backup }) {
         </span>
         {!running && <span className="text-[12.5px] text-muted">{waitingLine(b)}</span>}
       </div>
-      <BackupSteps backup={b} />
+      <BackupSteps backup={b} grid="page" />
     </section>
   )
 }

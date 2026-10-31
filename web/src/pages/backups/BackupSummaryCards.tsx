@@ -54,9 +54,10 @@ export default function BackupSummaryCards({ summary, zone, error, onRetry }: Pr
     return (
       <section aria-label="Backup summary" aria-busy="true" className={GRID}>
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className={`${CARD} h-[104px]`}>
+          <div key={i} className={`${CARD} border-border`}>
             <div className="h-3 w-2/5 rounded bg-border motion-safe:animate-pulse" />
             <div className="h-6 w-3/5 rounded bg-border motion-safe:animate-pulse" />
+            <div className="h-3 w-1/2 rounded bg-border motion-safe:animate-pulse" />
           </div>
         ))}
       </section>
@@ -75,13 +76,12 @@ export default function BackupSummaryCards({ summary, zone, error, onRetry }: Pr
 
   return (
     <section aria-label="Backup summary" className={GRID}>
-      <Card label="Drive usage">
+      <Card label="Drive usage" title="Stored by the panel">
         <span className={VALUE}>{formatBytes(summary.driveBytes)}</span>
         <span className={SUB}>
           {plural(summary.driveFiles, 'file', 'files')} ·{' '}
           {plural(summary.driveProjects, 'project', 'projects')}
         </span>
-        <span className={SUB}>stored by the panel</span>
       </Card>
       <Card label="Succeeded · 7 days">
         <span className={`${VALUE} text-success`}>{summary.ok7d}</span>
@@ -99,23 +99,28 @@ export default function BackupSummaryCards({ summary, zone, error, onRetry }: Pr
 }
 
 const GRID = 'grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-3'
-const CARD = 'flex flex-col gap-2 rounded-[10px] border bg-surface p-4'
+// min-h: a loaded card and its skeleton are the same height (label, value, one sub-line).
+const CARD = 'flex min-h-[110px] flex-col gap-2 rounded-[10px] border bg-surface p-4'
 const VALUE = 'font-mono text-2xl font-semibold tabular-nums'
 const SUB = 'text-[12.5px] text-muted'
 
 function Card({
   label,
   alarm = false,
+  title,
   children,
 }: {
   label: string
   alarm?: boolean
+  /** A tooltip for the whole card. */
+  title?: string
   children: ReactNode
 }) {
   const id = useId()
   return (
     <section
       aria-labelledby={id}
+      title={title}
       className={`${CARD} ${alarm ? 'border-error-border' : 'border-border'}`}
     >
       <h2 id={id} className="m-0 text-xs font-normal tracking-[0.06em] text-muted uppercase">
@@ -173,7 +178,7 @@ function NextRun({
   if (next === null || p === null) {
     return (
       <Card label="Next run">
-        <span className={`${VALUE} text-text-2`}>No schedules</span>
+        <span className="text-base font-semibold text-text-2">No schedules</span>
         <span className={SUB}>Set one in a project's Database &amp; Backup tab.</span>
       </Card>
     )
@@ -185,9 +190,8 @@ function NextRun({
     <Card label="Next run">
       <span className={VALUE}>{p.time}</span>
       <span className={SUB}>
-        {day} · {next.projects.join(', ')}
+        {day} · {next.projects.join(', ')} · {label}
       </span>
-      <span className={SUB}>{label}</span>
     </Card>
   )
 }

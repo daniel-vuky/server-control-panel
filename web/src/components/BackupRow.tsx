@@ -1,4 +1,3 @@
-import { RotateCw } from 'lucide-react'
 import { Link } from 'react-router'
 import { downloadUrl } from '../api/backups'
 import type { Backup, BackupList } from '../api/types.gen'
@@ -12,21 +11,22 @@ import type { BackupFlow } from '../lib/useBackup'
  * (design 02) and the Backups page's table of every backup (design 04).
  */
 
-export const HEAD = 'px-3 py-2.5 font-normal first:pl-4 last:pr-4'
-const CELL = 'px-3 py-2.5 align-middle first:pl-4 last:pr-4'
+// 6 px a side with 16 px at the row ends: the design's 12 px column gaps.
+export const HEAD = 'px-1.5 py-2.5 font-normal first:pl-4 last:pr-4'
+const CELL = 'px-1.5 py-2.5 align-middle first:pl-4 last:pr-4'
 export const ROW_BUTTON =
   'h-7 cursor-pointer rounded-md border border-border-strong bg-transparent px-2.5 font-sans text-[12.5px] text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 const LINK =
-  'font-sans text-[13px] text-accent no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+  'font-sans text-[13px] text-text-2 underline hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 /** The colour of a status, from designs 02 and 04: text, then its dot. */
 const TONE: Record<string, [string, string]> = {
   ok: ['text-success', 'bg-success'],
-  failed: ['text-danger-text', 'bg-danger'],
-  refused: ['text-danger-text', 'bg-danger'],
+  failed: ['text-danger-text', 'bg-danger-text'],
+  refused: ['text-danger-text', 'bg-danger-text'],
   interrupted: ['text-warning', 'bg-warning'],
-  running: ['text-accent-text', 'bg-accent'],
-  queued: ['text-accent-text', 'bg-accent'],
+  running: ['text-accent-text', 'bg-accent-text'],
+  queued: ['text-accent-text', 'bg-accent-text'],
 }
 
 /** byNewest sorts backups newest first (ids grow with time). */
@@ -104,7 +104,9 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
       <td className={`${CELL} font-sans break-all text-text-2`}>{triggeredBy(b)}</td>
       {/* w-px: the actions take their whole width; Time and Triggered by wrap instead. */}
       <td className={`${CELL} w-px whitespace-nowrap`}>
-        <span className="flex items-center justify-end gap-3 whitespace-nowrap">
+        <span
+          className={`flex items-center justify-end gap-3 whitespace-nowrap ${withProject ? 'flex-wrap gap-y-1' : ''}`}
+        >
           {removed && (
             <span className="font-sans text-[13px] text-muted">
               {keep === null ? 'Removed' : `Removed (kept ${keep} newest)`}
@@ -130,9 +132,8 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
               disabled={retrying}
               aria-busy={retrying || undefined}
               onClick={() => void flow.retry(b)}
-              className={`${ROW_BUTTON} flex items-center gap-1.5`}
+              className={ROW_BUTTON}
             >
-              <RotateCw aria-hidden="true" size={13} strokeWidth={2} />
               Retry
             </button>
           )}
