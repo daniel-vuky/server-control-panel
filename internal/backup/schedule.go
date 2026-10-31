@@ -119,9 +119,10 @@ func LastOccurrence(f store.ScheduleFields, now time.Time, loc *time.Location) (
 		return time.Time{}, false
 	}
 	y, mo, d := now.In(loc).Date()
-	// One day ahead covers a normalisation that moves an occurrence back
-	// across midnight; 15 days cover a weekly schedule and any DST shift.
-	for i := -1; i <= 15; i++ {
+	// An occurrence is never earlier than its own day's wall time (a gap moves
+	// it forward), so no later day can hold one at or before now: start today
+	// and go back. 15 days cover a weekly schedule and any DST shift.
+	for i := 0; i <= 15; i++ {
 		if c, ok := occursOn(f, hh, mm, y, mo, d-i, loc); ok && !c.After(now) {
 			return c, true
 		}
@@ -180,7 +181,8 @@ func supportedWith(t store.Tracked, d project.Database, cs []project.Container, 
 // enabled schedules and queues each due one through Manager.Enqueue with the
 // schedule actor. last_run_at is stored before Enqueue, so a due time is
 // never run twice, even across a crash or a restart; a failed Enqueue is
-// logged and not retried.
+// logged and not retried. A due time skipped because Drive is not set up or
+// the database is not supported is marked too, so it is considered once.
 type Scheduler struct {
 	st  *store.Store
 	m   *Manager
@@ -290,8 +292,14 @@ func (s *Scheduler) tick(ctx context.Context) {
 		return
 	}
 	// Not set up on this server: nothing the owner can fix from the panel, so
-	// no refused rows; one line per tick that had due runs.
+	// no refused rows. Each due time is still marked as considered, so it is
+	// logged once (one line for the tick), not on every tick for an hour.
 	if s.m.d.Status().State == drive.StateNotConfigured {
+		for _, c := range due {
+			if !s.mark(ctx, c) && ctx.Err() != nil {
+				return
+			}
+		}
 		s.log.Info("backup: scheduled backups skipped: Google Drive is not set up on this server", "due", len(due))
 		return
 	}
@@ -326,13 +334,15 @@ func (s *Scheduler) run(ctx context.Context, c candidate, projects map[int64]*st
 		return // untracked or missing since the list was read
 	}
 	db, ok := findDatabase(*t, key)
-	if !ok || !supportedWith(*t, db, cs, up) {
-		return // not detected any more, or never backed up: no row
+	if !ok {
+		return // not detected any more since the list was read
 	}
-	if err := s.st.MarkScheduleRun(ctx, pid, key, c.due); err != nil {
-		if !errors.Is(err, store.ErrNotFound) && ctx.Err() == nil {
-			s.log.Warn("backup: cannot store a scheduled run; not queued", "project", pid, "db", key, "err", err)
-		}
+	if !supportedWith(*t, db, cs, up) {
+		// Never backed up as it is: no row, but the due time is considered.
+		s.mark(ctx, c)
+		return
+	}
+	if !s.mark(ctx, c) {
 		return
 	}
 	ectx, cancel := context.WithTimeout(ctx, enqueueWait)
@@ -351,8 +361,27 @@ func (s *Scheduler) run(ctx context.Context, c candidate, projects map[int64]*st
 			"project", pid, "db", key, "code", r.Code, "id", r.ID)
 	case errors.As(err, &r):
 		s.log.Info("backup: scheduled backup refused", "project", pid, "db", key, "code", r.Code, "id", r.ID)
+	case ctx.Err() != nil:
+		// The scheduler is closing (the panel shuts down): not a fault.
+		s.log.Info("backup: scheduled backup not queued: the panel is stopping",
+			"project", pid, "db", key, "due", c.due, "err", err)
 	default:
 		s.log.Warn("backup: cannot queue a scheduled backup; it runs at the next occurrence",
 			"project", pid, "db", key, "due", c.due, "err", err)
 	}
+}
+
+// mark stores c's due time as the schedule's last run, before anything is
+// queued, so that due time is never considered again. It is false when
+// nothing was stored: the schedule row is gone (the project was untracked or
+// removed meanwhile), or the write failed (logged at Warn).
+func (s *Scheduler) mark(ctx context.Context, c candidate) bool {
+	err := s.st.MarkScheduleRun(ctx, c.sc.ProjectID, c.sc.DBKey, c.due)
+	if err == nil {
+		return true
+	}
+	if !errors.Is(err, store.ErrNotFound) && ctx.Err() == nil {
+		s.log.Warn("backup: cannot store a scheduled run; not queued", "project", c.sc.ProjectID, "db", c.sc.DBKey, "err", err)
+	}
+	return false
 }

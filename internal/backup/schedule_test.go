@@ -564,8 +564,16 @@ func TestSchedulerDriveNotConfiguredNoRow(t *testing.T) {
 	if n := se.allRows(t); n != 0 {
 		t.Fatalf("%d rows while Drive is not set up", n)
 	}
-	if lines := strings.Count(se.logs.String(), "level=INFO"); lines != 2 {
-		t.Errorf("logs = %s, want one Info line per tick with due runs", se.logs.String())
+	// The due time is considered once: marked, one Info line, and the next
+	// tick has nothing due.
+	if lines := strings.Count(se.logs.String(), "level=INFO"); lines != 1 {
+		t.Errorf("logs = %s, want one Info line for the due time", se.logs.String())
+	}
+	due := at(se.loc, 2026, 11, 4, 2, 0, 0)
+	for _, k := range []string{keyPG, keyMySQL} {
+		if lr := se.lastRun(t, k); lr == nil || !lr.Equal(due) {
+			t.Errorf("%s last_run_at = %v, want %v", k, lr, due)
+		}
 	}
 	if se.r.callsOf(func(runner.Action) bool { return true }) != nil {
 		t.Errorf("runner called while Drive is not set up")
@@ -620,6 +628,11 @@ func TestSchedulerNotSupportedSkippedNoRow(t *testing.T) {
 	se.tickAt(at(se.loc, 2026, 11, 4, 2, 0, 5))
 	if n := se.allRows(t); n != 0 {
 		t.Fatalf("%d rows for unsupported databases", n)
+	}
+	for _, k := range []string{keySQLite, keyHost, keyGhost} {
+		if lr := se.lastRun(t, k); lr == nil || !lr.Equal(at(se.loc, 2026, 11, 4, 2, 0, 0)) {
+			t.Errorf("%s last_run_at = %v, want the due time", k, lr)
+		}
 	}
 	if calls := se.r.callsOf(func(runner.Action) bool { return true }); calls != nil {
 		t.Errorf("runner calls = %+v", calls)
@@ -725,4 +738,27 @@ func TestSchedulerStartTicksAtOnceAndClose(t *testing.T) {
 	s2 := NewScheduler(se.st, se.m, se.loc, se.clock.now, discardLog())
 	s2.Close()
 	s2.Start(context.Background())
+}
+
+// A scheduled Enqueue cut by the scheduler's own shutdown is an Info line,
+// not a warning; the run stays marked.
+func TestSchedulerEnqueueCutByCloseLogsInfo(t *testing.T) {
+	se := newSchedEnv(t)
+	se.set(t, keyPG, daily("02:00"), at(se.loc, 2026, 11, 3, 10, 0, 0))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	se.s.enqueue = func(ectx context.Context, _ store.Tracked, _ string, _ Actor) (int64, error) {
+		cancel() // Close while Enqueue runs
+		<-ectx.Done()
+		return 0, ectx.Err()
+	}
+	se.clock.set(at(se.loc, 2026, 11, 4, 2, 0, 5))
+	se.s.tick(ctx)
+	logs := se.logs.String()
+	if strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "level=INFO") || !strings.Contains(logs, "context canceled") {
+		t.Errorf("logs = %s, want an Info line and no warning", logs)
+	}
+	if lr := se.lastRun(t, keyPG); lr == nil {
+		t.Error("last_run_at not stored")
+	}
 }
