@@ -567,9 +567,12 @@ func (h *Hub) runTick(ctx context.Context, run *tickRun) {
 // most maxTickReads times in all; after that the cached list (which the lock
 // release refreshed) is published. If the store changed meanwhile (Refresh or
 // storeChanged bumped tsGen), the tracked projects may predate the change:
-// the tick changes and publishes nothing and returns stale. ok is false when
-// ctx ended or the tick is stale. A tick that read the store without error
-// records the tsGen it read under in cacheTS.
+// the tick changes and publishes nothing and returns stale. A tick that could
+// not read the store keeps the cached tracked list; when a store change came
+// after that list was read (cacheTS behind), it updates only the Docker half
+// of the cache, publishes nothing and returns stale too. ok is false when ctx
+// ended or the tick is stale. A tick that read the store without error records
+// the tsGen it read under in cacheTS.
 //
 // The publish also ends run (h.running = nil) in the same critical section:
 // a store change after it must start a new tick, since this one can no longer
@@ -653,6 +656,13 @@ func (h *Hub) tick(ctx context.Context, run *tickRun) (s State, ok, stale bool) 
 		h.cacheGen = h.ctl.Generation()
 		if tsErr == nil {
 			h.cacheTS = tsGen // checked equal to h.tsGen above
+		} else if h.cacheTS != tsGen {
+			// The store changed after the cached list was read, and this
+			// tick could not read it: that list is known to be behind. The
+			// Docker half of the cache is kept (as lockChanged does), but
+			// nothing is published; the runner ticks again.
+			h.mu.Unlock()
+			return State{}, false, true
 		}
 		s = h.publishLocked()
 		if h.running == run {

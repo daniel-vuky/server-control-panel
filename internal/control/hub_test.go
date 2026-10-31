@@ -272,19 +272,20 @@ func TestHubSubscribeFromColdReadsOnce(t *testing.T) {
 // a moment ago runs no tick, and the loop's first comes tickInterval after
 // that read, not after Subscribe.
 func TestHubLoopFirstTickKeepsTheInterval(t *testing.T) {
-	e, h := newHubEnv(t, 300*time.Millisecond)
+	e, h := newHubEnv(t, time.Second)
 	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
 	h.Check(context.Background())
 	read := time.Now()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(700 * time.Millisecond)
 	subscribe(t, h)
 	if n := e.cmd.count(runner.DockerPing); n != 1 {
 		t.Fatalf("%d pings after a subscribe on a fresh cache, want 1 (the Check)", n)
 	}
 	waitTicks(t, e.cmd, 1)
-	// About 300ms; 200ms would be a tick at once, 500ms the interval from Subscribe.
-	if d := time.Since(read); d < 250*time.Millisecond || d > 450*time.Millisecond {
-		t.Fatalf("the loop's first tick came %s after the last read, want about 300ms", d)
+	// About 1s. A tick at once would come at about 700ms, the interval from
+	// Subscribe at 1.7s; the upper bound leaves a loaded -race runner 600ms.
+	if d := time.Since(read); d < 900*time.Millisecond || d >= 1600*time.Millisecond {
+		t.Fatalf("the loop's first tick came %s after the last read, want about 1s", d)
 	}
 }
 
@@ -617,6 +618,38 @@ func TestHubPanicReleasesWaiters(t *testing.T) {
 	}
 	if s := h.Check(context.Background()); !s.DockerUp {
 		t.Fatalf("Check after the panic = %+v, want Docker up", s)
+	}
+}
+
+// A tick that cannot read the store after a store change only has a tracked
+// list known to be behind: it publishes nothing and is read again, at most
+// maxTickReads times, instead of sending that list.
+func TestHubTickWithoutTheStoreAfterAChangePublishesNothing(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	updates := quietSubscribe(t, h)
+	if err := e.st.Close(); err != nil { // TrackedProjects now fails
+		t.Fatal(err)
+	}
+	h.storeChanged() // a change the cache has not read; starts no tick
+	e.cmd.set(runner.DockerContainers, reply{stdout: stoppedOut("shop")})
+	pings := e.cmd.count(runner.DockerPing)
+
+	s := h.Check(context.Background())
+	if n := e.cmd.count(runner.DockerPing) - pings; n != maxTickReads {
+		t.Fatalf("%d ticks, want %d (each one stale)", n, maxTickReads)
+	}
+	noUpdate(t, updates)
+	// The Docker half of the cache is kept, so Retry and Containers still
+	// see Docker as it is now.
+	if v := viewOf(t, s, "shop"); !s.DockerUp || v.Status != project.StatusStopped {
+		t.Fatalf("Check returned Docker up %v and shop %s, want the fresh Docker read", s.DockerUp, v.Status)
+	}
+	h.mu.Lock()
+	current := h.storeCurrentLocked()
+	h.mu.Unlock()
+	if current {
+		t.Fatal("the cache counts as current though no tick read the store")
 	}
 }
 
