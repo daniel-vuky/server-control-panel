@@ -72,7 +72,7 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
     <tr data-id={b.id} className="border-b border-divider last:border-b-0">
       <td className={CELL}>{formatWhen(b.createdAt)}</td>
       {withProject && (
-        <td className={`${CELL} break-all`}>
+        <td className={`${CELL} break-words`}>
           <Link
             to={`/projects/${b.projectId}/database`}
             className="text-white no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
@@ -81,7 +81,7 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
           </Link>
         </td>
       )}
-      {several && <td className={`${CELL} break-all text-text-2`}>{b.database.name}</td>}
+      {several && <td className={`${CELL} break-words text-text-2`}>{b.database.name}</td>}
       <td className={`${CELL} whitespace-nowrap`}>
         {b.state === 'ok' && b.sizeBytes > 0 ? formatBytes(b.sizeBytes) : '—'}
       </td>
@@ -101,7 +101,7 @@ export function BackupRow({ backup: b, several, withProject = false, flow, keep 
           <span className="break-words">{backupLine(b)}</span>
         </button>
       </td>
-      <td className={`${CELL} font-sans break-all text-text-2`}>{triggeredBy(b)}</td>
+      <td className={`${CELL} font-sans break-words text-text-2`}>{triggeredBy(b)}</td>
       {/* History (auto layout): w-px, so the actions take their whole width and Time and Triggered by wrap
           instead. Backups page (table-fixed, a colgroup width): the actions wrap as units, and so does the
           pruned row's "Removed (kept N newest)", rather than spill into the next column. */}

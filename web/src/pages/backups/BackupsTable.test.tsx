@@ -168,6 +168,13 @@ describe('BackupsTable rows', () => {
     const cell = r10.querySelector('td') as HTMLElement
     expect(cell).toHaveClass('px-1.5', 'first:pl-4', 'last:pr-4')
     expect(cell).not.toHaveClass('px-3')
+    // Names and emails wrap at word breaks inside the fixed columns, never mid-word.
+    const tds = r10.querySelectorAll('td')
+    // Project, Database and Triggered by.
+    for (const td of [tds[1], tds[2], tds[6]]) {
+      expect(td).toHaveClass('break-words')
+      expect(td).not.toHaveClass('break-all')
+    }
     for (const name of ['Open in Drive', 'Download']) {
       const link = within(r10).getByRole('link', { name })
       expect(link).toHaveClass('text-text-2', 'underline', 'hover:text-white')

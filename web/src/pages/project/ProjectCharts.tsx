@@ -155,7 +155,7 @@ function ChartsLoading() {
     <div aria-busy="true" className={GRID}>
       <span className="sr-only">Loading the charts…</span>
       {[0, 1, 2].map((i) => (
-        <SkeletonCard key={i} minHeight="min-h-[220px]" />
+        <SkeletonCard key={i} />
       ))}
     </div>
   )
