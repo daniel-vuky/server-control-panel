@@ -7,8 +7,23 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
+
+// writeMountinfo writes a /proc/1/mountinfo under a new temp /proc and
+// returns that /proc.
+func writeMountinfo(t *testing.T, mi string) string {
+	t.Helper()
+	proc := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proc, "1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proc, "1", "mountinfo"), []byte(mi), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return proc
+}
 
 func TestParseMountinfo(t *testing.T) {
 	ms := ParseMountinfo(readFile(t, "1/mountinfo"))
@@ -58,24 +73,51 @@ func TestUnescapeMount(t *testing.T) {
 
 // statfsStub answers by path relative to root, as the panel sees /host/root,
 // and records every path it is asked, so a test can pin which mounts Disks
-// looked at. A path it has no row for fails the test.
+// looked at. A path it has no row for fails the test. devs is the major:minor
+// each path reads as (Host.Dev); a path above root is the container's own
+// filesystem, outsideDev.
 type statfsStub struct {
 	t     *testing.T
 	root  string
 	rows  map[string]Disk
 	fail  map[string]error
+	devs  map[string]string
 	asked []string
+}
+
+const outsideDev = "0:99"
+
+func (s *statfsStub) point(p string) (string, error) {
+	rel, err := filepath.Rel(s.root, p)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." {
+		return "/", nil
+	}
+	return "/" + rel, nil
+}
+
+func (s *statfsStub) dev(p string) (string, error) {
+	point, err := s.point(p)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(point, "/..") {
+		return outsideDev, nil
+	}
+	d, ok := s.devs[point]
+	if !ok {
+		return "", errors.New("no dev for " + p)
+	}
+	return d, nil
 }
 
 func (s *statfsStub) statfs(p string) (uint64, uint64, error) {
 	s.asked = append(s.asked, p)
-	rel, err := filepath.Rel(s.root, p)
+	point, err := s.point(p)
 	if err != nil {
 		return 0, 0, err
-	}
-	point := "/" + rel
-	if rel == "." {
-		point = "/"
 	}
 	if e, ok := s.fail[point]; ok {
 		return 0, 0, e
@@ -113,8 +155,8 @@ func TestDisksFilterDedupeAndVarLibDocker(t *testing.T) {
 		"/mnt/backup disk": {Used: 7, Total: 70},
 	}, fail: map[string]error{
 		"/home/private": &fs.PathError{Op: "statfs", Path: "/home/private", Err: os.ErrPermission},
-	}}
-	h.Statfs = stub.statfs
+	}, devs: map[string]string{"/": "8:1", "/var/lib/docker": "8:17", "/mnt/backup disk": "8:49"}}
+	h.Statfs, h.Dev = stub.statfs, stub.dev
 	got, fallback := h.Disks()
 	if fallback {
 		t.Fatal("Root exists, so not the fallback")
@@ -151,8 +193,8 @@ func TestDisksDropSnapAndEFIByPath(t *testing.T) {
 	}
 	stub := &statfsStub{t: t, root: root, rows: map[string]Disk{
 		"/": {Used: 1, Total: 2}, "/snapshots": {Used: 3, Total: 4},
-	}}
-	h := Host{Proc: proc, Root: root, Statfs: stub.statfs}
+	}, devs: map[string]string{"/": "8:1", "/snapshots": "8:16"}}
+	h := Host{Proc: proc, Root: root, Statfs: stub.statfs, Dev: stub.dev}
 	got, _ := h.Disks()
 	stub.wantAsked("/", "/snapshots")
 	want := []Disk{{Mount: "/", Used: 1, Total: 2}, {Mount: "/snapshots", Used: 3, Total: 4}}
@@ -232,11 +274,77 @@ func TestDisksDedupeByMajorMinor(t *testing.T) {
 	}
 	stub := &statfsStub{t: t, root: root, rows: map[string]Disk{
 		"/srv": {Used: 1, Total: 2}, "/a": {Used: 3, Total: 4}, "/b": {Used: 5, Total: 6},
-	}}
-	got, _ := Host{Proc: proc, Root: root, Statfs: stub.statfs}.Disks()
+	}, devs: map[string]string{"/srv": "8:1", "/a": "8:16", "/b": "8:32"}}
+	got, _ := Host{Proc: proc, Root: root, Statfs: stub.statfs, Dev: stub.dev}.Disks()
 	want := []Disk{{Mount: "/a", Used: 3, Total: 4}, {Mount: "/b", Used: 5, Total: 6}, {Mount: "/srv", Used: 1, Total: 2}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Disks = %+v, want %+v", got, want)
 	}
 	stub.wantAsked("/srv", "/a", "/b")
+}
+
+// A disk mounted after the panel started is in the host's mount table but not
+// under the /host/root bind (frozen at container start), so its path there is
+// a plain directory of the parent filesystem: statfs would answer the
+// parent's numbers. Its device differs from the mount table's, and it reads as
+// the same device as its parent directory, so it is left out until a restart.
+func TestDisksDropAMountNotUnderTheRootBind(t *testing.T) {
+	root := t.TempDir()
+	proc := writeMountinfo(t, "1 0 8:1 / / rw - ext4 /dev/sda1 rw\n"+
+		"2 1 8:16 / /data rw - ext4 /dev/sdb1 rw\n"+
+		"3 1 8:32 / /srv/late rw - xfs /dev/sdc1 rw\n")
+	stub := &statfsStub{t: t, root: root, rows: map[string]Disk{
+		"/": {Used: 10, Total: 100}, "/data": {Used: 10, Total: 100}, "/srv/late": {Used: 10, Total: 100},
+	}, devs: map[string]string{"/": "8:1", "/data": "8:1", "/srv": "8:1", "/srv/late": "8:1"}}
+	got, fallback := Host{Proc: proc, Root: root, Statfs: stub.statfs, Dev: stub.dev}.Disks()
+	if fallback {
+		t.Fatal("not the fallback")
+	}
+	if want := []Disk{{Mount: "/", Used: 10, Total: 100}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Disks = %+v, want only /", got)
+	}
+}
+
+// btrfs (and bcachefs) give every subvolume its own anonymous device, so stat
+// does not match the mount table's major:minor even for a mount that is
+// there. A path whose device differs from its parent directory's is a mount
+// seen through the bind, and is kept; a late mount reads as its parent's
+// device and is still left out. A device that cannot be read is left out.
+func TestDisksKeepASubvolumeMountWithAnotherDevice(t *testing.T) {
+	root := t.TempDir()
+	proc := writeMountinfo(t, "1 0 0:31 /@ / rw - btrfs /dev/sda2 rw\n"+
+		"2 1 0:40 / /srv rw - btrfs /dev/sdb1 rw\n"+
+		"3 1 0:50 / /late rw - btrfs /dev/sdc1 rw\n"+
+		"4 1 8:48 / /nodev rw - ext4 /dev/sdd1 rw\n")
+	stub := &statfsStub{t: t, root: root, rows: map[string]Disk{
+		"/": {Used: 1, Total: 2}, "/srv": {Used: 3, Total: 4}, "/late": {Used: 1, Total: 2}, "/nodev": {Used: 5, Total: 6},
+	}, devs: map[string]string{"/": "0:33", "/srv": "0:41", "/late": "0:33"}}
+	got, _ := Host{Proc: proc, Root: root, Statfs: stub.statfs, Dev: stub.dev}.Disks()
+	want := []Disk{{Mount: "/", Used: 1, Total: 2}, {Mount: "/srv", Used: 3, Total: 4}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Disks = %+v, want %+v", got, want)
+	}
+}
+
+func TestDevName(t *testing.T) {
+	for dev, want := range map[uint64]string{
+		0x801:    "8:1",
+		0x10301:  "259:1",
+		0x10082c: "8:300",
+		0x2b:     "0:43",
+	} {
+		if got := devName(dev); got != want {
+			t.Errorf("devName(%#x) = %s, want %s", dev, got, want)
+		}
+	}
+	got, err := lstatDev(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if major, minor, ok := strings.Cut(got, ":"); !ok || major == "" || minor == "" {
+		t.Fatalf("lstatDev = %q", got)
+	}
+	if _, err := lstatDev(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("a missing path should be an error")
+	}
 }

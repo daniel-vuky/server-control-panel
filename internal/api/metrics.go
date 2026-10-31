@@ -26,6 +26,10 @@ const (
 	maxRetentionDays = 30
 )
 
+// pruneTimeout bounds the prune after a retention save, which outlives the
+// request.
+const pruneTimeout = 30 * time.Second
+
 // metricRange is one period of the charts: its bucket width and count.
 type metricRange struct {
 	step time.Duration
@@ -312,8 +316,9 @@ func (s *server) metricsSettings(w http.ResponseWriter, r *http.Request) {
 // saveMetricsSettings is POST /api/metrics-settings {retentionDays}: a whole
 // number from 7 to 30, else 422 on retentionDays (code range). A save that
 // changes the value is recorded as metrics.retention and prunes at once, so
-// a lowered retention deletes the older history now; a failed prune is
-// logged (the hourly one retries) and does not fail the save.
+// a lowered retention deletes the older history now (bounded by
+// pruneTimeout); a failed prune is logged (the hourly one retries) and does
+// not fail the save.
 func (s *server) saveMetricsSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RetentionDays json.RawMessage `json:"retentionDays"`
@@ -337,7 +342,10 @@ func (s *server) saveMetricsSettings(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		s.record(r, store.Activity{Action: store.ActMetricsRetention, Target: retentionTarget}, store.ResultOK,
 			fmt.Sprintf("retention: %d → %d days", before, days))
-		if err := s.Metrics.Prune(ctx); err != nil {
+		pctx, cancel := context.WithTimeout(ctx, pruneTimeout)
+		err := s.Metrics.Prune(pctx)
+		cancel()
+		if err != nil {
 			s.log.Warn("metrics: cannot prune after a retention save; the hourly prune retries", "err", err)
 		}
 	}

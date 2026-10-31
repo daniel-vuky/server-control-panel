@@ -30,6 +30,9 @@ type Host struct {
 	// Statfs returns the used and total bytes of the filesystem holding path.
 	// Nil means syscall.Statfs; tests set it.
 	Statfs func(path string) (used, total uint64, err error)
+	// Dev returns the major:minor of the filesystem path is on (lstat).
+	// Nil means the real one; tests set it.
+	Dev func(path string) (string, error)
 }
 
 // Available reports whether the host's /proc/stat can be read; without it there
@@ -174,8 +177,9 @@ func (h Host) WholeDisk() func(string) bool {
 }
 
 // ParseDiskstats sums the bytes read and written (sectors of 512) of the
-// devices whole accepts; nil accepts every device.
-func ParseDiskstats(b []byte, whole func(string) bool) (readBytes, writeBytes uint64) {
+// devices whole accepts (nil accepts every device); n is how many rows were
+// counted, so none counted is told from an idle disk.
+func ParseDiskstats(b []byte, whole func(string) bool) (readBytes, writeBytes uint64, n int) {
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
@@ -189,8 +193,9 @@ func ParseDiskstats(b []byte, whole func(string) bool) (readBytes, writeBytes ui
 		}
 		readBytes += r * 512
 		writeBytes += w * 512
+		n++
 	}
-	return readBytes, writeBytes
+	return readBytes, writeBytes, n
 }
 
 // SkipHostIface skips the interfaces whose traffic is also counted elsewhere:
@@ -204,8 +209,8 @@ func SkipHostIface(name string) bool {
 func SkipLoopback(name string) bool { return name == "lo" }
 
 // ParseNetDev sums the bytes received and sent over the interfaces skip does
-// not drop (nil drops none).
-func ParseNetDev(b []byte, skip func(string) bool) (in, out uint64) {
+// not drop (nil drops none); n is how many interfaces were counted.
+func ParseNetDev(b []byte, skip func(string) bool) (in, out uint64, n int) {
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		name, rest, ok := strings.Cut(sc.Text(), ":")
@@ -224,8 +229,9 @@ func ParseNetDev(b []byte, skip func(string) bool) (in, out uint64) {
 		}
 		in += rx
 		out += tx
+		n++
 	}
-	return in, out
+	return in, out, n
 }
 
 // Counters are the host's cumulative numbers at one moment; a rate is the
@@ -236,15 +242,16 @@ type Counters struct {
 	MemUsed, MemTotal   int64
 	DiskRead, DiskWrite uint64
 	NetIn, NetOut       uint64
-	// DiskOK and NetOK are false when that file could not be read, so the
-	// sampler stores a gap for just that series.
+	// DiskOK and NetOK are false when that file could not be read or had no
+	// row to count, so the sampler stores a gap for just that series.
 	DiskOK, NetOK bool
 }
 
 // Read takes one set of host counters. Network is pid 1's namespace, the
 // host's, through /proc/1/net/dev (a container's own /proc/net would show only
 // the panel's namespace). Only stat and meminfo are required: when diskstats or
-// net/dev cannot be read the rest is still returned, with DiskOK or NetOK false.
+// net/dev cannot be read, or no row of it passes the filters, the rest is still
+// returned, with DiskOK or NetOK false.
 func (h Host) Read(now time.Time) (Counters, error) {
 	c := Counters{At: now}
 	b, err := os.ReadFile(filepath.Join(h.Proc, "stat"))
@@ -261,24 +268,30 @@ func (h Host) Read(now time.Time) (Counters, error) {
 		return Counters{}, err
 	}
 	if b, err = os.ReadFile(filepath.Join(h.Proc, "diskstats")); err == nil {
-		c.DiskRead, c.DiskWrite = ParseDiskstats(b, h.WholeDisk())
-		c.DiskOK = true
+		var n int
+		c.DiskRead, c.DiskWrite, n = ParseDiskstats(b, h.WholeDisk())
+		c.DiskOK = n > 0
 	}
 	if b, err = os.ReadFile(filepath.Join(h.Proc, "1", "net", "dev")); err == nil {
-		c.NetIn, c.NetOut = ParseNetDev(b, SkipHostIface)
-		c.NetOK = true
+		var n int
+		c.NetIn, c.NetOut, n = ParseNetDev(b, SkipHostIface)
+		c.NetOK = n > 0
 	}
 	return c, nil
 }
 
 // ContainerNet is the bytes in and out of a container's own namespace, read
-// through any of its pids (loopback skipped).
+// through any of its pids (loopback skipped). A namespace with no interface
+// but lo has no reading (an error).
 func (h Host) ContainerNet(pid int) (in, out uint64, err error) {
 	b, err := os.ReadFile(filepath.Join(h.Proc, strconv.Itoa(pid), "net", "dev"))
 	if err != nil {
 		return 0, 0, fmt.Errorf("metrics: read net/dev of pid %d: %w", pid, err)
 	}
-	in, out = ParseNetDev(b, SkipLoopback)
+	in, out, n := ParseNetDev(b, SkipLoopback)
+	if n == 0 {
+		return 0, 0, fmt.Errorf("metrics: no interface but lo in net/dev of pid %d", pid)
+	}
 	return in, out, nil
 }
 

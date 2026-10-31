@@ -99,14 +99,14 @@ func TestParseDiskstatsWholeDisksOnly(t *testing.T) {
 	wantWrite := uint64(5860616+20480+40000+6000) * 512
 
 	// With /sys/block listing the disks.
-	r, w := ParseDiskstats(b, testHost().WholeDisk())
-	if r != wantRead || w != wantWrite {
+	r, w, n := ParseDiskstats(b, testHost().WholeDisk())
+	if r != wantRead || w != wantWrite || n != 4 {
 		t.Fatalf("with /sys/block: read %d write %d, want %d %d", r, w, wantRead, wantWrite)
 	}
 	// Without /sys/block, partition names are dropped instead.
 	noSys := Host{Proc: "testdata/proc", Sys: filepath.Join(t.TempDir(), "missing")}
-	r, w = ParseDiskstats(b, noSys.WholeDisk())
-	if r != wantRead || w != wantWrite {
+	r, w, n = ParseDiskstats(b, noSys.WholeDisk())
+	if r != wantRead || w != wantWrite || n != 4 {
 		t.Fatalf("without /sys/block: read %d write %d, want %d %d", r, w, wantRead, wantWrite)
 	}
 	// /sys/block is the authority when it is there: a disk it does not list is out.
@@ -114,12 +114,12 @@ func TestParseDiskstatsWholeDisksOnly(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(sys, "block", "sda"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	r, w = ParseDiskstats(b, Host{Sys: sys}.WholeDisk())
-	if r != 4426090*512 || w != 5860616*512 {
+	r, w, n = ParseDiskstats(b, Host{Sys: sys}.WholeDisk())
+	if r != 4426090*512 || w != 5860616*512 || n != 1 {
 		t.Fatalf("only sda listed: read %d write %d", r, w)
 	}
 	// nil counts every row.
-	if r, _ := ParseDiskstats(b, nil); r <= wantRead {
+	if r, _, _ := ParseDiskstats(b, nil); r <= wantRead {
 		t.Fatalf("nil filter read %d, want more than %d", r, wantRead)
 	}
 }
@@ -141,22 +141,22 @@ func TestWholeDiskNames(t *testing.T) {
 func TestParseNetDevSkips(t *testing.T) {
 	b := readFile(t, "1/net/dev")
 	// eth0 and ens5 only: lo, docker0, br-*, veth* and virbr0 are left out.
-	in, out := ParseNetDev(b, SkipHostIface)
-	if in != 1500000 || out != 600000 {
+	in, out, n := ParseNetDev(b, SkipHostIface)
+	if in != 1500000 || out != 600000 || n != 2 {
 		t.Fatalf("host: in %d out %d, want 1500000 600000", in, out)
 	}
 	// Only lo is skipped for a container.
-	in, out = ParseNetDev(b, SkipLoopback)
+	in, out, _ = ParseNetDev(b, SkipLoopback)
 	if in != 1000000+500000+7000000+3000000+6000000+1200000+100000 ||
 		out != 400000+200000+8000000+2500000+6500000+1100000+50000 {
 		t.Fatalf("loopback skipped: in %d out %d", in, out)
 	}
-	if in, out := ParseNetDev(b, nil); in != 9000000+18800000 || out != 9000000+18750000 {
+	if in, out, _ := ParseNetDev(b, nil); in != 9000000+18800000 || out != 9000000+18750000 {
 		t.Fatalf("nothing skipped: in %d out %d", in, out)
 	}
 	// No space after the colon, a short row and junk are tolerated.
-	in, out = ParseNetDev([]byte("hdr\nhdr\neth0:5 0 0 0 0 0 0 0 7 0 0 0 0 0 0 0\neth1: 1 2\nnonsense\n"), nil)
-	if in != 5 || out != 7 {
+	in, out, n = ParseNetDev([]byte("hdr\nhdr\neth0:5 0 0 0 0 0 0 0 7 0 0 0 0 0 0 0\neth1: 1 2\nnonsense\n"), nil)
+	if in != 5 || out != 7 || n != 1 {
 		t.Fatalf("tolerance: in %d out %d", in, out)
 	}
 }
@@ -243,6 +243,31 @@ func TestHostReadWithoutDiskstats(t *testing.T) {
 	}
 }
 
+// A diskstats or net/dev that reads fine but has no row the filters count
+// (only partitions and loop devices, only lo and docker0) is no reading: a
+// gap, not a zero.
+func TestHostReadWithNothingCounted(t *testing.T) {
+	h := procWithout(t)
+	if err := os.WriteFile(filepath.Join(h.Proc, "diskstats"),
+		[]byte("   8       1 sda1 100 0 4000 0 50 0 2000 0 0 0 0\n   7       0 loop0 1 0 8 0 0 0 0 0 0 0 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.Proc, "1", "net", "dev"),
+		[]byte("hdr\nhdr\n    lo: 5 0 0 0 0 0 0 0 5 0 0 0 0 0 0 0\ndocker0: 9 0 0 0 0 0 0 0 9 0 0 0 0 0 0 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := h.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DiskOK || c.NetOK {
+		t.Fatalf("nothing counted should be no reading: %+v", c)
+	}
+	if c.CPU.Total == 0 || c.MemTotal == 0 {
+		t.Fatalf("the rest should still be read: %+v", c)
+	}
+}
+
 func TestHostReadNeedsStatAndMeminfo(t *testing.T) {
 	for _, name := range []string{"stat", "meminfo"} {
 		if _, err := procWithout(t, name).Read(time.Now()); err == nil {
@@ -261,6 +286,18 @@ func TestContainerNet(t *testing.T) {
 	}
 	if _, _, err := testHost().ContainerNet(99999); err == nil {
 		t.Fatal("an unknown pid should be an error")
+	}
+	// A namespace with only lo (network_mode: none) has no usable reading.
+	h := procWithout(t)
+	if err := os.MkdirAll(filepath.Join(h.Proc, "77", "net"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.Proc, "77", "net", "dev"),
+		[]byte("hdr\nhdr\n    lo: 5 0 0 0 0 0 0 0 5 0 0 0 0 0 0 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.ContainerNet(77); err == nil {
+		t.Fatal("only lo should be an error")
 	}
 }
 

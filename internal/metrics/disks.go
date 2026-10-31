@@ -78,7 +78,8 @@ const panelDataLabel = "/ (panel data)"
 // Disks lists the server's disks from the host's mount table (decision 10):
 // real block filesystems only, mount points under /snap and /boot/efi dropped,
 // one row per device (major:minor) at its shortest mount point, used and total
-// read with statfs under Root. A mount the panel cannot reach is left out.
+// read with statfs under Root. A mount the panel cannot reach is left out, and
+// so is one that is not under Root (see reachable).
 // Without a Root (an install whose compose file predates the mount), or when
 // Root exists but the mount table is unreadable or empty, it returns the one
 // filesystem holding DataDir and fallback true.
@@ -103,9 +104,10 @@ func (h Host) Disks() (disks []Disk, fallback bool) {
 		}
 	}
 	statfs := h.statfs()
-	for _, point := range best {
-		used, total, err := statfs(filepath.Join(h.Root, point))
-		if err != nil {
+	for devID, point := range best {
+		p := filepath.Join(h.Root, point)
+		used, total, err := statfs(p)
+		if err != nil || !h.reachable(p, devID) {
 			continue
 		}
 		disks = append(disks, Disk{Mount: point, Used: used, Total: total})
@@ -120,6 +122,52 @@ func (h Host) panelDataDisk() []Disk {
 		return nil
 	}
 	return []Disk{{Mount: panelDataLabel, Used: used, Total: total}}
+}
+
+// reachable reports whether p, a mount point under Root, is that mount and not
+// the directory beneath it. Root is a bind of the host's / taken when the
+// container started, so a disk mounted later is in the mount table but not
+// under Root: its path there is a plain directory of the parent filesystem,
+// whose numbers statfs would answer. p is the mount when its device is the
+// mount table's devID, or, since btrfs and bcachefs give each subvolume its
+// own anonymous device (never the table's), when its device differs from its
+// parent directory's (a mount boundary). A device that cannot be read is not
+// reachable.
+func (h Host) reachable(p, devID string) bool {
+	dev := h.Dev
+	if dev == nil {
+		dev = lstatDev
+	}
+	d, err := dev(p)
+	if err != nil {
+		return false
+	}
+	if d == devID {
+		return true
+	}
+	parent, err := dev(filepath.Dir(p))
+	return err == nil && parent != d
+}
+
+// lstatDev is the major:minor of the filesystem p is on.
+func lstatDev(p string) (string, error) {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return "", fmt.Errorf("metrics: lstat %s: %w", p, err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", fmt.Errorf("metrics: lstat %s: no device", p)
+	}
+	return devName(uint64(st.Dev)), nil
+}
+
+// devName words a Linux dev_t as major:minor, as mountinfo does (glibc's
+// gnu_dev_major and gnu_dev_minor).
+func devName(dev uint64) string {
+	major := (dev>>8)&0xfff | (dev>>32)&^uint64(0xfff)
+	minor := dev&0xff | (dev>>12)&^uint64(0xff)
+	return strconv.FormatUint(major, 10) + ":" + strconv.FormatUint(minor, 10)
 }
 
 func (h Host) statfs() func(string) (uint64, uint64, error) {

@@ -496,7 +496,7 @@ func (s *Sampler) containerRates(ids []string, insp map[string]project.Inspect) 
 		}
 		rx, tx, err := s.host.ContainerNet(in.Pid)
 		if err != nil {
-			continue // the process ended, or no host /proc
+			continue // the process ended, no host /proc, or only lo
 		}
 		k := netKey{id: id, pid: in.Pid}
 		cur := netReading{in: rx, out: tx, at: s.now()}

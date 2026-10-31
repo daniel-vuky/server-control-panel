@@ -18,7 +18,7 @@ import (
 
 // fakeMonitor is the server metrics of the API tests: it answers the tick,
 // the disk usage, the disks and the system facts it was given, and Prune
-// counts its calls.
+// counts its calls and keeps the last call's context.
 type fakeMonitor struct {
 	mu       sync.Mutex
 	tick     metrics.Tick
@@ -28,6 +28,7 @@ type fakeMonitor struct {
 	fallback bool
 	sys      metrics.System
 	prunes   int
+	pruneCtx context.Context
 }
 
 func (f *fakeMonitor) Latest() (metrics.Tick, bool) {
@@ -58,10 +59,11 @@ func (f *fakeMonitor) System(context.Context) metrics.System {
 	return f.sys
 }
 
-func (f *fakeMonitor) Prune(context.Context) error {
+func (f *fakeMonitor) Prune(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prunes++
+	f.pruneCtx = ctx
 	return nil
 }
 
@@ -486,6 +488,30 @@ func TestMetricsSettingsValidation(t *testing.T) {
 	}
 	if n := monitorOf(d).prunes; n != 0 {
 		t.Errorf("pruned %d times, want 0", n)
+	}
+}
+
+// The prune after a save outlives the request but not forever: it has a
+// 30-second deadline.
+func TestMetricsSettingsPruneHasADeadline(t *testing.T) {
+	d, h := metricsSetup(t)
+	start := time.Now()
+	rec := doJSON(h, http.MethodPost, "/api/metrics-settings", MetricsSettings{RetentionDays: 10})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
+	}
+	f := monitorOf(d)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prunes != 1 || f.pruneCtx == nil {
+		t.Fatalf("prunes = %d, want 1", f.prunes)
+	}
+	dl, ok := f.pruneCtx.Deadline()
+	if !ok {
+		t.Fatal("the prune has no deadline")
+	}
+	if left := dl.Sub(start); left <= 0 || left > 30*time.Second+time.Second {
+		t.Fatalf("deadline %v after the save, want about 30 s", left)
 	}
 }
 
