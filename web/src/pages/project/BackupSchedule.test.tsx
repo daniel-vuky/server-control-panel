@@ -206,6 +206,10 @@ describe('backup schedule card', () => {
       },
     ])
     expect(card()).toHaveTextContent('Next run: Mon Nov 2, 02:00 (Asia/Ho_Chi_Minh, UTC+07:00)')
+    // Only the time and the zone are mono (design 02); the words are sans.
+    const when = screen.getByText('Mon Nov 2, 02:00 (Asia/Ho_Chi_Minh, UTC+07:00)')
+    expect(when).toHaveClass('font-mono', 'text-text-2')
+    expect(when.parentElement).not.toHaveClass('font-mono')
     expect(card()).not.toHaveTextContent('No scheduled backups.')
     expect(save()).toBeDisabled()
   })

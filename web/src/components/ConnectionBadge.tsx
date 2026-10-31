@@ -18,25 +18,25 @@ export default function ConnectionBadge({
     // The live region stays mounted so a change of the badge is announced.
     <div aria-live="polite" className="flex justify-end">
       {connection === 'open' && (
-        <span className={`${pill} border-[#1e3a2d] bg-[#0f1a15] text-[#8fe3b9]`}>
+        <span className={`${pill} border-success-bg bg-success-soft text-success-text`}>
           <span aria-hidden="true" className={`${dot} bg-success`} />
           Realtime
         </span>
       )}
       {connection === 'lost' && (
-        <span className={`${pill} border-[#5c4a1e] bg-[#221c0e] text-[#f2cf6b]`}>
+        <span className={`${pill} border-warning-border bg-warning-bg text-warning-text`}>
           <span aria-hidden="true" className={`${dot} bg-warning`} />
           Connection lost, retrying…
         </span>
       )}
       {connection === 'expired' && (
-        <span className={`${pill} border-error-border bg-[#2a1215] pr-1 text-[#ffd7d8]`}>
+        <span className={`${pill} border-error-border bg-error-bg pr-1 text-error-fg`}>
           <span aria-hidden="true" className={`${dot} bg-danger`} />
           Session expired
           <button
             type="button"
             onClick={onReload}
-            className="ml-1 h-[22px] cursor-pointer rounded-full border border-[#7a2f36] bg-transparent px-2.5 font-semibold text-[#ffd7d8] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="ml-1 h-[22px] cursor-pointer rounded-full border border-error-strong bg-transparent px-2.5 font-semibold text-error-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             Reload
           </button>

@@ -64,14 +64,14 @@ export default function Dialog({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-[180px] pb-4">
+    <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto px-4 pt-[min(180px,15vh)] pb-4">
       <button
         type="button"
         tabIndex={-1}
         aria-hidden="true"
         data-testid="confirm-overlay"
         onClick={onClose}
-        className="absolute inset-0 cursor-default border-0 bg-[rgba(5,6,8,0.72)] p-0"
+        className="fixed inset-0 cursor-default border-0 bg-[rgba(5,6,8,0.72)] p-0"
       />
       <div
         ref={dialog}

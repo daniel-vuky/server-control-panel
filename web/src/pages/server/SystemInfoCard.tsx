@@ -67,7 +67,7 @@ function DiskRow({ disk, threshold }: { disk: DiskInfo; threshold: number }) {
           {formatBytes(disk.usedBytes)} / {formatBytes(disk.totalBytes)} · {shown}%
         </span>
       </div>
-      <span aria-hidden="true" className="flex h-2 rounded bg-[#1A1E24]">
+      <span aria-hidden="true" className="flex h-2 rounded bg-divider">
         <span
           data-bar=""
           className={`rounded ${over ? 'bg-danger' : 'bg-accent'}`}

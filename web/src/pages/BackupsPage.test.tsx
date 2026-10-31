@@ -408,6 +408,11 @@ describe('empty state', () => {
     const stub = serveBackups([], { all: () => json(202, { id: 4, total: 3, skipped: 0 }) })
     openBackups(connected)
     expect(await screen.findByText('No backups yet')).toBeInTheDocument()
+    // design 10's EmptyState: an h2 and the 36 px secondary button, no icon in it.
+    expect(screen.getByRole('heading', { level: 2, name: 'No backups yet' })).toBeInTheDocument()
+    const button = screen.getAllByRole('button', { name: 'Back up all now' }).at(-1) as HTMLElement
+    expect(button).toHaveClass('h-9', 'rounded-[7px]', 'bg-surface-2')
+    expect(button.querySelector('svg')).toBeNull()
     expect(
       screen.getByText('Run the first one now or set up a daily schedule.'),
     ).toBeInTheDocument()

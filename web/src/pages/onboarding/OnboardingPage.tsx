@@ -4,7 +4,7 @@ import { ApiError, isFieldError } from '../../api/client'
 import { getScan, isScanBusy, startScan, trackScan, watchScan } from '../../api/scans'
 import type { ScanJob, ScanProgress, ScanResult, TrackItem } from '../../api/types.gen'
 import { LiveDim } from '../../app/live'
-import { BadgeRow } from '../../components/PageHeader'
+import { BrandRow } from '../../components/PageHeader'
 import { useToast } from '../../components/Toast'
 import ScanFailed from './ScanFailed'
 import ScanProgressView from './ScanProgressView'
@@ -260,15 +260,11 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <BadgeRow />
-      <div className="flex flex-col items-center gap-8">
-        <header className="flex w-full max-w-[980px] flex-wrap items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight">Add a workspace</h1>
-          <Stepper current={step} />
-        </header>
-        <LiveDim className="flex w-full flex-col items-center gap-8">{body}</LiveDim>
-      </div>
+    <div className="flex flex-col items-center gap-8">
+      <BrandRow label="Add a workspace">
+        <Stepper current={step} />
+      </BrandRow>
+      <LiveDim className="flex w-full flex-col items-center gap-8">{body}</LiveDim>
     </div>
   )
 }
@@ -291,7 +287,7 @@ function Stepper({ current }: { current: number }) {
                 cur
                   ? 'border-text bg-text text-bg'
                   : done
-                    ? 'border-success/30 bg-success/15 text-success'
+                    ? 'border-success-bg bg-success-bg text-success'
                     : 'border-border-strong text-muted'
               }`}
             >

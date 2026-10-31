@@ -137,6 +137,13 @@ describe('UsageTable', () => {
     expect(within(cpu).getByTestId('usage-share')).toHaveClass('min-w-[4ch]', 'text-right')
   })
 
+  it('gives the Project column about 16.5 percent and 16px before the next column', () => {
+    const table = renderTable()
+    expect(table.querySelector('col')).toHaveClass('w-[16.5%]')
+    expect(within(table).getByRole('columnheader', { name: 'Project' })).toHaveClass('pr-2')
+    expect(within(table).getAllByRole('rowheader')[0]).toHaveClass('pr-2')
+  })
+
   it('caps a share at 100%', () => {
     const r = makeUsage([makeUsageRow({ cpuPercent: 80 })])
     const table = renderTable(r)

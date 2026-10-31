@@ -3,14 +3,14 @@ export default function Skeleton({ className = '' }: { className?: string }) {
   return <div aria-hidden="true" className={`animate-scp-pulse rounded bg-border ${className}`} />
 }
 
-/** SkeletonCard is the loading card of design 10: a busy region with the title, value and sub-line bars and a footer bar. */
-export function SkeletonCard() {
+/** SkeletonCard is the loading card of design 10: a busy region with the title, value and sub-line bars and a footer bar. `minHeight` is the card's min-height class (220 px by default; a chart card passes its own). */
+export function SkeletonCard({ minHeight = 'min-h-[220px]' }: { minHeight?: string }) {
   return (
     <div
       role="status"
       aria-busy="true"
       aria-label="Loading"
-      className="box-border flex min-h-[220px] flex-col gap-3.5 rounded-xl border border-border bg-surface p-[18px]"
+      className={`box-border flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-[18px] ${minHeight}`}
     >
       <Skeleton className="h-3.5 w-2/5" />
       <Skeleton className="h-[22px] w-[65%]" />

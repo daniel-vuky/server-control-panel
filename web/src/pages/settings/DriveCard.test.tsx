@@ -91,6 +91,11 @@ describe('Google Drive card', () => {
       'href',
       'https://github.com/daniel-vuky/server-control-panel/blob/main/docs/google-drive.md',
     )
+    expect(screen.getByRole('link', { name: /set up Google Drive/ })).toHaveClass(
+      'text-text-2',
+      'underline',
+      'hover:text-white',
+    )
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
 
@@ -132,7 +137,7 @@ describe('Google Drive card', () => {
     expect(assign).not.toHaveBeenCalled()
   })
 
-  it('expired shows the red line and the Testing note, and Reconnect connects', async () => {
+  it('expired shows the amber warning box with the Testing note, and Reconnect connects', async () => {
     const stub = route({
       'POST /api/drive/connect': () => json(200, { url: 'https://accounts.google.com/x' }),
     })
@@ -142,6 +147,9 @@ describe('Google Drive card', () => {
         'The Google Drive token has expired. Backups will fail until you reconnect.',
       ),
     ).toBeInTheDocument()
+    // Design 10's amber warning, not the red error line.
+    const warning = screen.getByRole('alert').parentElement
+    expect(warning).toHaveClass('border-warning-border', 'bg-warning-bg', 'text-warning-soft')
     expect(
       screen.getByText(
         'If the Google Cloud app is still in Testing, publish it: tokens issued in Testing expire after 7 days.',

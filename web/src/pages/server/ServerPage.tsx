@@ -5,6 +5,7 @@ import { LiveDim, useLive } from '../../app/live'
 import LoadError from '../../components/LoadError'
 import PageHeader from '../../components/PageHeader'
 import RangeSwitch from '../../components/RangeSwitch'
+import { SkeletonCard } from '../../components/Skeleton'
 import { formatBytes } from '../../lib/format'
 import { useRangeParam } from '../../lib/range'
 import { useRead } from '../../lib/useRead'
@@ -97,6 +98,7 @@ export default function ServerPage() {
           />
         )}
 
+        {usage.data === null && usage.error === '' && <SkeletonCard />}
         {usage.data && <UsageTable report={usage.data} dockerUp={live.dockerUp} />}
         {usage.error !== '' && (
           <LoadError
@@ -126,9 +128,7 @@ function ChartsLoading() {
       className="grid grid-cols-[repeat(auto-fit,minmax(min(460px,100%),1fr))] gap-3.5"
     >
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-[274px] rounded-[10px] border border-border bg-surface p-4">
-          <div className="h-3 w-1/4 rounded bg-border motion-safe:animate-pulse" />
-        </div>
+        <SkeletonCard key={i} minHeight="min-h-[274px]" />
       ))}
     </section>
   )
@@ -137,7 +137,7 @@ function ChartsLoading() {
 /** NotAvailable replaces the charts when the host's /proc is not mounted (no server metrics). */
 function NotAvailable({ reason }: { reason?: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5 text-[13px] text-text-2">
+    <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-notice px-4 py-3.5 text-[13px] text-text-2">
       <CircleAlert aria-hidden="true" size={18} strokeWidth={1.8} className="flex-none" />
       {reason || "Server metrics are not available: the host's /proc is not mounted."}
     </div>

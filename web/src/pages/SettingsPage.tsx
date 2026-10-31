@@ -1,3 +1,4 @@
+import { Plus } from 'lucide-react'
 import { type ReactNode, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { Workspace } from '../api/types.gen'
@@ -84,8 +85,9 @@ function WorkspacesCard() {
         </div>
         <Link
           to="/onboarding"
-          className="flex h-[34px] items-center rounded-[7px] border border-border-strong px-3.5 text-text"
+          className="flex h-[34px] items-center gap-[7px] rounded-[7px] border border-border-strong bg-surface-2 px-3.5 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
+          <Plus aria-hidden="true" size={14} strokeWidth={2} className="flex-none" />
           Add workspace
         </Link>
       </div>
@@ -132,7 +134,7 @@ function WorkspaceRow({ workspace: w, onRemove }: { workspace: Workspace; onRemo
   const { starting, rescan } = useRescan()
 
   return (
-    <li className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-border px-[18px] py-3.5 last:border-b-0">
+    <li className="flex flex-wrap items-center gap-x-5 gap-y-3 border-b border-border px-[18px] py-3.5 last:border-b-0">
       <span className="font-mono font-semibold break-all">{w.path}</span>
       <span className="text-[13px] text-muted">
         {`Depth ${w.depth} · ${plural(w.tracked, 'project', 'projects')} tracked · ${w.ignored} ignored · last scanned ${formatLastScan(w.lastScanAt)}`}
@@ -151,7 +153,7 @@ function WorkspaceRow({ workspace: w, onRemove }: { workspace: Workspace; onRemo
           type="button"
           aria-label={`Remove ${w.path}`}
           onClick={onRemove}
-          className={`${rowButton} border-[#6B262C] text-[#FF8C8F]`}
+          className={`${rowButton} border-danger-border text-danger-text`}
         >
           Remove
         </button>

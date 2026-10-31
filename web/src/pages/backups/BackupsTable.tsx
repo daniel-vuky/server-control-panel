@@ -4,6 +4,7 @@ import type { Backup, Project, TimeZone } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import { BackupRow, byNewest, HEAD, mergeNewest, ROW_BUTTON } from '../../components/BackupRow'
 import LoadError from '../../components/LoadError'
+import { SkeletonCard } from '../../components/Skeleton'
 import { zoneLabel } from '../../lib/schedule'
 import type { BackupFlow } from '../../lib/useBackup'
 
@@ -230,7 +231,7 @@ export function BackupFilters({ filters: f, projects, zone, set }: FilterProps) 
               type="button"
               aria-pressed={on}
               onClick={() => set('result', value)}
-              className={`h-7 cursor-pointer rounded-md border-0 px-3 font-sans text-[13px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${on ? 'bg-[#262c35] text-white' : 'bg-transparent text-muted'}`}
+              className={`h-7 cursor-pointer rounded-md border-0 px-3 font-sans text-[13px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${on ? 'bg-selected text-white' : 'bg-transparent text-muted'}`}
             >
               {label}
             </button>
@@ -271,6 +272,9 @@ type TableProps = {
   projects: Project[]
 }
 
+/** COLUMN_WIDTHS are design 04's column proportions (1.1, 0.9, 1.1, 0.8, 0.7, 1.5, 1, 1.1 fr, rounded to sum 100) over this table's eight columns. */
+const COLUMN_WIDTHS = ['14%', '11%', '13%', '10%', '8%', '18%', '12%', '14%']
+
 /**
  * BackupsTable is design 04's table of every backup, newest first, 50 at a
  * time with Show older. Its rows are the project history's rows with a
@@ -287,11 +291,7 @@ export default function BackupsTable({ all: h, flow, projects }: TableProps) {
     )
   }
   if (!h.loaded) {
-    return (
-      <p role="status" className="m-0 text-[13px] text-muted">
-        Loading backups…
-      </p>
-    )
+    return <SkeletonCard />
   }
   if (h.rows.length === 0) {
     return (
@@ -308,7 +308,16 @@ export default function BackupsTable({ all: h, flow, projects }: TableProps) {
         </div>
       )}
       <div className="overflow-x-auto">
-        <table aria-label="All backups" className="w-full min-w-[980px] border-collapse text-left">
+        <table
+          aria-label="All backups"
+          className="w-full min-w-[980px] table-fixed border-collapse text-left"
+        >
+          <colgroup>
+            {COLUMN_WIDTHS.map((width, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of eight columns.
+              <col key={i} style={{ width }} />
+            ))}
+          </colgroup>
           <thead>
             <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
               {['Time', 'Project', 'Database', 'Size', 'Duration', 'Status', 'Triggered by'].map(

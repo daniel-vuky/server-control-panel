@@ -39,12 +39,30 @@ const summary = (more: Partial<BackupSummary> = {}): BackupSummary => ({
 const card = (name: string) => screen.getByRole('region', { name })
 
 describe('BackupSummaryCards', () => {
+  it('keeps one sub-line per card and a skeleton as tall as a loaded card', () => {
+    const { container, rerender } = render(
+      <BackupSummaryCards summary={null} zone={zone} error="" onRetry={() => {}} />,
+    )
+    const loading = container.querySelector('section[aria-busy="true"]') as HTMLElement
+    const skeletonCards = [...loading.children] as HTMLElement[]
+    expect(skeletonCards).toHaveLength(4)
+    for (const c of skeletonCards) expect(c).toHaveClass('min-h-[116px]')
+    rerender(<BackupSummaryCards summary={summary()} zone={zone} error="" onRetry={() => {}} />)
+    for (const name of ['Drive usage', 'Failed · 7 days', 'Next run']) {
+      expect(card(name)).toHaveClass('min-h-[116px]')
+      // The label, the value and one sub-line.
+      expect(card(name).children).toHaveLength(3)
+    }
+  })
+
   it('shows what the panel stored on Drive', () => {
     render(<BackupSummaryCards summary={summary()} zone={zone} error="" onRetry={() => {}} />)
     const drive = card('Drive usage')
     expect(drive).toHaveTextContent('1.4 GB')
     expect(drive).toHaveTextContent('38 files · 3 projects')
-    expect(within(drive).getByText('stored by the panel')).toBeInTheDocument()
+    // One sub-line: "stored by the panel" is the card's title (a tooltip), not a second line.
+    expect(drive).toHaveAttribute('title', 'Stored by the panel')
+    expect(drive).not.toHaveTextContent('stored by the panel')
   })
 
   it('words one file of one project in the singular', () => {
@@ -101,8 +119,8 @@ describe('BackupSummaryCards', () => {
     const next = card('Next run')
     expect(next).toHaveTextContent('02:00')
     expect(next).not.toHaveTextContent('19:00')
-    expect(next).toHaveTextContent('Tomorrow · shop-api, crm')
-    expect(next).toHaveTextContent('Asia/Ho_Chi_Minh, UTC+07:00')
+    // The zone joins the day line: one sub-line.
+    expect(next).toHaveTextContent('Tomorrow · shop-api, crm · Asia/Ho_Chi_Minh, UTC+07:00')
   })
 
   it('names the day of a run further away', () => {
@@ -136,6 +154,10 @@ describe('BackupSummaryCards', () => {
     )
     const next = card('Next run')
     expect(next).toHaveTextContent('No schedules')
+    // Words, not a figure: sans 16 px / 600 instead of the 24 px mono value.
+    const words = within(next).getByText('No schedules')
+    expect(words).toHaveClass('text-base', 'font-semibold')
+    expect(words).not.toHaveClass('font-mono', 'text-2xl')
     expect(next).toHaveTextContent("Set one in a project's Database & Backup tab.")
   })
 

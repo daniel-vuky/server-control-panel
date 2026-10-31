@@ -28,7 +28,7 @@ const Circle = ({ testId }: { testId: string }) => (
   <span
     aria-hidden="true"
     data-testid={testId}
-    className="box-border size-[11px] flex-none rounded-full border-2 border-[#3a414b]"
+    className="box-border size-[11px] flex-none rounded-full border-2 border-step-idle"
   />
 )
 
@@ -73,13 +73,13 @@ const STEP_LOOK: Record<string, { item: string; head: string; icon: () => ReactN
     icon: () => <Check />,
   },
   running: {
-    item: 'bg-surface border-[#22344a]',
-    head: 'font-semibold text-[#7fb8ff]',
+    item: 'bg-surface border-info-border',
+    head: 'font-semibold text-accent-text',
     icon: () => <Spinner testId="step-running" />,
   },
   failed: {
-    item: 'bg-[#1e0f11] border-[#6b262c]',
-    head: 'font-semibold text-[#ff8c8f]',
+    item: 'bg-error-deep border-danger-border',
+    head: 'font-semibold text-danger-text',
     icon: () => <Cross />,
   },
   skipped: {
@@ -152,16 +152,37 @@ function StepItem({ step, backup }: { step: BackupStep; backup: Backup }) {
 }
 
 /**
+ * The step grids: the Backups page's active card (design 04, 180 px auto-fit
+ * columns), the progress dialog (design 09, four fixed columns) and the
+ * compact default (160 px auto-fit).
+ */
+export type StepGrid = 'page' | 'dialog' | 'compact'
+
+const GRID: Record<StepGrid, string> = {
+  page: 'grid-cols-[repeat(auto-fit,minmax(min(180px,100%),1fr))]',
+  dialog: 'grid-cols-[repeat(4,minmax(0,1fr))]',
+  compact: 'grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))]',
+}
+
+/**
  * BackupSteps shows a backup's four steps (designs 04 and 09): done, running
  * (with the server's progress detail), waiting, failed (with the error and
  * hint) or skipped. Compact is the one-line form ("Uploading to Drive · 62%").
  */
-export function BackupSteps({ backup, compact = false }: { backup: Backup; compact?: boolean }) {
+export function BackupSteps({
+  backup,
+  compact = false,
+  grid = 'compact',
+}: {
+  backup: Backup
+  compact?: boolean
+  grid?: StepGrid
+}) {
   if (compact) {
     const active = isActive(backup)
     return (
       <span
-        className={`inline-flex items-center gap-2 text-[13px] ${active ? 'text-[#7fb8ff]' : 'text-muted'}`}
+        className={`inline-flex items-center gap-2 text-[13px] ${active ? 'text-accent-text' : 'text-muted'}`}
       >
         {backup.state === 'running' && <Spinner />}
         {backupLine(backup)}
@@ -169,7 +190,7 @@ export function BackupSteps({ backup, compact = false }: { backup: Backup; compa
     )
   }
   return (
-    <ol className="m-0 grid list-none grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))] gap-2.5 p-0">
+    <ol className={`m-0 grid list-none ${GRID[grid]} gap-2.5 p-0`}>
       {shownSteps(backup).map((s) => (
         <StepItem key={s.step} step={s} backup={backup} />
       ))}
@@ -182,8 +203,8 @@ const PILL: Record<string, string> = {
   queued: 'bg-[rgba(154,163,175,0.12)] text-stopped',
   running: 'bg-[rgba(76,155,245,0.14)] text-accent',
   ok: 'bg-[rgba(63,207,142,0.12)] text-success',
-  failed: 'bg-[rgba(242,85,90,0.14)] text-[#ff8c8f]',
-  refused: 'bg-[rgba(242,85,90,0.14)] text-[#ff8c8f]',
+  failed: 'bg-[rgba(242,85,90,0.14)] text-danger-text',
+  refused: 'bg-[rgba(242,85,90,0.14)] text-danger-text',
   interrupted: 'bg-[rgba(229,185,59,0.13)] text-warning',
 }
 
@@ -308,12 +329,12 @@ export default function BackupProgress({ id, retrying, onClose, onRetry }: Props
         <>
           {b.state === 'queued' && <p className="m-0 text-[13px] text-muted">{waitingLine(b)}</p>}
           {!failedStep && b.error !== '' && (
-            <p className="m-0 flex flex-col gap-1 rounded-lg border border-[#6b262c] bg-[#1e0f11] px-3 py-2.5 text-[13px] leading-[1.45] text-error-text">
+            <p className="m-0 flex flex-col gap-1 rounded-lg border border-danger-border bg-error-deep px-3 py-2.5 text-[13px] leading-[1.45] text-error-text">
               <span>{b.error}</span>
               {b.hint !== '' && <span>{b.hint}</span>}
             </p>
           )}
-          <BackupSteps backup={b} />
+          <BackupSteps backup={b} grid="dialog" />
         </>
       )}
 

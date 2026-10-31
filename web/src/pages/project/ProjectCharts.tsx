@@ -5,6 +5,7 @@ import type { Project, ProjectPoint, ProjectSeries, TimeZone } from '../../api/t
 import LoadError from '../../components/LoadError'
 import MetricChart from '../../components/MetricChart'
 import RangeSwitch from '../../components/RangeSwitch'
+import { SkeletonCard } from '../../components/Skeleton'
 import { formatBytes, formatCpu, formatMem, formatRate } from '../../lib/format'
 import { isRangeKey, type RangeKey, useRangeParam } from '../../lib/range'
 import { useRead } from '../../lib/useRead'
@@ -12,7 +13,7 @@ import { useVisibleInterval } from '../../lib/useVisibleInterval'
 
 const BLUE = '#5AA7FF'
 const ORANGE = '#F0913A'
-const HEIGHT = 120
+const HEIGHT = 130
 /** REFRESH_MS is how often a visible page re-reads (spec decision 24): a sample is taken every 30 s. */
 const REFRESH_MS = 30_000
 
@@ -67,7 +68,7 @@ export default function ProjectCharts({ project }: { project: Project }) {
   }
 
   return (
-    <section aria-labelledby="app-resources" className="flex flex-col gap-3.5">
+    <section aria-labelledby="app-resources" className="flex flex-col gap-[18px]">
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <h2 id="app-resources" className="m-0 text-[15px] font-semibold">
           App resources
@@ -96,6 +97,7 @@ function Charts({ series, range, zone, cpu, mem }: ChartsProps) {
     from: series.from,
     zone,
     height: HEIGHT,
+    variant: 'compact' as const,
   }
 
   return (
@@ -125,7 +127,6 @@ function Charts({ series, range, zone, cpu, mem }: ChartsProps) {
         <MetricChart
           title="Network"
           current={formatRate(sum(latest?.netIn ?? null, latest?.netOut ?? null))}
-          sub="in + out"
           series={[
             { name: 'In', values: values((p) => p.netIn), color: BLUE },
             { name: 'Out', values: values((p) => p.netOut), color: ORANGE, dashed: true },
@@ -154,9 +155,7 @@ function ChartsLoading() {
     <div aria-busy="true" className={GRID}>
       <span className="sr-only">Loading the charts…</span>
       {[0, 1, 2].map((i) => (
-        <div key={i} className="h-[210px] rounded-[10px] border border-border bg-surface p-4">
-          <div className="h-3 w-1/4 rounded bg-border motion-safe:animate-pulse" />
-        </div>
+        <SkeletonCard key={i} />
       ))}
     </div>
   )

@@ -3,14 +3,17 @@ export default function CloudUploadIcon({
   size,
   strokeWidth,
   stroke = 'currentColor',
+  className,
 }: {
   size: number
   strokeWidth: number
   stroke?: string
+  className?: string
 }) {
   return (
     <svg
       aria-hidden="true"
+      className={className}
       width={size}
       height={size}
       viewBox="0 0 24 24"

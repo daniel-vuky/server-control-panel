@@ -98,7 +98,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <div
               key={t.id}
               data-testid="toast-success"
-              className="pointer-events-auto flex items-center gap-2.5 rounded-[10px] border border-[#1e3a2d] bg-surface-2 px-4 py-3 text-text shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+              className="pointer-events-auto flex items-center gap-2.5 rounded-[10px] border border-success-bg bg-surface-2 px-4 py-3 text-text shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
             >
               <span aria-hidden="true" className="size-2 flex-none rounded-full bg-success" />
               <span>{t.title}</span>
@@ -107,7 +107,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <div
               key={t.id}
               role="alert"
-              className="pointer-events-auto flex max-w-[420px] items-start gap-2.5 rounded-[10px] border border-error-border bg-[#1a1012] px-4 py-3 text-text shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+              className="pointer-events-auto flex max-w-[420px] items-start gap-2.5 rounded-[10px] border border-error-border bg-error-soft px-4 py-3 text-text shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
             >
               <span aria-hidden="true" className="mt-1.5 size-2 flex-none rounded-full bg-danger" />
               <div className="flex min-w-0 flex-col gap-1">
@@ -121,7 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   <Link
                     to={t.link.to}
                     onClick={() => dismiss(t.id)}
-                    className="text-[13px] text-[#ffd7d8] hover:text-white"
+                    className="text-[13px] text-error-fg hover:text-white"
                   >
                     {t.link.label}
                   </Link>
