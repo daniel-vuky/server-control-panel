@@ -83,9 +83,9 @@ describe('drafts', () => {
     expect(sameDraft(d, { ...d, keep: '15' })).toBe(false)
   })
 
-  it('sends a keep that is not a number as 0, for the server to refuse', () => {
+  it('sends a keep that is not a whole number as 0, for the server to refuse on keep', () => {
     expect(fieldsOf({ ...draftOf(fields), keep: '' }).keep).toBe(0)
     expect(fieldsOf({ ...draftOf(fields), keep: 'abc' }).keep).toBe(0)
-    expect(fieldsOf({ ...draftOf(fields), keep: '1.5' }).keep).toBe(1.5)
+    expect(fieldsOf({ ...draftOf(fields), keep: '1.5' }).keep).toBe(0)
   })
 })

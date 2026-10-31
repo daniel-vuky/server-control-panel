@@ -107,6 +107,28 @@ describe('Backup defaults card', () => {
     expect(screen.getByLabelText('Day')).toHaveValue('3')
   })
 
+  it('locks the fields while a save runs, so no edit is lost to the answer', async () => {
+    let finish: (r: Response) => void = () => {}
+    route({
+      'GET /api/backup-settings': () => json(200, settings),
+      [`POST ${DEFAULTS}`]: () => new Promise<Response>((r) => (finish = r)),
+    })
+    renderCard()
+    fireEvent.click(await screen.findByRole('radio', { name: 'Weekly' }))
+    fireEvent.click(save())
+    await waitFor(() => expect(save()).toBeDisabled())
+    for (const radio of screen.getAllByRole('radio')) expect(radio).toBeDisabled()
+    expect(screen.getByLabelText('Day')).toBeDisabled()
+    expect(screen.getByLabelText('Run time')).toBeDisabled()
+    expect(screen.getByLabelText('Copies to keep')).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Gzip compression' })).toBeDisabled()
+
+    finish(json(200, { ...settings.defaults, frequency: 'weekly' }))
+    expect(await screen.findByText('Saved backup defaults')).toBeInTheDocument()
+    expect(screen.getByLabelText('Run time')).toBeEnabled()
+    expect(screen.getByRole('radio', { name: 'Weekly' })).toBeChecked()
+  })
+
   it('shows a 422 under its field and focuses it; editing the field clears it', async () => {
     route({
       'GET /api/backup-settings': () => json(200, settings),

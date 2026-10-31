@@ -43,14 +43,17 @@ export const draftOf = (f: ScheduleFields): ScheduleDraft => ({
   compress: f.compress,
 })
 
-/** fieldsOf is the draft to send: a keep that is not a number goes as 0, which the server refuses. */
+/**
+ * fieldsOf is the draft to send. A keep that is not a whole number goes as 0,
+ * which the server refuses with a 422 on keep (shown under the field).
+ */
 export function fieldsOf(d: ScheduleDraft): ScheduleFields {
   const keep = d.keep.trim() === '' ? 0 : Number(d.keep)
   return {
     frequency: d.frequency,
     time: d.time,
     weekday: d.weekday,
-    keep: Number.isFinite(keep) ? keep : 0,
+    keep: Number.isInteger(keep) ? keep : 0,
     compress: d.compress,
   }
 }

@@ -1,4 +1,4 @@
-import { type FormEvent, useId, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useId, useRef, useState } from 'react'
 import { getBackupSettings, saveBackupDefaults } from '../../api/backups'
 import { ApiError, isFieldError } from '../../api/client'
 import type { BackupSettings } from '../../api/types.gen'
@@ -64,7 +64,15 @@ function DefaultsForm({ settings }: { settings: BackupSettings }) {
   const [draft, setDraft] = useState<ScheduleDraft>(saved)
   const [errors, setErrors] = useState<Partial<Record<ScheduleField, string>>>({})
   const [saving, setSaving] = useState(false)
+  // The field a 422 named: focused once the save ends and the fields unlock.
+  const focusNext = useRef<ScheduleField | null>(null)
   const dirty = !sameDraft(draft, saved)
+
+  useEffect(() => {
+    if (saving || focusNext.current === null) return
+    refs.current[focusNext.current]?.focus()
+    focusNext.current = null
+  }, [saving])
 
   const change = (patch: Partial<ScheduleDraft>) => {
     setDraft((d) => ({ ...d, ...patch }))
@@ -94,7 +102,7 @@ function DefaultsForm({ settings }: { settings: BackupSettings }) {
       ) {
         const f = err.body.field
         setErrors({ [f]: err.body.error })
-        refs.current[f]?.focus()
+        focusNext.current = f
       } else {
         toast.error("Couldn't save backup defaults", message(err))
       }
@@ -112,6 +120,7 @@ function DefaultsForm({ settings }: { settings: BackupSettings }) {
           onChange={change}
           errors={errors}
           zone={settings.timeZone}
+          disabled={saving}
           fieldRef={(f, el) => {
             refs.current[f] = el
           }}
