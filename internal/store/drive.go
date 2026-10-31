@@ -91,12 +91,24 @@ func (s *Store) DeleteDrive(ctx context.Context) error {
 }
 
 // PutOAuthState stores a connect link's state with the actor it was issued to,
-// where to return to and the redirect URI used for the code exchange.
+// where to return to and the redirect URI used for the code exchange. It first
+// deletes the states older than ten minutes (at is now).
 func (s *Store) PutOAuthState(ctx context.Context, state, actor, returnTo, redirect string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO drive_oauth_states (state, actor, return_to, redirect, created_at) VALUES (?, ?, ?, ?, ?)`,
-		state, actor, returnTo, redirect, formatTime(at))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("store: put oauth state: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// A connect that never came back leaves its state: drop the expired ones.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM drive_oauth_states WHERE created_at < ?`, formatTime(at.Add(-oauthStateTTL))); err != nil {
+		return fmt.Errorf("store: put oauth state: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO drive_oauth_states (state, actor, return_to, redirect, created_at) VALUES (?, ?, ?, ?, ?)`,
+		state, actor, returnTo, redirect, formatTime(at)); err != nil {
+		return fmt.Errorf("store: put oauth state: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: put oauth state: %w", err)
 	}
 	return nil

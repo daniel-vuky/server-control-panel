@@ -130,3 +130,27 @@ func TestOAuthStateSingleUseAndExpiry(t *testing.T) {
 		t.Fatalf("%d states left, want 0 (stale deleted on use)", n)
 	}
 }
+
+// Started connects that never come back do not pile up: a new state deletes
+// the expired ones and keeps the live ones.
+func TestPutOAuthStatePrunesExpired(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	for _, id := range []string{"a", "b"} {
+		if err := s.PutOAuthState(ctx, id, "a", "/", "r", driveTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.PutOAuthState(ctx, "live", "a", "/", "r", driveTime.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutOAuthState(ctx, "new", "a", "/", "r", driveTime.Add(10*time.Minute+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s.db, `SELECT count(*) FROM drive_oauth_states`); n != 2 {
+		t.Fatalf("%d states left, want 2 (the expired ones deleted)", n)
+	}
+	if _, _, _, ok, _ := s.TakeOAuthState(ctx, "live", driveTime.Add(10*time.Minute+time.Second)); !ok {
+		t.Fatal("a live state was deleted")
+	}
+}
