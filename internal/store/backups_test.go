@@ -484,14 +484,18 @@ func TestBackupSummary(t *testing.T) {
 	}
 	// Day 3 (Oct 28): an ok on Drive in project 2, a failed, a refused and an interrupted.
 	rowAt(t, s, 2, "k", "ok", "f3", 50, day(28, 23, 59))
-	f1 := rowAt(t, s, 2, "k", "failed", "", 0, day(28, 3, 0))
+	rowAt(t, s, 2, "k", "failed", "", 0, day(28, 3, 0))
 	f2 := rowAt(t, s, 2, "k", "refused", "", 0, day(28, 4, 0))
 	rowAt(t, s, 2, "k", "interrupted", "", 0, day(28, 5, 0))
 	// Day 6 (Oct 31): queued and running count in neither bucket.
 	rowAt(t, s, 2, "k", "queued", "", 0, day(31, 8, 0))
 	rowAt(t, s, 2, "k", "running", "", 0, day(31, 9, 0))
 	// A failed row with a Drive file id still counts as a copy on Drive.
-	rowAt(t, s, 3, "k", "failed", "f4", 7, day(30, 1, 0))
+	f4 := rowAt(t, s, 3, "k", "failed", "f4", 7, day(30, 1, 0))
+	// Failures outside the window but newer by id than the in-window ones: a
+	// refused one before the first day and a failed one after tomorrow's start.
+	rowAt(t, s, 3, "k", "refused", "", 0, day(24, 12, 0))
+	rowAt(t, s, 3, "k", "failed", "", 0, starts[7].Add(time.Hour))
 
 	got, err := s.BackupSummary(ctx, starts)
 	if err != nil {
@@ -515,13 +519,15 @@ func TestBackupSummary(t *testing.T) {
 	if got.OK7d != 3 || got.Failed7d != 4 {
 		t.Errorf("7d = %d ok %d failed, want 3 and 4", got.OK7d, got.Failed7d)
 	}
-	// Recent failures: failed or refused only, newest first, at most 2, whole window or not.
+	// Recent failures: failed or refused only, inside the 7-day window, newest
+	// first, at most 2. The interrupted one (day 28) and the newer-by-id rows
+	// outside the window are left out.
 	var rf []int64
 	for _, b := range got.RecentFailures {
 		rf = append(rf, b.ID)
 	}
-	if len(rf) != 2 || rf[1] != f2 || rf[0] <= f2 {
-		t.Errorf("RecentFailures = %v, want 2 newest failed/refused (ending with refused %d, not %d)", rf, f2, f1)
+	if !reflect.DeepEqual(rf, []int64{f4, f2}) {
+		t.Errorf("RecentFailures = %v, want [%d %d] (in-window failed/refused, newest first)", rf, f4, f2)
 	}
 
 	if _, err := s.BackupSummary(ctx, starts[:7]); err == nil {

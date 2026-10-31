@@ -228,7 +228,7 @@ type Summary struct {
 // BackupSummary reads the summary. dayStarts are 8 instants: the starts of
 // the 7 days (oldest first) and the start of the day after the last; day i
 // covers [dayStarts[i], dayStarts[i+1]) of created_at. The newest two failed
-// or refused backups come back whatever their age.
+// or refused backups created inside that whole window come back.
 func (s *Store) BackupSummary(ctx context.Context, dayStarts []time.Time) (Summary, error) {
 	if len(dayStarts) != 8 {
 		return Summary{}, fmt.Errorf("store: backup summary needs 8 day instants, got %d", len(dayStarts))
@@ -252,7 +252,8 @@ func (s *Store) BackupSummary(ctx context.Context, dayStarts []time.Time) (Summa
 		sum.Days = append(sum.Days, d)
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+backupColumns+` FROM backups WHERE state IN ('failed', 'refused') ORDER BY id DESC LIMIT 2`)
+		`SELECT `+backupColumns+` FROM backups WHERE state IN ('failed', 'refused') AND created_at >= ? AND created_at < ? ORDER BY id DESC LIMIT 2`,
+		formatTime(dayStarts[0]), formatTime(dayStarts[7]))
 	if err != nil {
 		return Summary{}, fmt.Errorf("store: backup summary failures: %w", err)
 	}
