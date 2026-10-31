@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"log/slog"
+	"math"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -41,6 +42,10 @@ const (
 	// docker.inspect call.
 	maxInspectIDs = 1000
 )
+
+// tunnelTimeout bounds the Tunnel hook, so a slow probe cannot stretch a
+// tick. A variable so a test can shorten it.
+var tunnelTimeout = 5 * time.Second
 
 // Source is where the sampler gets Docker's state: *control.Hub, whose cached
 // reads are reused when fresh. RecentContainers may read Docker (sharing a hub
@@ -130,6 +135,11 @@ type Sampler struct {
 	selfProc     string // the panel's own /proc, for ReadSelf
 	rollup       func(ctx context.Context, now time.Time) error
 	pruneMetrics func(ctx context.Context, now time.Time) error
+
+	// Tunnel reports cloudflared's state for the tunnel series; nil, or
+	// TunnelUnknown, stores a gap. Monitor sets it. It is called outside every
+	// lock, with a context cut after tunnelTimeout.
+	Tunnel func(ctx context.Context) TunnelState
 
 	// The tick's state.
 	based      bool // the first tick has set the baselines
@@ -247,7 +257,7 @@ func (s *Sampler) tick(ctx context.Context) {
 	now := s.now()
 	tk := Tick{At: now, Cores: runtime.NumCPU(), Projects: map[int64]ProjectNow{}}
 	var cores int
-	tk.Server, cores = s.sampleHost(now)
+	tk.Server, cores = s.sampleHost(ctx, now)
 	if cores > 0 {
 		tk.Cores = cores
 	}
@@ -278,9 +288,12 @@ func (s *Sampler) tick(ctx context.Context) {
 
 // sampleHost reads the host's counters and returns the server sample at
 // now, with the rates against the previous reading, and the core count. It
-// returns nil and 0 when the host's /proc cannot be read; the baseline is
-// kept (it ages out after maxBaselineAge).
-func (s *Sampler) sampleHost(now time.Time) (*store.ServerSample, int) {
+// returns nil and 0 when the host's /proc cannot be read (no tunnel value is
+// stored then either); the baseline is kept (it ages out after
+// maxBaselineAge). Besides the counters it reads the 1-minute load, the disks'
+// used and total bytes summed (a gap with no disk listed) and the tunnel, each
+// a gap when it cannot be read.
+func (s *Sampler) sampleHost(ctx context.Context, now time.Time) (*store.ServerSample, int) {
 	c, err := s.host.Read(s.now())
 	if err != nil {
 		if !s.hostLogged {
@@ -294,6 +307,18 @@ func (s *Sampler) sampleHost(now time.Time) (*store.ServerSample, int) {
 	s.prevHost = &c
 	used, total := c.MemUsed, c.MemTotal
 	srv := &store.ServerSample{TS: now, MemUsed: &used, MemTotal: &total}
+	if one, _, _, err := s.host.Loadavg(); err == nil {
+		srv.Load1 = &one
+	}
+	if disks, _ := s.host.Disks(); len(disks) > 0 {
+		var du, dt int64
+		for _, d := range disks {
+			du += int64(min(d.Used, math.MaxInt64))
+			dt += int64(min(d.Total, math.MaxInt64))
+		}
+		srv.DiskUsed, srv.DiskTotal = &du, &dt
+	}
+	srv.Tunnel = s.tunnelValue(ctx)
 	if prev != nil {
 		if el, ok := elapsed(prev.At, c.At); ok {
 			if p, ok := CPUPercent(prev.CPU, c.CPU); ok {
@@ -308,6 +333,49 @@ func (s *Sampler) sampleHost(now time.Time) (*store.ServerSample, int) {
 		}
 	}
 	return srv, max(1, c.CPU.Cores)
+}
+
+// tunnelValue is the tunnel series' value from the hook: 1 connected, 0
+// disconnected or not running, nil (a gap) for unknown, without a hook, or
+// when the hook does not answer within tunnelTimeout. The hook runs in its own
+// goroutine, so one that ignores its context (Monitor's shared probe runs on a
+// context its caller cannot cut) still cannot stretch the tick; its late
+// answer is dropped.
+func (s *Sampler) tunnelValue(ctx context.Context) *float64 {
+	if s.Tunnel == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, tunnelTimeout)
+	defer cancel()
+	res := make(chan TunnelState, 1)
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				s.log.Error("metrics: the tunnel probe panicked", "panic", p, "stack", string(debug.Stack()))
+				res <- TunnelUnknown
+			}
+		}()
+		res <- s.Tunnel(ctx)
+	}()
+	var st TunnelState
+	select {
+	case st = <-res:
+	case <-ctx.Done():
+		return nil
+	}
+	if ctx.Err() != nil {
+		return nil // answered after the deadline: not a reading of this tick
+	}
+	var v float64
+	switch st {
+	case TunnelConnected:
+		v = 1
+	case TunnelDisconnected, TunnelNotRunning:
+		v = 0
+	default:
+		return nil
+	}
+	return &v
 }
 
 // group is the containers a row sums: a tracked project's, or the panel's.

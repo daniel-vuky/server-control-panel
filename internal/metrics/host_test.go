@@ -368,3 +368,49 @@ func TestHostUnavailable(t *testing.T) {
 		t.Fatal("testdata has a /proc/stat")
 	}
 }
+
+func TestParseLoadavg(t *testing.T) {
+	one, five, fifteen, err := ParseLoadavg(readFile(t, "loadavg"))
+	if err != nil || one != 1.36 || five != 1.12 || fifteen != 0.98 {
+		t.Fatalf("ParseLoadavg = %v %v %v, %v; want 1.36 1.12 0.98", one, five, fifteen, err)
+	}
+	for _, in := range []string{"", "x y z", "1.0 2.0\n", "1.0 2.0 nope 1/2 3", "-1 0 0"} {
+		if _, _, _, err := ParseLoadavg([]byte(in)); err == nil {
+			t.Errorf("ParseLoadavg(%q) did not fail", in)
+		}
+	}
+}
+
+func TestParseUptime(t *testing.T) {
+	d, err := ParseUptime(readFile(t, "uptime"))
+	if err != nil || d != 2003456780*time.Millisecond {
+		t.Fatalf("ParseUptime = %v, %v; want 2003456.78s", d, err)
+	}
+	for _, in := range []string{"", "garbage", "-5 3", "NaN 1"} {
+		if _, err := ParseUptime([]byte(in)); err == nil {
+			t.Errorf("ParseUptime(%q) did not fail", in)
+		}
+	}
+}
+
+func TestHostLoadavgAndBootTime(t *testing.T) {
+	h := testHost()
+	one, five, fifteen, err := h.Loadavg()
+	if err != nil || one != 1.36 || five != 1.12 || fifteen != 0.98 {
+		t.Fatalf("Loadavg = %v %v %v, %v", one, five, fifteen, err)
+	}
+	now := time.Date(2026, 10, 31, 12, 0, 0, 500_000_000, time.UTC)
+	boot, err := h.BootTime(now)
+	// 2003456.78 s before 12:00:00.5 is truncated to the second.
+	want := now.Add(-2003456780 * time.Millisecond).Truncate(time.Second)
+	if err != nil || !boot.Equal(want) {
+		t.Fatalf("BootTime = %v, %v; want %v", boot, err, want)
+	}
+	missing := Host{Proc: filepath.Join(t.TempDir(), "absent")}
+	if _, _, _, err := missing.Loadavg(); err == nil {
+		t.Error("Loadavg without the file did not fail")
+	}
+	if _, err := missing.BootTime(now); err == nil {
+		t.Error("BootTime without the file did not fail")
+	}
+}

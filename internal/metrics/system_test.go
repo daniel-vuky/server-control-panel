@@ -413,3 +413,26 @@ func TestThresholds(t *testing.T) {
 		t.Fatal("Thresholds are not 90, 90, 85")
 	}
 }
+
+func TestMonitorLoadAndBootTime(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	m := New(Options{Host: testHost(), Now: func() time.Time { return now }})
+	one, five, fifteen, ok := m.Load()
+	if !ok || one != 1.36 || five != 1.12 || fifteen != 0.98 {
+		t.Fatalf("Load = %v %v %v %v", one, five, fifteen, ok)
+	}
+	boot, ok := m.BootTime()
+	if want := now.Add(-2003456780 * time.Millisecond).Truncate(time.Second); !ok || !boot.Equal(want) {
+		t.Fatalf("BootTime = %v %v, want %v", boot, ok, want)
+	}
+	gone := New(Options{Host: Host{Proc: t.TempDir()}})
+	if _, _, _, ok := gone.Load(); ok {
+		t.Error("Load without /proc/loadavg is ok")
+	}
+	if _, ok := gone.BootTime(); ok {
+		t.Error("BootTime without /proc/uptime is ok")
+	}
+	if m.sampler.Tunnel == nil {
+		t.Error("New left the sampler's Tunnel hook unset")
+	}
+}
