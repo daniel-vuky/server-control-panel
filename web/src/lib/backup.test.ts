@@ -33,6 +33,15 @@ describe('databaseRule', () => {
       'The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan.',
     ],
     [
+      makeDatabase({ type: 'mongodb', backup: rule('no_db_name') }),
+      'The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan.',
+    ],
+    [
+      // PostgreSQL has its own variable: a Postgres user is never told MYSQL_DATABASE.
+      makeDatabase({ type: 'postgresql', backup: rule('no_db_name') }),
+      'The database name is not usable. Set POSTGRES_DB on the service, then rescan.',
+    ],
+    [
       // The compose service the server resolved, not the location (a container name).
       makeDatabase({ location: 'shop-postgres-1', backup: rule('db_not_running', 'postgres') }),
       'Start postgres first',

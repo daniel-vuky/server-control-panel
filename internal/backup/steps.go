@@ -237,19 +237,19 @@ func (m *Manager) finish(j *job) {
 	case StateInterrupted:
 		result, reason = store.ResultInterrupted, final.Error
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), storeWait)
 	switch {
 	case j.activityID != 0:
+		ctx, cancel := context.WithTimeout(context.Background(), storeWait)
 		if err := m.st.FinishActivity(ctx, j.activityID, result, reason); err != nil {
 			m.log.Error("backup: record the end", "backup", final.ID, "err", err)
 		}
-	case final.State == StateFailed:
-		// Failed before the activity started (a panic in the re-check).
-		if err := m.st.RecordActivity(ctx, activityOf(final), result, reason); err != nil {
-			m.log.Error("backup: record the end", "backup", final.ID, "err", err)
-		}
+		cancel()
+	case final.State == StateFailed || final.State == StateInterrupted:
+		// Ended before the activity started (a panic in the re-check, or the
+		// worker stopped during it): one finished record. A refusal recorded its
+		// own in refuseQueued.
+		m.recordUnstarted(final, result, reason)
 	}
-	cancel()
 	m.log.Info("backup finished", "backup", final.ID, "project", final.ProjectID, "state", final.State,
 		"step", final.FailedStep, "duration", time.Duration(final.DurationMS)*time.Millisecond)
 
@@ -294,7 +294,7 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 	j.tmpMade = true
 	defer func() { _ = f.Close() }() // a second Close after the checked one is harmless
 	compressed := &counter{w: f}
-	gz, err := gzip.NewWriterLevel(compressed, gzip.BestSpeed)
+	gz, err := m.compressor(compressed)
 	if err != nil { // only for a bad level
 		_ = f.Close()
 		m.fail(j, iDump, err.Error(), "")
@@ -309,15 +309,16 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 	defer stop() // stops the ticker even when RunTo panics
 	stderr, err := m.r.RunTo(ctx, runner.StackCompose, p.dump, p.values, p.secrets, raw)
 	stop()
+	elapsed := m.now().Sub(start)
+	// The dump has exited; the compressor's last flush and the file's close
+	// belong to Compress.
+	var cerr error
 	if err == nil {
-		if cerr := gz.Close(); cerr != nil {
-			err = fmt.Errorf("compress: %w", cerr)
+		cerr = gz.Close()
+		if ferr := f.Close(); cerr == nil {
+			cerr = ferr
 		}
 	}
-	if cerr := f.Close(); err == nil && cerr != nil {
-		err = cerr
-	}
-	elapsed := m.now().Sub(start)
 
 	if ctx.Err() != nil {
 		m.interrupt(j, iDump)
@@ -328,14 +329,25 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 		m.fail(j, iDump, msg, hint)
 		return false
 	}
+	dumpDetail := p.tool + " · " + formatDuration(elapsed)
+	if cerr != nil {
+		m.update(j, false, func(b *store.Backup) {
+			b.Steps[iDump].State, b.Steps[iDump].Detail = stepDone, dumpDetail
+		})
+		m.fail(j, iCompress, "Could not compress the dump: "+pathReason(cerr), "")
+		return false
+	}
 	rawN, compN := raw.n.Load(), compressed.n.Load()
 	m.update(j, true, func(b *store.Backup) {
 		b.RawBytes, b.SizeBytes = rawN, compN
-		b.Steps[iDump].State, b.Steps[iDump].Detail = stepDone, p.tool+" · "+formatDuration(elapsed)
+		b.Steps[iDump].State, b.Steps[iDump].Detail = stepDone, dumpDetail
 		b.Steps[iCompress].State, b.Steps[iCompress].Detail = stepDone, formatCompress(rawN, compN)
 	})
 	return true
 }
+
+// newGzip is the compressor: gzip at level 1.
+func newGzip(w io.Writer) (io.WriteCloser, error) { return gzip.NewWriterLevel(w, gzip.BestSpeed) }
 
 // dumpError words a failed dump. The exit code is the verdict: stderr is read
 // only here, after a failure (a mysqldump that exits 0 may still print an
@@ -422,7 +434,9 @@ func (m *Manager) upload(ctx context.Context, j *job, tmp string) {
 	}
 	elapsed := m.now().Sub(start)
 	m.update(j, true, func(b *store.Backup) {
-		b.DriveFileID, b.DriveLink = fileID, link
+		// The link is rendered as an href: only a Drive link (or the fake's
+		// panel origin) is kept.
+		b.DriveFileID, b.DriveLink = fileID, m.d.SafeLink(link)
 		b.Steps[iUpload].State, b.Steps[iUpload].Detail = stepDone, formatBytes(size)+" · "+formatDuration(elapsed)
 	})
 }

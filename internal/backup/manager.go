@@ -90,6 +90,7 @@ const (
 	wordsNoService       = "The database's service could not be found"
 	wordsNoCompose       = "The project has no compose file."
 	wordsNoDBName        = "The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan."
+	wordsNoDBNamePG      = "The database name is not usable. Set POSTGRES_DB on the service, then rescan."
 	wordsNotConfigured   = "Google Drive is not set up on this server."
 	wordsNotConnected    = "Connect Google Drive first"
 	wordsNotRetryable    = "Only a failed, refused or interrupted backup can be retried."
@@ -187,6 +188,7 @@ type Manager struct {
 	// Tests replace these.
 	freeSpace    func(dir string) (int64, error)
 	publishEvery time.Duration
+	compressor   func(w io.Writer) (io.WriteCloser, error)
 	minFree      atomic.Int64
 
 	mu       sync.Mutex
@@ -214,7 +216,7 @@ func New(st *store.Store, r Runner, d *drive.Service, cs Containers, dataDir str
 	}
 	return &Manager{
 		st: st, r: r, d: d, cs: cs, dataDir: dataDir, now: now, log: log,
-		freeSpace: freeSpace, publishEvery: publishEvery,
+		freeSpace: freeSpace, publishEvery: publishEvery, compressor: newGzip,
 		jobs: map[int64]*job{}, reserved: map[dbRef]*reservation{},
 		wake: make(chan struct{}, 1),
 	}
@@ -358,17 +360,21 @@ func (m *Manager) waiters(projectID int64, key string) int {
 //  1. the project is present (not_found);
 //  2. dbKey is one of its databases (unknown_database);
 //  3. it is in a container and not SQLite (not_supported);
-//  4. Drive is connected with a folder (drive_not_connected, drive_expired,
+//  4. an active (queued or running) backup of it is already_running with its
+//     id, before Drive is read, so a second press answers the backup it
+//     points to even while Drive is expired or disconnected;
+//  5. Drive is connected with a folder (drive_not_connected, drive_expired,
 //     folder_missing);
-//  5. the database is reserved: an active backup of it is already_running with
-//     its id, and an Enqueue already checking it is waited for (honouring ctx)
-//     and its outcome returned;
-//  6. its service resolves and runs (not_supported, no_db_name, db_not_running);
-//  7. the disk has room for the dump (disk_short).
+//  6. the database is reserved: an active backup of it (one queued since
+//     check 4) is already_running with its id, and an Enqueue already checking
+//     it is waited for (honouring ctx) and its outcome returned;
+//  7. its service resolves and runs (not_supported, no_db_name, db_not_running);
+//  8. the disk has room for the dump (disk_short).
 //
-// Checks 1-3 are input errors and write nothing. A refusal at 4, 6 or 7 is
-// stored as a refused row and a refused backup.run activity. When ctx ends
-// during checks 6-7, Enqueue returns ctx.Err() and records nothing.
+// Checks 1-3 are input errors and write nothing, and already_running writes
+// nothing. A refusal at 5, 7 or 8 is stored as a refused row and a refused
+// backup.run activity. When ctx ends during checks 7-8, Enqueue returns
+// ctx.Err() and records nothing.
 func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor string) (int64, error) {
 	if m.isClosed() {
 		return 0, ErrClosed
@@ -383,12 +389,15 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 	if r := checkLocation(db); r != nil {
 		return 0, r
 	}
+	key := dbRef{t.ID, dbKey}
+	if id, ok := m.active(key); ok {
+		return 0, alreadyRunning(id, db.Name)
+	}
 	row := m.newRow(t, db, actor)
 	if r := m.checkDrive(); r != nil {
 		return 0, m.refuse(ctx, row, r)
 	}
 
-	key := dbRef{t.ID, dbKey}
 	res, err := m.reserve(ctx, key, db.Name)
 	if res == nil {
 		return 0, err
@@ -513,7 +522,7 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 		}
 		return plan{}, &Refusal{Code: CodeNotSupported, Words: words}
 	case project.ReasonNoDBName:
-		return plan{service: service}, &Refusal{Code: CodeNoDBName, Words: wordsNoDBName, Service: service}
+		return plan{service: service}, &Refusal{Code: CodeNoDBName, Words: noDBNameWords(db.Type), Service: service}
 	case project.ReasonDBNotRunning:
 		return plan{service: service}, &Refusal{Code: CodeDBNotRunning, Words: "Start " + service + " first", Service: service}
 	}
@@ -531,6 +540,16 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 		secrets: scan.SecretValues(scan.ReadDotenv(filepath.Join(t.Path, ".env")))}
 	p.dump, p.size = actions(db.Type, byDefault, override)
 	return p, nil
+}
+
+// noDBNameWords names the variable that sets the database name: POSTGRES_DB
+// for PostgreSQL (a placeholder name uses the default database there, so only
+// an unusable one is refused), the MySQL and MongoDB ones otherwise.
+func noDBNameWords(dbType string) string {
+	if dbType == "postgresql" {
+		return wordsNoDBNamePG
+	}
+	return wordsNoDBName
 }
 
 // serviceImage is the image of the named compose service, "" when not known.
@@ -699,6 +718,13 @@ func (m *Manager) reserve(ctx context.Context, key dbRef, dbName string) (*reser
 	}
 }
 
+// active is the queued or running backup of key, under mu.
+func (m *Manager) active(key dbRef) (int64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.activeID(key)
+}
+
 // activeID is the queued or running backup of key; mu is held.
 func (m *Manager) activeID(key dbRef) (int64, bool) {
 	for _, j := range m.jobs {
@@ -755,7 +781,8 @@ func (m *Manager) release(key dbRef, res *reservation, j *job, id int64, err err
 	m.fire()
 }
 
-// endUnstarted makes a queued job that will never run interrupted.
+// endUnstarted makes a queued job that will never run interrupted, with one
+// finished interrupted backup.run activity (it never started one).
 func (m *Manager) endUnstarted(j *job) {
 	now := m.now()
 	m.mu.Lock()
@@ -764,6 +791,17 @@ func (m *Manager) endUnstarted(j *job) {
 	b := copyBackup(j.b)
 	m.mu.Unlock()
 	m.persist(b)
+	m.recordUnstarted(b, store.ResultInterrupted, b.Error)
+}
+
+// recordUnstarted records one finished backup.run activity for a backup that
+// ended before its activity started; a failure is logged.
+func (m *Manager) recordUnstarted(b store.Backup, result, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), storeWait)
+	defer cancel()
+	if err := m.st.RecordActivity(ctx, activityOf(b), result, reason); err != nil {
+		m.log.Error("backup: record the end", "backup", b.ID, "err", err)
+	}
 }
 
 // persist writes a backup's progress; a failure is logged.

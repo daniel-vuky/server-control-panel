@@ -64,8 +64,9 @@ func parsePublicURL(value string) (string, error) {
 }
 
 // DriveReason says why Google Drive cannot be configured, or "" when it can: the
-// first of the secret key, the public URL and the Google client ID that is
-// missing. A dev build uses the fake Drive, so it checks only the key and URL.
+// first of the secret key, the public URL, the Google client ID and the Google
+// client secret that is missing. A dev build uses the fake Drive, so it checks
+// only the key and URL.
 func (c Config) DriveReason() string {
 	switch {
 	case len(c.SecretKey) == 0:
@@ -74,6 +75,8 @@ func (c Config) DriveReason() string {
 		return "PANEL_PUBLIC_URL is not set"
 	case !devBuild && c.GoogleClientID == "":
 		return "GOOGLE_CLIENT_ID is not set"
+	case !devBuild && c.GoogleClientSecret == "":
+		return "GOOGLE_CLIENT_SECRET is not set"
 	}
 	return ""
 }

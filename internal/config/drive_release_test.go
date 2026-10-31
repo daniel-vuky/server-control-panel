@@ -14,6 +14,7 @@ func TestDriveReason(t *testing.T) {
 		{"nothing", Config{}, "PANEL_SECRET_KEY is not set"},
 		{"no url", Config{SecretKey: key}, "PANEL_PUBLIC_URL is not set"},
 		{"no google", Config{SecretKey: key, PublicURL: "https://x"}, "GOOGLE_CLIENT_ID is not set"},
+		{"no google secret", Config{SecretKey: key, PublicURL: "https://x", GoogleClientID: "i"}, "GOOGLE_CLIENT_SECRET is not set"},
 		{"key first", Config{GoogleClientID: "i", GoogleClientSecret: "s"}, "PANEL_SECRET_KEY is not set"},
 		{"ready", Config{SecretKey: key, PublicURL: "https://x", GoogleClientID: "i", GoogleClientSecret: "s"}, ""},
 	}

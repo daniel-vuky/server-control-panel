@@ -221,17 +221,20 @@ type googleSession struct {
 	tok *oauth2.Token
 }
 
-// accessToken returns a valid access token, refreshing it with cctx when it has
-// run out.
+// accessToken returns a valid access token. When it has run out it is
+// refreshed within cctx and callTimeout, so a hung token endpoint is
+// unreachable even for a call whose own context has no deadline (Download).
 func (s *googleSession) accessToken(ctx, cctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.tok.Valid() {
 		return s.tok.AccessToken, nil
 	}
-	t, err := s.g.conf.TokenSource(s.g.oauthCtx(cctx), &oauth2.Token{RefreshToken: s.refresh}).Token()
+	tctx, cancel := context.WithTimeoutCause(cctx, callTimeout, errCallTimeout)
+	defer cancel()
+	t, err := s.g.conf.TokenSource(s.g.oauthCtx(tctx), &oauth2.Token{RefreshToken: s.refresh}).Token()
 	if err != nil {
-		return "", tokenErr(ctx, cctx, err)
+		return "", tokenErr(ctx, tctx, err)
 	}
 	s.tok = t
 	return t.AccessToken, nil
@@ -426,6 +429,8 @@ func (s *googleSession) FindOrCreateFolder(ctx context.Context, name, parentID s
 	return s.createFolder(ctx, name, parentID)
 }
 
+// Download streams a file. The token refresh is bounded by callTimeout (in
+// accessToken); the request and its streamed body live on ctx alone.
 func (s *googleSession) Download(ctx context.Context, fileID string) (io.ReadCloser, error) {
 	resp, err := s.send(ctx, ctx, func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, s.files()+"/"+url.PathEscape(fileID)+"?alt=media", nil)

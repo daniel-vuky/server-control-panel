@@ -76,6 +76,9 @@ type Service struct {
 
 	writeMu sync.Mutex
 	testing atomic.Bool
+	// beforeDisconnectWrite, when set (tests), runs in Disconnect before it
+	// takes writeMu.
+	beforeDisconnectWrite func()
 
 	mu       sync.RWMutex
 	status   Status
@@ -487,24 +490,36 @@ func (s *Service) Test(ctx context.Context) error {
 	return sess.Delete(dctx, id)
 }
 
-// Disconnect revokes the token at Google (best effort; a failure is logged with
-// its code only) and deletes the connection. The caller records the activity.
+// Disconnect deletes the connection, then revokes its token at Google (best
+// effort; a failure is logged with its code only). The read and the delete run
+// under writeMu, so a connect that lands during the revoke is kept. A connect
+// that landed after Disconnect was called (the generation changed and the state
+// is connected) is not this disconnect's to undo: it is left as it is, and
+// nothing is deleted or revoked. The caller records the activity.
 func (s *Service) Disconnect(ctx context.Context) error {
 	if s.reason != "" {
 		return ErrNotConfigured
 	}
+	s.mu.RLock()
+	gen := s.gen
+	s.mu.RUnlock()
+	if s.beforeDisconnectWrite != nil {
+		s.beforeDisconnectWrite()
+	}
+
+	s.writeMu.Lock()
+	s.mu.RLock()
+	connectedMeanwhile := s.gen != gen && s.status.State == StateConnected
+	s.mu.RUnlock()
+	if connectedMeanwhile {
+		s.writeMu.Unlock()
+		return nil
+	}
 	row, ok, err := s.st.Drive(ctx)
 	if err != nil {
+		s.writeMu.Unlock()
 		return err
 	}
-	if ok {
-		if refresh, err := secret.Open(s.key, row.RefreshTokenEnc); err == nil {
-			if err := s.client.Session(refresh).Revoke(ctx); err != nil {
-				slog.Default().Warn("drive: revoking the token failed", "code", CodeOf(err))
-			}
-		}
-	}
-	s.writeMu.Lock()
 	if err := s.st.DeleteDrive(ctx); err != nil {
 		s.writeMu.Unlock()
 		return err
@@ -519,7 +534,36 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	if changed {
 		s.fire()
 	}
+
+	if ok {
+		if refresh, err := secret.Open(s.key, row.RefreshTokenEnc); err == nil {
+			if err := s.client.Session(refresh).Revoke(ctx); err != nil {
+				slog.Default().Warn("drive: revoking the token failed", "code", CodeOf(err))
+			}
+		}
+	}
 	return nil
+}
+
+// linkHosts are the hosts of the links Google Drive answers for a file.
+var linkHosts = map[string]bool{"drive.google.com": true, "docs.google.com": true}
+
+// SafeLink is link when it is safe to render as an href, else "": an https
+// link to drive.google.com or docs.google.com (no port, no userinfo), or a link
+// on PANEL_PUBLIC_URL's own origin, which is what the fake Drive answers in a
+// dev build. A javascript:, data: or any other link is dropped.
+func (s *Service) SafeLink(link string) string {
+	u, err := url.Parse(link)
+	if err != nil || u.User != nil || u.Opaque != "" || u.Host == "" {
+		return ""
+	}
+	if u.Scheme == "https" && linkHosts[u.Host] {
+		return link
+	}
+	if s.publicURL != "" && u.Scheme+"://"+u.Host == s.publicURL {
+		return link
+	}
+	return ""
 }
 
 // serviceSession passes calls to the client's session and marks the connection

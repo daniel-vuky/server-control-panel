@@ -656,3 +656,123 @@ func TestDownloadNeedsNoFolder(t *testing.T) {
 	_, err = e.svc.Download(ctx, "missing")
 	wantCode(t, err, CodeFolderMissing)
 }
+
+// revokeClient wraps recClient: revoke, when set, runs inside every Revoke
+// before it reaches the fake.
+type revokeClient struct {
+	*recClient
+	revoke func()
+}
+
+func (c *revokeClient) Session(refresh string) Session {
+	return &revokeSession{Session: c.recClient.Session(refresh), c: c}
+}
+
+type revokeSession struct {
+	Session
+	c *revokeClient
+}
+
+func (s *revokeSession) Revoke(ctx context.Context) error {
+	if s.c.revoke != nil {
+		s.c.revoke()
+	}
+	return s.Session.Revoke(ctx)
+}
+
+// A connect that lands while Disconnect revokes the old token survives: the
+// row is deleted before the revoke, under writeMu, and the revoke runs after.
+func TestDisconnectRevokesAfterDelete(t *testing.T) {
+	ctx := context.Background()
+	e := newSvcEnv(t)
+	rc := &revokeClient{recClient: e.client}
+	e.svc = e.newService(t, testConfig())
+	e.svc.client = rc
+	e.connect(t, "a@x")
+	old := e.client.lastRefresh()
+	var once sync.Once
+	rc.revoke = func() {
+		once.Do(func() {
+			if st := e.svc.Status(); st.State != StateNotConnected {
+				t.Errorf("revoke ran before the delete: %+v", st)
+			}
+			e.connect(t, "a@x") // takes writeMu: must not deadlock
+		})
+	}
+	if err := e.svc.Disconnect(ctx); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if st := e.svc.Status(); st.State != StateConnected {
+		t.Fatalf("the connect that landed during the revoke was lost: %+v", st)
+	}
+	if _, ok, _ := e.st.Drive(ctx); !ok {
+		t.Fatal("the new connection's row was deleted")
+	}
+	if fresh := e.client.lastRefresh(); fresh == old {
+		t.Fatal("no new token")
+	}
+	_, err := e.client.Session(old).Account(ctx)
+	wantCode(t, err, CodeTokenExpired)
+}
+
+// A connect that lands between Disconnect's start and its write (the
+// generation changed and the state is connected) is not deleted or revoked.
+func TestDisconnectSkipsAConnectThatLanded(t *testing.T) {
+	ctx := context.Background()
+	e := newSvcEnv(t)
+	e.connect(t, "a@x")
+	e.svc.beforeDisconnectWrite = func() { e.connect(t, "b@x") }
+	if err := e.svc.Disconnect(ctx); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if st := e.svc.Status(); st.State != StateConnected {
+		t.Fatalf("Status = %+v, want the new connection kept", st)
+	}
+	if _, ok, _ := e.st.Drive(ctx); !ok {
+		t.Fatal("the new connection's row was deleted")
+	}
+	if _, err := e.client.Session(e.client.lastRefresh()).Account(ctx); err != nil {
+		t.Fatalf("the new token was revoked: %v", err)
+	}
+	// An expiry meanwhile is not a new connection: Disconnect goes on.
+	e.svc.beforeDisconnectWrite = func() {
+		e.svc.mu.RLock()
+		gen := e.svc.gen
+		e.svc.mu.RUnlock()
+		e.svc.markExpired(ctx, gen)
+	}
+	if err := e.svc.Disconnect(ctx); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if st := e.svc.Status(); st.State != StateNotConnected {
+		t.Fatalf("Status = %+v, want not_connected", st)
+	}
+}
+
+func TestSafeLink(t *testing.T) {
+	e := newSvcEnv(t)
+	cases := []struct{ link, want string }{
+		{"https://drive.google.com/file/d/abc/view", "https://drive.google.com/file/d/abc/view"},
+		{"https://docs.google.com/x", "https://docs.google.com/x"},
+		{"https://panel.example.com/settings#fake-drive-1", "https://panel.example.com/settings#fake-drive-1"},
+		{"javascript:alert(1)", ""},
+		{"JavaScript://drive.google.com/%0aalert(1)", ""},
+		{"http://drive.google.com/file/d/abc/view", ""},
+		{"https://drive.google.com:8443/x", ""},
+		{"https://user:pw@drive.google.com/x", ""},
+		{"https://panel.example.com.evil.example/x", ""},
+		{"//drive.google.com/x", ""},
+		{"data:text/html,hi", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := e.svc.SafeLink(c.link); got != c.want {
+			t.Errorf("SafeLink(%q) = %q, want %q", c.link, got, c.want)
+		}
+	}
+	// Not configured: only Google's hosts.
+	nc := e.newService(t, config.Config{})
+	if got := nc.SafeLink("https://drive.google.com/x"); got != "https://drive.google.com/x" {
+		t.Errorf("not configured: %q", got)
+	}
+}

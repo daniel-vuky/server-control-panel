@@ -14,6 +14,7 @@ func TestDriveReason(t *testing.T) {
 		{"nothing", Config{}, "PANEL_SECRET_KEY is not set"},
 		{"no url", Config{SecretKey: key}, "PANEL_PUBLIC_URL is not set"},
 		{"fake drive needs no google", Config{SecretKey: key, PublicURL: "http://localhost:5173"}, ""},
+		{"fake drive needs no google secret", Config{SecretKey: key, PublicURL: "http://localhost:5173", GoogleClientID: "i"}, ""},
 	}
 	for _, tc := range cases {
 		if got := tc.cfg.DriveReason(); got != tc.want {

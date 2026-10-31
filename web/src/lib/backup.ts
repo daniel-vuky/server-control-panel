@@ -33,6 +33,11 @@ function reasonWords(db: Database, reason: string): string {
     case 'not_supported':
       return notSupported(db)
     case 'no_db_name':
+      // PostgreSQL falls back to its default database for a placeholder, so
+      // only an unusable name is refused there, and POSTGRES_DB sets it.
+      if (db.type === 'postgresql') {
+        return 'The database name is not usable. Set POSTGRES_DB on the service, then rescan.'
+      }
       return 'The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan.'
     case 'db_not_running':
       return `Start ${db.backup?.service || db.location || 'the database service'} first`

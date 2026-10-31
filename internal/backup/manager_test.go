@@ -1294,8 +1294,10 @@ func TestCloseInterruptsRunningAndQueued(t *testing.T) {
 	if left := tempFiles(t, e.dataDir); len(left) != 0 {
 		t.Errorf("temp files left: %v", left)
 	}
+	// The running one finishes its started activity; the queued one, which never
+	// started, records a finished one.
 	acts := e.activity(t)
-	if len(acts) != 1 || acts[0].Result != store.ResultInterrupted {
+	if len(acts) != 2 || acts[0].Result != store.ResultInterrupted || acts[1].Result != store.ResultInterrupted {
 		t.Errorf("activity = %+v", acts)
 	}
 	if len(e.m.Active()) != 0 {
@@ -1459,5 +1461,182 @@ func TestPruneDetailWithoutTempFile(t *testing.T) {
 	}
 	if b.Steps[3].State != "skipped" || b.Steps[3].Detail != "" {
 		t.Errorf("prune = %+v, want skipped with no temp file claim", b.Steps[3])
+	}
+}
+
+// A PostgreSQL database whose name is not usable is told to set POSTGRES_DB,
+// not the MySQL or MongoDB variables.
+func TestNoDBNameWordsPerType(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	pg := e.shop
+	pg.Databases = append(append([]project.Database(nil), e.shop.Databases...),
+		project.Database{Type: "postgresql", Name: "-x", LocationKind: "container", Location: "db", Sources: []string{"service db"}})
+	_, err := e.m.Enqueue(context.Background(), pg, "postgresql:db:-x", actor)
+	r := refusalOf(t, err)
+	if want := "The database name is not usable. Set POSTGRES_DB on the service, then rescan."; r.Code != CodeNoDBName || r.Words != want {
+		t.Errorf("postgres refusal = %+v, want %q", r, want)
+	}
+	_, err = e.m.Enqueue(context.Background(), e.shop, keyMyPlace, actor)
+	if r := refusalOf(t, err); r.Words != "The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan." {
+		t.Errorf("mysql words = %q", r.Words)
+	}
+}
+
+// A second press while a backup of the database is queued answers
+// already_running with its id, even when Drive has expired or been
+// disconnected meanwhile, and writes no refused row.
+func TestAlreadyRunningBeforeDriveCheck(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	id := e.enqueue(t, keyPG)
+	if err := e.drv.Disconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+	if r := refusalOf(t, err); got != 0 || r.Code != CodeAlreadyRunning || r.ID != id {
+		t.Fatalf("Enqueue = %d, %+v; want already_running %d", got, r, id)
+	}
+	rows, _, _ := e.st.ProjectBackups(context.Background(), e.shop.ID, 0, 10)
+	if len(rows) != 1 || len(e.activity(t)) != 0 {
+		t.Errorf("rows = %+v, activity = %+v; want only the queued row", rows, e.activity(t))
+	}
+	// Another database still gets the Drive refusal.
+	_, err = e.m.Enqueue(context.Background(), e.shop, keyMongo, actor)
+	if r := refusalOf(t, err); r.Code != CodeDriveNotConnected {
+		t.Errorf("other database = %+v", r)
+	}
+}
+
+// A backup interrupted before its activity started (the worker's re-check
+// cancelled, or Close while it was queued) still records one finished
+// backup.run activity, interrupted.
+func TestInterruptedWithoutStartRecordsActivity(t *testing.T) {
+	t.Run("re-check cancelled", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		id := e.enqueue(t, keyPG)
+		ctx, cancel := context.WithCancel(context.Background())
+		var once sync.Once
+		e.r.sizeHook = func(context.Context, call) { once.Do(cancel) } // the worker's size read
+		e.m.Start(ctx)
+		t.Cleanup(func() {
+			e.m.Close()
+			wctx, wcancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer wcancel()
+			_ = e.m.Wait(wctx)
+		})
+		b := e.waitDone(t, id)
+		if b.State != "interrupted" {
+			t.Fatalf("row = %+v", b)
+		}
+		acts := e.activity(t)
+		if len(acts) != 1 || acts[0].Result != store.ResultInterrupted || acts[0].FinishedAt == nil || acts[0].Reason != wordsInterrupted {
+			t.Errorf("activity = %+v", acts)
+		}
+	})
+	t.Run("closed while queued", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		id := e.enqueue(t, keyPG)
+		e.m.Close()
+		if b, _ := e.st.GetBackup(context.Background(), id); b.State != "interrupted" {
+			t.Fatalf("row = %+v", b)
+		}
+		acts := e.activity(t)
+		if len(acts) != 1 || acts[0].Result != store.ResultInterrupted || acts[0].FinishedAt == nil || acts[0].Target != "Shop · shop" {
+			t.Errorf("activity = %+v", acts)
+		}
+	})
+	t.Run("closed mid-Enqueue", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var once sync.Once
+		e.r.sizeHook = func(context.Context, call) { once.Do(func() { close(entered); <-release }) }
+		done := make(chan int64, 1)
+		go func() { id, _ := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); done <- id }()
+		<-entered
+		e.m.Close()
+		close(release)
+		id := <-done
+		if b, _ := e.st.GetBackup(context.Background(), id); id == 0 || b.State != "interrupted" {
+			t.Fatalf("row %d = %+v", id, b)
+		}
+		acts := e.activity(t)
+		if len(acts) != 1 || acts[0].Result != store.ResultInterrupted {
+			t.Errorf("activity = %+v", acts)
+		}
+	})
+}
+
+// failCloseGzip is a compressor whose Close fails, as a full disk does on the
+// last flush.
+type failCloseGzip struct{ io.Writer }
+
+func (failCloseGzip) Close() error { return errors.New("no space left on device") }
+
+// A failed close of the compressor fails Compress, not Dump: the dump itself
+// exited 0.
+func TestCompressCloseFailureFailsCompress(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	e.m.compressor = func(w io.Writer) (io.WriteCloser, error) { return failCloseGzip{w}, nil }
+	e.start(t)
+	b := e.waitDone(t, e.enqueue(t, keyPG))
+	if b.State != "failed" || b.FailedStep != "compress" || b.Error != "Could not compress the dump: no space left on device" {
+		t.Fatalf("row = %q %q %q", b.State, b.FailedStep, b.Error)
+	}
+	if got := stepStates(b); got != "dump=done compress=failed upload=skipped prune=skipped" {
+		t.Errorf("steps = %s", got)
+	}
+	acts := e.activity(t)
+	if len(acts) != 1 || acts[0].Reason != "Compress: Could not compress the dump: no space left on device" {
+		t.Errorf("activity = %+v", acts)
+	}
+	if left := tempFiles(t, e.dataDir); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+}
+
+// linkClient makes every upload answer link.
+type linkClient struct {
+	drive.Client
+	link string
+}
+
+func (c linkClient) Session(refresh string) drive.Session {
+	return linkSession{c.Client.Session(refresh), c.link}
+}
+
+type linkSession struct {
+	drive.Session
+	link string
+}
+
+func (s linkSession) Upload(ctx context.Context, folderID, name string, size int64, r io.Reader, progress func(int64)) (string, string, error) {
+	id, _, err := s.Session.Upload(ctx, folderID, name, size, r, progress)
+	return id, s.link, err
+}
+
+// Drive's link is stored only when it is an https link to Google Drive (or,
+// for the fake, the panel's own origin); anything else is stored empty, as
+// the UI renders it as an href.
+func TestDriveLinkStoredOnlyWhenSafe(t *testing.T) {
+	cases := []struct{ link, want string }{
+		{"https://drive.google.com/file/d/abc/view?usp=drivesdk", "https://drive.google.com/file/d/abc/view?usp=drivesdk"},
+		{"https://docs.google.com/document/d/abc/edit", "https://docs.google.com/document/d/abc/edit"},
+		{"http://localhost:5173/settings#fake-drive-1", "http://localhost:5173/settings#fake-drive-1"},
+		{"javascript:alert(document.cookie)", ""},
+		{"http://drive.google.com/file/d/abc/view", ""},
+		{"https://drive.google.com.evil.example/file", ""},
+		{"https://user@drive.google.com/file", ""},
+		{"https://evil.example/x", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.link, func(t *testing.T) {
+			link := c.link
+			e := newEnv(t, envOpt{client: func(cl drive.Client) drive.Client { return linkClient{cl, link} }})
+			b := e.waitDone(t, e.enqueue(t, keyPG))
+			if b.State != "ok" || b.DriveLink != c.want {
+				t.Errorf("row = %s, link %q; want %q", b.State, b.DriveLink, c.want)
+			}
+		})
 	}
 }

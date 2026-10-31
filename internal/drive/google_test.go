@@ -376,3 +376,58 @@ func TestUploadClientErrorNotResumed(t *testing.T) {
 		t.Fatalf("puts = %d, queries = %d; want 1 and 0 (no resume)", m.puts, m.queries)
 	}
 }
+
+// Download refreshes the access token within callTimeout, like every other
+// call: a hung token endpoint is unreachable, not a hang. The streamed body
+// keeps the caller's context.
+func TestDownloadTokenRefreshTimesOut(t *testing.T) {
+	old := callTimeout
+	callTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { callTimeout = old })
+	hung := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /token", func(http.ResponseWriter, *http.Request) {
+		select {
+		case <-hung:
+		case <-time.After(5 * time.Second):
+		}
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(hung) }) // runs first: lets srv.Close return
+	g := newGoogle("client-id", "client-secret", googleEndpoints{
+		Auth: srv.URL + "/auth", Token: srv.URL + "/token", Revoke: srv.URL + "/revoke", API: srv.URL,
+	}, srv.Client())
+	start := time.Now()
+	_, err := g.Session("refresh-x").Download(context.Background(), "f")
+	wantCode(t, err, CodeUnreachable)
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("Download took %s with a hung token endpoint, want about callTimeout", took)
+	}
+}
+
+// The streamed body of a download is not cut by callTimeout: it lives on the
+// caller's context.
+func TestDownloadBodyOutlivesCallTimeout(t *testing.T) {
+	old := callTimeout
+	callTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { callTimeout = old })
+	m := newMockGoogle(t)
+	s := connectMock(t, m)
+	folder := m.addFolder("f", "root", false)
+	data := bytes.Repeat([]byte("x"), 1<<10)
+	id, _, err := s.Upload(context.Background(), folder, "a", int64(len(data)), bytes.NewReader(data), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := s.Download(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rc.Close() }()
+	time.Sleep(3 * callTimeout)
+	got, err := io.ReadAll(rc)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("body = %d bytes, %v", len(got), err)
+	}
+}
