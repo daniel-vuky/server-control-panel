@@ -21,7 +21,7 @@ export PATH="$T/bin:$PATH"
 # fresh_case: forget every fake-docker setting, pick a new install directory
 # that does not exist yet, and set the answers in the environment.
 fresh_case() {
-  unset "${!FAKE_DOCKER_@}" "${!FAKE_TIMEDATECTL_@}" SCP_HEALTH_TIMEOUT PANEL_PUBLIC_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET TZ
+  unset "${!FAKE_DOCKER_@}" "${!FAKE_TIMEDATECTL_@}" SCP_HEALTH_TIMEOUT PANEL_PUBLIC_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SCP_TZ TZ
   # The zone sources the install reads: timedatectl (faked, prints nothing
   # unless a case sets FAKE_TIMEDATECTL_OUT) and a private /etc.
   rm -rf "${T:?}/etc"
@@ -332,7 +332,17 @@ assert_eq America/New_York "$(tz_of "$SCP_DIR/panel.env")" "tz localtime link: t
 fresh_case
 ln -s ../usr/share/zoneinfo/posix/Europe/Berlin "$T/etc/localtime"
 run_install --no-start
-assert_eq posix/Europe/Berlin "$(tz_of "$SCP_DIR/panel.env")" "tz localtime link: a relative target is stripped too"
+assert_eq Europe/Berlin "$(tz_of "$SCP_DIR/panel.env")" "tz localtime link: a relative target is stripped, posix/ dropped"
+
+fresh_case
+ln -s /usr/share/zoneinfo/right/Europe/Berlin "$T/etc/localtime"
+run_install --no-start
+assert_eq UTC "$(tz_of "$SCP_DIR/panel.env")" "tz localtime link: a right/ zone is unusable, UTC"
+fresh_case
+export FAKE_TIMEDATECTL_OUT=right/Europe/Berlin
+printf 'Europe/Paris\n' >"$T/etc/timezone"
+run_install --no-start
+assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz timedatectl right/ zone: falls through to etc/timezone"
 
 fresh_case
 ln -s /somewhere/else "$T/etc/localtime"
@@ -350,18 +360,41 @@ export FAKE_TIMEDATECTL_OUT='bad zone;rm'
 run_install --no-start
 assert_eq UTC "$(tz_of "$SCP_DIR/panel.env")" "tz timedatectl unusable: UTC"
 
-# TZ in the environment is the answer; a bad one dies and writes nothing.
+# SCP_TZ in the environment is the answer; a bad one dies and writes nothing.
 fresh_case
-export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh TZ=':Europe/Paris'
+export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh SCP_TZ=':Europe/Paris'
 run_install --no-start
 assert_eq 0 "$RC" "tz env: exit 0"
-assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz env: used, leading colon dropped"
+assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz env: SCP_TZ used, leading colon dropped"
 fresh_case
-export TZ='Mars Base'
+export SCP_TZ='Mars Base'
 run_install --no-start
 assert_nonzero "$RC" "tz env invalid: dies"
-assert_contains "$ERR" "TZ" "tz env invalid: names the variable"
+assert_contains "$ERR" "SCP_TZ" "tz env invalid: names SCP_TZ"
 assert_eq no "$([[ -e "$SCP_DIR/panel.env" ]] && echo yes || echo no)" "tz env invalid: no panel.env written"
+fresh_case
+export SCP_TZ=right/Europe/Berlin
+run_install --no-start
+assert_nonzero "$RC" "tz env right/: dies"
+assert_contains "$ERR" "SCP_TZ" "tz env right/: names SCP_TZ"
+
+# The plain TZ of the installer's own environment (sudo passes it through) is
+# ignored: a path or POSIX string does not break the install, and a zone does
+# not skip the prompt or replace the detected zone.
+for v in /usr/share/zoneinfo/Europe/Paris 'EST5EDT,M3.2.0,M11.1.0' UTC; do
+  fresh_case
+  export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh TZ=$v
+  run_install --no-start
+  assert_eq 0 "$RC" "tz plain TZ '$v': exit 0"
+  assert_eq Asia/Ho_Chi_Minh "$(tz_of "$SCP_DIR/panel.env")" "tz plain TZ '$v': ignored, detected zone used"
+done
+fresh_case
+unset CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD WORKSPACE_ROOTS
+export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh TZ=UTC
+printf '%s\n' myteam.cloudflareaccess.com abc123 "$T/ws1" '' '' '' Europe/Paris >"$T/tty"
+export SCP_TTY="$T/tty"
+run_install --no-start
+assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz plain TZ=UTC: the prompt is still asked"
 
 # Interactive: the detected zone is the default, a typed one replaces it, a bad one is asked again.
 fresh_case
@@ -401,6 +434,19 @@ assert_eq same "$(same_file "$T/panel.env.notz" <(head -n -1 "$D/panel.env"))" "
 assert_file_mode 600 "$D/panel.env"
 assert_eq 1000:1000 "$(stat -c %u:%g "$D/panel.env")" "append tz: owner kept"
 assert_contains "$OUT" "Added TZ to $D/panel.env" "append tz: says so"
+# Interactive re-run: one prompt, the answer is appended.
+cp "$T/panel.env.notz" "$D/panel.env"
+printf '%s\n' Asia/Tokyo >"$T/tty"
+export SCP_TTY="$T/tty"
+run_install --no-start
+assert_eq 0 "$RC" "append tz, prompt: exit 0"
+assert_eq Asia/Tokyo "$(tz_of "$D/panel.env")" "append tz, prompt: the typed zone is written"
+assert_eq 1 "$(count_tz "$D/panel.env")" "append tz, prompt: one TZ line"
+assert_contains "$ERR" "[Europe/Paris]" "append tz, prompt: the detected zone is the offered default"
+export SCP_TTY=/nonexistent
+cp "$T/panel.env.notz" "$D/panel.env"
+run_install --no-start
+assert_eq Europe/Paris "$(tz_of "$D/panel.env")" "append tz: back to the detected zone without a terminal"
 cp "$D/panel.env" "$T/panel.env.tz"
 export FAKE_TIMEDATECTL_OUT=Asia/Tokyo
 run_install --no-start

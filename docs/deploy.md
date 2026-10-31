@@ -104,7 +104,7 @@ An older `panel.env` that has no `PANEL_SECRET_KEY` gets one line appended on th
 
 `TZ` is the server's time zone, an IANA name such as `Asia/Ho_Chi_Minh` or `UTC`. Backup schedules run at their time in this zone, and every schedule time and next run in the panel is shown in it, with the zone named. Unset means UTC. The panel refuses to start with a `TZ` it does not know.
 
-The install detects the host's zone (`timedatectl`, then `/etc/timezone`, then the `/etc/localtime` link, else `UTC`), offers it as the default when it asks, and writes it as `TZ=` in `panel.env`. Run it with `TZ=<zone>` in the environment to name another one without being asked. An older `panel.env` with no `TZ` line gets one appended on the next run of the install command; a `TZ` line you set yourself is never changed.
+The install detects the host's zone (`timedatectl`, then `/etc/timezone`, then the `/etc/localtime` link, else `UTC`), offers it as the default when it asks, and writes it as `TZ=` in `panel.env`. Run it with `SCP_TZ=<zone>` in the environment to name another one without being asked (the plain `TZ` of your shell is ignored, since `sudo` passes it through). `posix/` is dropped from a detected name and `right/` zones are not used. An older `panel.env` with no `TZ` line gets one appended on the next run of the install command; a `TZ` line you set yourself is never changed.
 
 To change it later, edit `TZ` in `panel.env` and run `cd /opt/server-control-panel && docker compose up -d`. The panel restarts to read it; a schedule keeps its time of day and runs at that time in the new zone.
 

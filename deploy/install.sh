@@ -93,14 +93,17 @@ normalize_google_value() {
 
 # normalize_timezone <raw>: prints an IANA time zone name (Asia/Ho_Chi_Minh,
 # UTC, Etc/UTC), or returns 1 with a message on stderr. One leading ":" (the
-# POSIX form) is dropped. Only the characters of zone names are accepted, so
-# the value is safe in an env file; the panel itself refuses a name it does not
-# know at startup (internal/config).
+# POSIX form) and a leading "posix/" (a zoneinfo copy of every zone) are
+# dropped; "right/" names (leap-second zones) are refused, since the panel's
+# embedded tzdata has neither directory. Only the characters of zone names are
+# accepted, so the value is safe in an env file; the panel itself refuses a
+# name it does not know at startup (internal/config).
 normalize_timezone() {
   local z
   z=$(trim_space "${1-}")
   z=${z#:}
-  if [[ ! "$z" =~ ^[A-Za-z0-9][A-Za-z0-9_+./-]*$ || "$z" == *..* ]]; then
+  z=${z#posix/}
+  if [[ "$z" == right/* ]] || [[ ! "$z" =~ ^[A-Za-z0-9][A-Za-z0-9_+./-]*$ || "$z" == *..* ]]; then
     echo "time zone '${1-}' must be an IANA name such as Asia/Ho_Chi_Minh or UTC" >&2
     return 1
   fi
@@ -441,13 +444,15 @@ normalize_roots_answer() {
   printf '%s\n' "$out"
 }
 
-# choose_timezone: sets TZ_ANSWER to the server time zone: TZ from the
+# choose_timezone: sets TZ_ANSWER to the server time zone: SCP_TZ from the
 # environment, else a line typed at the prompt that offers the detected zone as
-# the default (an empty line, or no terminal, takes it).
+# the default (an empty line, or no terminal, takes it). The plain TZ variable
+# is not read: sudo passes the caller's TZ through, and it may hold a path or a
+# POSIX string.
 choose_timezone() {
   local def
   def=$(detect_timezone)
-  answer_optional TZ "Server time zone for backup schedules [$def]: " normalize_timezone
+  answer_optional SCP_TZ "Server time zone for backup schedules [$def]: " normalize_timezone
   TZ_ANSWER=${ANSWER:-$def}
 }
 
