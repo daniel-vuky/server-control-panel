@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -90,17 +91,26 @@ func (s *server) projectSettings(w http.ResponseWriter, r *http.Request) {
 		s.record(r, store.Activity{Action: store.ActProjectSettings, ProjectID: id, Target: after.DisplayName}, store.ResultOK, changes)
 		s.Hub.Refresh()
 	}
-	writeJSON(w, http.StatusOK, toProjects(s.readViews(r.Context(), []store.Tracked{after}))[0])
+	writeJSON(w, http.StatusOK, s.toProjects(s.readViews(r.Context(), []store.Tracked{after}))[0])
 }
 
 // readSettings decodes the body like readJSON, except that a number that does
 // not fit an alert threshold (a fraction, or too large for an int) is not a
 // 400: its field is returned, to be answered 422 out_of_range in form order.
 func readSettings(w http.ResponseWriter, r *http.Request, req *SettingsRequest) (typeErr string, ok bool) {
+	return readJSONNumbers(w, r, req, fieldAlertCPU, fieldAlertRAM)
+}
+
+// readJSONNumbers decodes the body like readJSON, except that a number that
+// does not fit one of the named int fields (a fraction, or too large) is not a
+// 400: that field is returned, for the caller to answer 422 in form order.
+// The other fields are still decoded (encoding/json reports the first such
+// error after decoding the rest).
+func readJSONNumbers(w http.ResponseWriter, r *http.Request, v any, fields ...string) (typeErr string, ok bool) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-	err := dec.Decode(req)
+	err := dec.Decode(v)
 	var ute *json.UnmarshalTypeError
-	if errors.As(err, &ute) && strings.HasPrefix(ute.Value, "number") && (ute.Field == fieldAlertCPU || ute.Field == fieldAlertRAM) {
+	if errors.As(err, &ute) && strings.HasPrefix(ute.Value, "number") && slices.Contains(fields, ute.Field) {
 		typeErr, err = ute.Field, nil
 	}
 	if err == nil {

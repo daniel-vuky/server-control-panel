@@ -44,7 +44,8 @@ export async function listBackups(
   if (typeof page !== 'object' || page === null || !Array.isArray(page.backups)) {
     throw new ApiError(200, null, 'Unexpected response from the server.')
   }
-  return { backups: page.backups, more: page.more === true }
+  const stored = typeof page.stored === 'object' && page.stored !== null ? page.stored : {}
+  return { backups: page.backups, more: page.more === true, stored }
 }
 
 /** downloadUrl is where a succeeded backup's file is streamed from Drive. */

@@ -304,7 +304,7 @@ func TestBackupHistoryPagination(t *testing.T) {
 		t.Errorf("default page = %+v", page)
 	}
 	// A project with none: an empty array.
-	if rec := do(h, http.MethodGet, backupsURL(12345)); strings.TrimSpace(rec.Body.String()) != `{"backups":[],"more":false}` {
+	if rec := do(h, http.MethodGet, backupsURL(12345)); strings.TrimSpace(rec.Body.String()) != `{"backups":[],"more":false,"stored":{}}` {
 		t.Errorf("empty = %s", rec.Body.String())
 	}
 	for _, q := range []string{"?limit=0", "?limit=x", "?limit=101", "?before=x", "?before=-1"} {
@@ -757,5 +757,85 @@ func TestNoTokenInAnyJSON(t *testing.T) {
 				t.Errorf("body %d holds a token: %s", i, b)
 			}
 		}
+	}
+}
+
+func TestProjectBackupsStored(t *testing.T) {
+	d, h, alpha := backupSetup(t)
+	ok := startBackup(t, h, alpha, alphaKey)
+	if b := waitBackup(t, h, ok); b.State != "ok" || b.PrunedAt != nil {
+		t.Fatalf("backup = %+v", b)
+	}
+	// A pruned copy and a failed row without a file do not count.
+	pruned := insertAt(t, d, alpha, "ok", time.Now().UTC(), func(b *store.Backup) { b.DriveFileID = "old" })
+	if err := d.Store.MarkPruned(context.Background(), pruned, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	storedBackup(t, d, alpha, "failed")
+
+	page := decode[BackupHistory](t, do(h, http.MethodGet, backupsURL(alpha)))
+	if len(page.Stored) != 1 || page.Stored[alphaKey] != 1 {
+		t.Errorf("stored = %v, want %s: 1", page.Stored, alphaKey)
+	}
+	for _, b := range page.Backups {
+		if (b.ID == pruned) != (b.PrunedAt != nil) {
+			t.Errorf("backup %d prunedAt = %v", b.ID, b.PrunedAt)
+		}
+	}
+}
+
+func TestDownloadPrunedIs410Page(t *testing.T) {
+	d, h, alpha := backupSetup(t)
+	id := startBackup(t, h, alpha, alphaKey)
+	if b := waitBackup(t, h, id); b.State != "ok" {
+		t.Fatalf("backup = %+v", b)
+	}
+	if err := d.Store.MarkPruned(context.Background(), id, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	wantPage(t, "pruned", do(h, http.MethodGet, backupURL(id, "/download")), http.StatusGone,
+		"This copy was removed from Drive by retention.", "/projects/"+strconv.FormatInt(alpha, 10)+"/database")
+}
+
+func TestDownloadRawContentType(t *testing.T) {
+	_, h, alpha := backupSetup(t)
+	saveSchedule(t, h, alpha, BackupScheduleInput{Database: alphaKey, Frequency: "off", Time: "02:00", Keep: 14, Compress: false})
+	id := startBackup(t, h, alpha, alphaKey)
+	b := waitBackup(t, h, id)
+	if b.State != "ok" || !strings.HasSuffix(b.FileName, ".sql") {
+		t.Fatalf("backup = %+v", b)
+	}
+	rec := do(h, http.MethodGet, backupURL(id, "/download"))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/octet-stream" {
+		t.Fatalf("download = %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if cd := rec.Header().Get("Content-Disposition"); cd != `attachment; filename="`+b.FileName+`"` {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), dumpData) {
+		t.Errorf("content = %q, want the raw dump", rec.Body.Bytes())
+	}
+}
+
+func TestSafeFileNameFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		compressed bool
+		want       string
+	}{
+		{"", true, "backup.gz"},
+		{"", false, "backup.sql"},
+		{"a\"b.sql", false, "a_b.sql"},
+		{"x.sql.gz", true, "x.sql.gz"},
+	} {
+		if got := safeFileName(tc.name, tc.compressed); got != tc.want {
+			t.Errorf("safeFileName(%q, %v) = %q, want %q", tc.name, tc.compressed, got, tc.want)
+		}
+	}
+	if got := contentTypeOf("x.sql.gz"); got != "application/gzip" {
+		t.Errorf("gz = %q", got)
+	}
+	if got := contentTypeOf("x.archive"); got != "application/octet-stream" {
+		t.Errorf("archive = %q", got)
 	}
 }

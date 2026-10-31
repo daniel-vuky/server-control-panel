@@ -31,7 +31,7 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
   }
 }
 
-/** makeDatabase is a container Postgres database; key defaults from type, location and name, backup to null. */
+/** makeDatabase is a container Postgres database; key defaults from type, location and name, backup and schedule to null. */
 export function makeDatabase(overrides: Partial<Database> = {}): Database {
   const d = {
     type: 'postgresql',
@@ -41,7 +41,7 @@ export function makeDatabase(overrides: Partial<Database> = {}): Database {
     sources: [],
     ...overrides,
   }
-  return { key: `${d.type}:${d.location}:${d.name}`, backup: null, ...d }
+  return { key: `${d.type}:${d.location}:${d.name}`, backup: null, schedule: null, ...d }
 }
 
 /**
@@ -79,6 +79,7 @@ export function makeBackup(overrides: Partial<Backup> = {}): Backup {
     finishedAt: '',
     durationMs: 0,
     queuePosition: 1,
+    prunedAt: null,
     ...overrides,
   }
 }

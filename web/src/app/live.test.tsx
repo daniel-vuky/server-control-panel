@@ -24,6 +24,7 @@ function Probe() {
 const state: LiveState = {
   dockerUp: true,
   backups: [],
+  batch: null,
   drive: { state: 'connected', email: 'ops@example.com', folder: null, reason: '' },
   projects: [
     {
