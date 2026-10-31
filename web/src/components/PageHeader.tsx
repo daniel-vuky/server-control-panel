@@ -20,7 +20,7 @@ export default function PageHeader({
         <h1 className="m-0 text-2xl font-semibold tracking-tight">{title}</h1>
         {subtitle ? <p className="m-0 text-[13px] text-muted">{subtitle}</p> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2.5">
         <ConnectionBadge />
         {actions}
       </div>

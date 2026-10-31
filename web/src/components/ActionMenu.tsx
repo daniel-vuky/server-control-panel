@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { disabledReason } from '../lib/status'
 
 type Props = {
@@ -19,6 +20,9 @@ type Props = {
 /**
  * ActionMenu is the ⋯ button of design 01 and its menu of design 09. An item
  * that is not allowed stays focusable but is aria-disabled and does nothing.
+ * The open menu is fixed at viewport coordinates and renders in a portal on
+ * document.body, so neither the table's overflow nor a dimmed page (LiveDim,
+ * whose filter moves fixed descendants) displaces it.
  */
 export default function ActionMenu({
   name,
@@ -78,7 +82,10 @@ export default function ActionMenu({
     if (!open) return
     menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
     const onPointerDown = (event: MouseEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) close(true)
+      const target = event.target as Node
+      // The open menu is in a portal, so it is not inside the root.
+      if (root.current?.contains(target) || menu.current?.contains(target)) return
+      close(true)
     }
     const onViewportChange = () => close(false)
     document.addEventListener('mousedown', onPointerDown)
@@ -137,58 +144,61 @@ export default function ActionMenu({
           <circle cx="19" cy="12" r="1.7" />
         </svg>
       </button>
-      {open ? (
-        <div
-          ref={menu}
-          id={menuId}
-          role="menu"
-          aria-label={`Actions for ${name}`}
-          tabIndex={-1}
-          onKeyDown={onKeyDown}
-          style={{ position: 'fixed', top: pos.top, right: pos.right }}
-          className="z-10 flex w-[220px] flex-col gap-0.5 rounded-[9px] border border-border-strong bg-[#181c22] p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
-        >
-          {items.map((item) => {
-            const { allowed } = item
-            const reason =
-              item.reason ??
-              (status === undefined ? undefined : disabledReason(status, self, dockerDown))
-            return (
-              <button
-                key={item.key}
-                type="button"
-                role="menuitem"
-                aria-disabled={allowed ? undefined : true}
-                title={allowed ? undefined : reason}
-                onClick={() => {
-                  if (!allowed) return
-                  close(true)
-                  item.run()
-                }}
-                className={`h-9 rounded-md border-0 bg-transparent px-2.5 text-left text-text hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${allowed ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
-              >
-                {item.label}
-              </button>
-            )
-          })}
-          {danger !== null && (
-            <>
-              <hr className="mx-1.5 my-1 h-px border-0 bg-border-strong" />
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  close(true)
-                  onUntrack?.()
-                }}
-                className="h-9 cursor-pointer rounded-md border-0 bg-transparent px-2.5 text-left text-danger hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
-              >
-                {danger}
-              </button>
-            </>
-          )}
-        </div>
-      ) : null}
+      {open
+        ? createPortal(
+            <div
+              ref={menu}
+              id={menuId}
+              role="menu"
+              aria-label={`Actions for ${name}`}
+              tabIndex={-1}
+              onKeyDown={onKeyDown}
+              style={{ position: 'fixed', top: pos.top, right: pos.right }}
+              className="z-10 flex w-[220px] flex-col gap-0.5 rounded-[9px] border border-border-strong bg-[#181c22] p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+            >
+              {items.map((item) => {
+                const { allowed } = item
+                const reason =
+                  item.reason ??
+                  (status === undefined ? undefined : disabledReason(status, self, dockerDown))
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    role="menuitem"
+                    aria-disabled={allowed ? undefined : true}
+                    title={allowed ? undefined : reason}
+                    onClick={() => {
+                      if (!allowed) return
+                      close(true)
+                      item.run()
+                    }}
+                    className={`h-9 rounded-md border-0 bg-transparent px-2.5 text-left text-text hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${allowed ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                  >
+                    {item.label}
+                  </button>
+                )
+              })}
+              {danger !== null && (
+                <>
+                  <hr className="mx-1.5 my-1 h-px border-0 bg-border-strong" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      close(true)
+                      onUntrack?.()
+                    }}
+                    className="h-9 cursor-pointer rounded-md border-0 bg-transparent px-2.5 text-left text-danger hover:bg-[#222830] focus-visible:bg-[#222830] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+                  >
+                    {danger}
+                  </button>
+                </>
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

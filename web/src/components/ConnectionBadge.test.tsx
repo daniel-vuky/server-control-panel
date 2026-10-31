@@ -207,32 +207,40 @@ describe('app shell connection state', () => {
     act(() => latest().emit('state', { dockerUp: true, projects: [] }))
     expect(screen.getByText('This project is not tracked.')).toBeInTheDocument()
     expect(screen.getByText('Realtime')).toBeInTheDocument()
+    expect(content()).not.toContainElement(screen.getByText('Realtime'))
   })
+})
 
+const workspace = {
+  id: 1,
+  name: 'work',
+  path: '/srv/work',
+  depth: 3,
+  lastScanAt: '2026-10-30T09:42:00Z',
+  tracked: 1,
+  ignored: 0,
+}
+
+/** stubApi answers the reads of the Dashboard and Settings; any other path is a 404. */
+function stubApi(shop: ReturnType<typeof makeProject>) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) => {
+      const body: Record<string, unknown> = {
+        '/api/projects': [shop],
+        '/api/workspaces': [workspace],
+      }
+      return url in body
+        ? new Response(JSON.stringify(body[url]), { status: 200 })
+        : new Response('{"error":"unrouted"}', { status: 404 })
+    }),
+  )
+}
+
+describe('overlays while the connection is lost', () => {
   it('keeps the Dashboard confirm dialog bright when the connection is lost while it is open', async () => {
     const shop = makeProject()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string) => {
-        const body: Record<string, unknown> = {
-          '/api/projects': [shop],
-          '/api/workspaces': [
-            {
-              id: 1,
-              name: 'work',
-              path: '/srv/work',
-              depth: 3,
-              lastScanAt: '2026-10-30T09:42:00Z',
-              tracked: 1,
-              ignored: 0,
-            },
-          ],
-        }
-        return url in body
-          ? new Response(JSON.stringify(body[url]), { status: 200 })
-          : new Response('{"error":"unrouted"}', { status: 404 })
-      }),
-    )
+    stubApi(shop)
     renderApp('/')
     act(() => latest().emit('state', { dockerUp: true, projects: [shop] }))
     const row = await screen.findByRole('row', { name: /shop/ })
@@ -244,5 +252,36 @@ describe('app shell connection state', () => {
     expect(screen.getByRole('dialog')).toBe(dialog)
     expect(content()).not.toContainElement(dialog)
     expect(dialog.closest('[data-live-content]')).toBeNull()
+  })
+
+  it('keeps the Settings remove-workspace confirm outside the dimmed content', async () => {
+    stubApi(makeProject())
+    renderApp('/settings')
+    ready()
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove /srv/work' }))
+    const dialog = screen.getByRole('dialog')
+    act(() => latest().fail())
+    expectDimmed()
+    expect(dialog.closest('[data-live-content]')).toBeNull()
+  })
+
+  it('keeps the open ⋯ menu outside the dimmed content, closing on an outside click only', async () => {
+    const shop = makeProject()
+    stubApi(shop)
+    renderApp('/')
+    act(() => latest().emit('state', { dockerUp: true, projects: [shop] }))
+    const row = await screen.findByRole('row', { name: /shop/ })
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions for shop' }))
+    act(() => latest().fail())
+    expectDimmed()
+    const menu = screen.getByRole('menu', { name: 'Actions for shop' })
+    expect(menu.closest('[data-live-content]')).toBeNull()
+
+    // A click inside the menu (on its label, not an item) leaves it open.
+    fireEvent.mouseDown(menu)
+    expect(screen.getByRole('menu', { name: 'Actions for shop' })).toBeInTheDocument()
+    // A click outside closes it.
+    fireEvent.mouseDown(screen.getByRole('main'))
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 })
