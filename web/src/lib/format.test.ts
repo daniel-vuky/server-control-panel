@@ -116,15 +116,26 @@ describe('formatPercent', () => {
 })
 
 describe('niceMax', () => {
-  const GB = 1024 * MB
   it.each([
     [0, 1],
     [0.3, 1],
+    [2.2, 4],
     [7, 8],
     [34, 40],
     [90, 100],
     [100, 100],
     [130, 200],
+    [600, 600],
+    [1010, 2000],
+    [1100, 2000],
+    [3.1 * MB, 4_000_000],
+  ])('%s rounds up to %s', (v, want) => {
+    expect(niceMax(v)).toBe(want)
+  })
+
+  const GB = 1024 * MB
+  it.each([
+    [0, 1],
     [600, 600],
     [1010, 1024],
     [1500, 2048],
@@ -133,7 +144,7 @@ describe('niceMax', () => {
     [1010 * MB, GB],
     [7.7 * GB, 8 * GB],
     [8 * GB, 8 * GB],
-  ])('%s rounds up to %s', (v, want) => {
-    expect(niceMax(v)).toBe(want)
+  ])('%s bytes round up to %s', (v, want) => {
+    expect(niceMax(v, true)).toBe(want)
   })
 })

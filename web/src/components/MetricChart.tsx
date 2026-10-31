@@ -22,12 +22,17 @@ type Props = {
   sub?: string
   /** series are one or two lines; a legend names them when there are two. */
   series: ChartSeries[]
-  /** max is a ceiling the scale reaches at least (100 for a percentage, the RAM total). */
+  /**
+   * max is the scale's top when the data and the threshold stay under it (100
+   * for a percentage, the RAM total); above it the scale rounds up from them.
+   */
   max?: number
   /** threshold draws a dashed alert line at that value. */
   threshold?: number
   /** formatValue words the scale labels (the top and the middle; the bottom is "0"). */
   formatValue: (v: number) => string
+  /** bytes rounds the scale's top in 1024-based units (RAM, disk I/O, network). */
+  bytes?: boolean
   range: RangeKey
   /** historyStart is the oldest kept sample (RFC 3339), null with none. */
   historyStart: string | null
@@ -45,12 +50,15 @@ const THRESHOLD_COLOR = '#7A2F36'
 
 type Point = [x: number, y: number]
 
+/** sampled says a bucket has a value: null (or anything not a finite number) is a gap. */
+const sampled = (v: number | null): v is number => v !== null && Number.isFinite(v)
+
 /** runs splits values into the runs of consecutive samples, each [index, value] pairs. */
 function runs(values: (number | null)[]): [number, number][][] {
   const out: [number, number][][] = []
   let run: [number, number][] = []
   values.forEach((v, i) => {
-    if (v === null || !Number.isFinite(v)) {
+    if (!sampled(v)) {
       if (run.length > 0) out.push(run)
       run = []
       return
@@ -75,9 +83,11 @@ function historyBegins(iso: string, zone: TimeZone): string | null {
 /**
  * MetricChart is a hand-drawn line chart of one or two series over a period
  * (designs 05 and 02, no chart library): the title, current value, sub-line
- * and, for two series, a legend; a y scale (top, middle, 0) on a nice top at
- * least the data, the threshold and max; the time axis words of the period;
- * an area under the first series; a dashed threshold line. The line and its
+ * and, for two series, a legend; a y scale (top, middle, 0) whose top is max
+ * when it covers the data and the threshold, else a nice value above them; the
+ * time axis words of the period (in a grid with the scale, so the axis starts
+ * where the drawing does); an area under the first series; a dashed threshold
+ * line. The line and its
  * area break where a value is null (a gap, never a zero); a sample alone
  * between two gaps is drawn as a flat segment one bucket wide, centred on it,
  * so it stays visible. When the kept history begins inside the period it says
@@ -93,6 +103,7 @@ export default function MetricChart({
   max,
   threshold,
   formatValue,
+  bytes = false,
   range,
   historyStart,
   from,
@@ -102,16 +113,15 @@ export default function MetricChart({
   const info = rangeInfo(range)
   const n = Math.max(0, ...series.map((s) => s.values.length))
   const step = n > 1 ? WIDTH / (n - 1) : WIDTH
-  const dataMax = Math.max(
-    0,
-    ...series.flatMap((s) => s.values.filter((v): v is number => v !== null && Number.isFinite(v))),
-  )
-  const top = niceMax(Math.max(dataMax, threshold ?? 0, max ?? 0))
+  const dataMax = Math.max(0, ...series.flatMap((s) => s.values.filter(sampled)))
+  const floor = Math.max(dataMax, threshold ?? 0)
+  const top =
+    max !== undefined && max > 0 && max >= floor ? max : niceMax(Math.max(floor, max ?? 0), bytes)
   const span = height - 2 * PAD
   const yOf = (v: number) => PAD + (1 - Math.min(Math.max(v, 0), top) / top) * span
   const xOf = (i: number) => (n > 1 ? i * step : WIDTH / 2)
 
-  const empty = series.every((s) => s.values.every((v) => v === null))
+  const empty = series.every((s) => !s.values.some(sampled))
   const startMs = Date.parse(from)
   const historyMs = historyStart === null ? Number.NaN : Date.parse(historyStart)
   const olderHistory = historyMs <= startMs
@@ -154,7 +164,9 @@ export default function MetricChart({
           </span>
         )}
       </div>
-      <div className="flex gap-2">
+      {/* A two-column grid, so the time axis starts where the drawing does
+          however wide the scale labels are. */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-2.5">
         <div
           aria-hidden="true"
           className="flex min-w-10 flex-col justify-between text-right font-mono text-[11px] text-muted"
@@ -164,7 +176,7 @@ export default function MetricChart({
           <span>{formatValue(top / 2)}</span>
           <span>0</span>
         </div>
-        <div className="relative min-w-0 flex-1">
+        <div className="relative min-w-0">
           <svg
             role="img"
             aria-label={label}
@@ -256,11 +268,12 @@ export default function MetricChart({
             </span>
           )}
         </div>
-      </div>
-      <div className="flex justify-between pl-12 font-mono text-[11px] text-muted">
-        <span>{info.start}</span>
-        <span>{info.mid}</span>
-        <span>now</span>
+        <span aria-hidden="true" />
+        <div className="flex justify-between font-mono text-[11px] text-muted">
+          <span>{info.start}</span>
+          <span>{info.mid}</span>
+          <span>now</span>
+        </div>
       </div>
     </div>
   )

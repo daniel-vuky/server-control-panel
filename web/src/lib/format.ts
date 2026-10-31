@@ -73,25 +73,25 @@ export function formatRate(bytesPerSec: number | null): string {
   return bytesPerSec === null ? '—' : `${formatBytes(bytesPerSec)}/s`
 }
 
-const NICE = [1, 2, 2.5, 4, 5, 6, 8, 10]
+const NICE = [1, 2, 4, 5, 6, 8, 10]
 
 /**
  * niceMax is the top of a chart's scale: the smallest round number at or
- * above v, so that it and its half read well (1, 2, 2.5, 4, 5, 6, 8 or 10
- * times a power of ten). From 1024 up a value is taken for bytes (the only
- * series that large: CPU tops out near 100 per core, sizes and rates are
- * bytes), so the round number is one of KB, MB, GB… (1024-based, as
- * formatBytes words it); 1000 to 1023 round up to 1024. Anything at or below
- * 1 (and a value that is not a number) is 1.
+ * above v whose half reads well too (1, 2, 4, 5, 6, 8 or 10 times a power of
+ * ten). With bytes the rounding is done in the largest 1024-based unit the
+ * value reaches (KB, MB, GB…, as formatBytes words them), so 3.1 MB tops out
+ * at 4 MB, and a result of 1024 units or more is one of the next unit.
+ * Without, it is decimal (CPU in Docker's % can pass 1,000 on a many-core
+ * host). Anything at or below 1 (and a value that is not a number) is 1.
  */
-export function niceMax(v: number): number {
+export function niceMax(v: number, bytes = false): number {
   if (!(v > 1)) return 1
   let unit = 1
-  while (v / unit >= 1024) unit *= 1024
+  if (bytes) while (v / unit >= 1024) unit *= 1024
   const m = v / unit
   const p = 10 ** Math.floor(Math.log10(m))
   // A small tolerance keeps 100 at 100 when the division lands just above it.
   const f = m / p - 1e-9
   const nice = (NICE.find((n) => n >= f) ?? 10) * p
-  return nice >= 1024 ? unit * 1024 : nice * unit
+  return bytes && nice >= 1024 ? unit * 1024 : nice * unit
 }

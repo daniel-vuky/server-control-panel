@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
-import { formatPercent, formatRate } from '../lib/format'
+import { formatBytes, formatPercent, formatRate } from '../lib/format'
 import type { RangeKey } from '../lib/range'
 import MetricChart, { type ChartSeries } from './MetricChart'
 
@@ -104,9 +104,36 @@ describe('MetricChart', () => {
       title: 'Network',
       series: [{ name: 'In', values: [1 * MB, 3.1 * MB], color: '#5AA7FF' }],
       formatValue: formatRate,
+      bytes: true,
     })
     expect(screen.getByText('4.0 MB/s')).toBeInTheDocument()
     expect(screen.getByText('2.0 MB/s')).toBeInTheDocument()
+  })
+
+  it('rounds a percentage scale in tens, not in 1024s', () => {
+    chart({ series: [cpu([400, 1100])] })
+    expect(screen.getByText('2000%')).toBeInTheDocument()
+    expect(screen.getByText('1000%')).toBeInTheDocument()
+  })
+
+  it('uses a given max as the top unchanged, the threshold drawn against it', () => {
+    const GB = 1024 * MB
+    const { container } = chart({
+      title: 'RAM',
+      series: [{ name: 'Used', values: [5 * GB, 6 * GB], color: '#F0913A' }],
+      max: 16 * GB,
+      threshold: 0.9 * 16 * GB,
+      formatValue: formatBytes,
+      bytes: true,
+    })
+    expect(screen.getByText('16 GB')).toBeInTheDocument()
+    expect(screen.getByText('8.0 GB')).toBeInTheDocument()
+    expect(container.querySelector('line[data-threshold]')).toHaveAttribute('y1', '18.8')
+  })
+
+  it('rounds up past max when the data goes above it', () => {
+    chart({ series: [cpu([90, 130])], max: 100 })
+    expect(screen.getByText('200%')).toBeInTheDocument()
   })
 
   it('keeps the scale at least as high as the threshold', () => {
