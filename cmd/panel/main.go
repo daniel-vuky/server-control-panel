@@ -57,6 +57,9 @@ func run(log *slog.Logger) int {
 		log.Error("invalid configuration", "error", err)
 		return 1
 	}
+	// Before anything reads the clock: dates in logs and backup file names use
+	// the server zone.
+	time.Local = cfg.Zone
 
 	verifier, err := auth.DefaultVerifier(cfg)
 	if err != nil {
@@ -105,11 +108,17 @@ func run(log *slog.Logger) int {
 	backups := backup.New(st, docker, driveSvc, recent, cfg.DataDir, time.Now, log)
 	backups.SetMinFree(cfg.DevBackupMinFree)
 	hub.SetBackupSource(backups.Active)
+	hub.SetBatchSource(backups.CurrentBatch)
 	hub.SetDriveSource(driveSvc.Status)
 	backups.OnChange(hub.Publish)
 	driveSvc.OnChange(hub.Publish)
 	backups.Start(context.Background())
 	defer backups.Close() // an early return; the shutdown below also waits
+	// The scheduler queues through the manager, so it starts after it and
+	// stops before it (deferred calls run last in, first out).
+	sched := backup.NewScheduler(st, backups, cfg.Zone, time.Now, log)
+	sched.Start(context.Background())
+	defer sched.Close()
 
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
@@ -131,6 +140,8 @@ func run(log *slog.Logger) int {
 			Logs:     logStreams,
 			Drive:    driveSvc,
 			Backups:  backups,
+			Zone:     cfg.Zone,
+			Now:      time.Now,
 		}),
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 		ReadHeaderTimeout: 10 * time.Second,
@@ -174,6 +185,7 @@ func run(log *slog.Logger) int {
 	// or queued backup ends interrupted.
 	waitCtx, cancelWait := context.WithTimeout(context.Background(), jobWait)
 	defer cancelWait()
+	sched.Close() // no scheduled backup is queued after this
 	backups.Close()
 	if err := backups.Wait(waitCtx); err != nil {
 		log.Warn("a backup is still stopping; the next start marks it interrupted", "error", err)

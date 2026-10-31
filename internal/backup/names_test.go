@@ -3,6 +3,8 @@ package backup
 import (
 	"testing"
 	"time"
+
+	"github.com/daniel-vuky/server-control-panel/internal/store"
 )
 
 func TestFileName(t *testing.T) {
@@ -25,11 +27,11 @@ func TestFileName(t *testing.T) {
 		{"shop", "shop", "postgresql", time.FixedZone("ICT", 7*3600), "shop_shop_20261031-0645.sql.gz"},
 	}
 	for _, tc := range cases {
-		if got := fileName(tc.project, tc.db, tc.typ, at, tc.loc); got != tc.want {
+		if got := fileName(tc.project, tc.db, tc.typ, true, at, tc.loc); got != tc.want {
 			t.Errorf("fileName(%q, %q, %q, %s) = %q, want %q", tc.project, tc.db, tc.typ, tc.loc, got, tc.want)
 		}
 	}
-	if got, want := FileName("shop", "shop", "postgresql", at), fileName("shop", "shop", "postgresql", at, time.Local); got != want {
+	if got, want := FileName("shop", "shop", "postgresql", true, at), fileName("shop", "shop", "postgresql", true, at, time.Local); got != want {
 		t.Errorf("FileName = %q, want the time.Local name %q", got, want)
 	}
 }
@@ -89,6 +91,46 @@ func TestProjectFolder(t *testing.T) {
 	for name, want := range map[string]string{"Shop API": "shop-api", "crm_db.v2": "crm_db.v2", "..hidden": "hidden", "日本": "project", "": "project"} {
 		if got := ProjectFolder(name); got != want {
 			t.Errorf("ProjectFolder(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestFileNameCompressedAndRaw(t *testing.T) {
+	at := time.Date(2026, 10, 30, 23, 45, 9, 0, time.UTC)
+	cases := []struct {
+		typ        string
+		compressed bool
+		want       string
+	}{
+		{"postgresql", true, "shop_db_20261030-2345.sql.gz"},
+		{"postgresql", false, "shop_db_20261030-2345.sql"},
+		{"mysql", false, "shop_db_20261030-2345.sql"},
+		{"mongodb", true, "shop_db_20261030-2345.archive.gz"},
+		{"mongodb", false, "shop_db_20261030-2345.archive"},
+	}
+	for _, tc := range cases {
+		if got := fileName("shop", "db", tc.typ, tc.compressed, at, time.UTC); got != tc.want {
+			t.Errorf("fileName(%s, %v) = %q, want %q", tc.typ, tc.compressed, got, tc.want)
+		}
+	}
+}
+
+func TestCompressed(t *testing.T) {
+	steps := func(state, detail string) store.Backup {
+		return store.Backup{Steps: []store.BackupStep{{Step: StepDump, State: "done"}, {Step: StepCompress, State: state, Detail: detail}}}
+	}
+	for _, tc := range []struct {
+		name string
+		b    store.Backup
+		want bool
+	}{
+		{"compressed", steps("done", "1.0 MB → 200 KB"), true},
+		{"compression off", steps(stepSkipped, wordsCompressionOff), false},
+		{"skipped after a failed dump", steps(stepSkipped, ""), true},
+		{"no steps", store.Backup{}, true},
+	} {
+		if got := Compressed(tc.b); got != tc.want {
+			t.Errorf("%s: Compressed = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

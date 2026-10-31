@@ -146,3 +146,46 @@ func TestDataDirFromEnv(t *testing.T) {
 		t.Errorf("DataDir = %q, want /src/data", cfg.DataDir)
 	}
 }
+
+func TestLoadZone(t *testing.T) {
+	cases := []struct {
+		name    string
+		tz      string
+		want    string
+		wantErr bool
+	}{
+		{"empty is UTC", "", "UTC", false},
+		{"IANA name", "Asia/Ho_Chi_Minh", "Asia/Ho_Chi_Minh", false},
+		{"POSIX leading colon", ":Europe/Paris", "Europe/Paris", false},
+		{"Etc/UTC", "Etc/UTC", "Etc/UTC", false},
+		{"unknown zone", "Mars/Base", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Load(func(k string) string {
+				if k == "TZ" {
+					return tc.tz
+				}
+				return ""
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load() error = nil, want an error")
+				}
+				if !strings.Contains(err.Error(), "TZ") {
+					t.Errorf("error %q does not name TZ", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.Zone == nil {
+				t.Fatal("Zone is nil")
+			}
+			if cfg.Zone.String() != tc.want {
+				t.Errorf("Zone = %q, want %q", cfg.Zone, tc.want)
+			}
+		})
+	}
+}

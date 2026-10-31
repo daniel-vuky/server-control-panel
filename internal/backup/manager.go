@@ -1,6 +1,7 @@
-// Package backup runs manual database backups (spec §4): the checks before a
-// backup is queued, one worker panel-wide that dumps, compresses and uploads to
-// Google Drive, the step progress the live state shows, and the hints for a
+// Package backup runs database backups (spec §4), started by a person or by a
+// schedule: the checks before a backup is queued, one worker panel-wide that
+// dumps, compresses, uploads to Google Drive and removes the copies past the
+// number to keep, the step progress the live state shows, and the hints for a
 // failed dump.
 package backup
 
@@ -50,6 +51,7 @@ const (
 	CodeDockerDown        = "docker_down"
 	CodeDiskShort         = "disk_short"
 	CodeNotRetryable      = "not_retryable"
+	CodeBatchRunning      = "batch_running"
 )
 
 // The backup states and step names, as stored.
@@ -97,13 +99,14 @@ const (
 	wordsNotConnected    = "Connect Google Drive first"
 	wordsNotRetryable    = "Only a failed, refused or interrupted backup can be retried."
 	wordsInterrupted     = "The panel restarted during this backup"
-	wordsRetention       = "No retention set yet. All copies are kept."
+	wordsCompressionOff  = "Compression off"
 	wordsTempDeleted     = "temp file deleted"
 )
 
 const (
 	mib = int64(1) << 20
-	// diskMargin is added to half the database size: free ≥ size/2 + 100 MiB.
+	// diskMargin is added to the room the dump needs: free ≥ size/2 + 100 MiB,
+	// or size + 100 MiB when compression is off.
 	diskMargin = 100 * mib
 	// fallbackNeed is the free space needed when the size read fails.
 	fallbackNeed = 500 * mib
@@ -115,6 +118,22 @@ const (
 	// a cancel too; it is the stop action's own read timeout.
 	stopWait = 15 * time.Second
 )
+
+// defaultKeep and the compression on are the settings of a database with no
+// schedule row.
+const defaultKeep = 14
+
+// Actor is who started a backup: a person (Name is the email) or the
+// scheduler. Name is stored as the row's started_by and the activity's actor.
+type Actor struct {
+	Name, Kind string
+}
+
+// Person is a backup started by the person with this email.
+func Person(email string) Actor { return Actor{Name: email, Kind: store.ActorPerson} }
+
+// ScheduleActor starts the scheduled backups.
+var ScheduleActor = Actor{Name: "schedule", Kind: store.ActorSchedule}
 
 // ErrClosed is returned by Enqueue and Retry after Close.
 var ErrClosed = errors.New("backup: the manager is closed")
@@ -159,8 +178,16 @@ type job struct {
 	db         project.Database
 	plan       plan
 	activityID int64
-	published  time.Time // the last publish of this job, for the throttle
-	tmpMade    bool      // the temporary file was created; only the worker uses it
+	// batch is the Back up all batch the job counts toward, 0 for none. It is
+	// guarded by Manager.mu and set only while the job is reachable (in jobs,
+	// or before release adds it); ended reads and clears it.
+	batch     int64
+	published time.Time // the last publish of this job, for the throttle
+	tmpMade   bool      // the temporary file was created; only the worker uses it
+	// keep and compress are the database's settings when it was queued; a
+	// later change applies to the next backup.
+	keep     int
+	compress bool
 }
 
 // plan is how a backup runs: the resolved service and the commands.
@@ -196,6 +223,12 @@ type Manager struct {
 	stopWait     time.Duration
 	compressor   func(w io.Writer) (io.WriteCloser, error)
 	minFree      atomic.Int64
+	// joinHook, when set, runs before a batch Enqueue that waited on another
+	// Enqueue of the same database attaches to the backup it queued (id).
+	joinHook func(id int64)
+	// enqueuedHook, when set, runs in a batch's enqueueOne right after its
+	// Enqueue returns, with the database key.
+	enqueuedHook func(key string)
 
 	mu       sync.Mutex
 	jobs     map[int64]*job
@@ -207,7 +240,11 @@ type Manager struct {
 	closed   bool
 	cancel   context.CancelFunc
 	wake     chan struct{}
-	wg       sync.WaitGroup
+	// batch is the latest Back up all batch (nil before the first), batchSeq
+	// the last batch id given.
+	batch    *batchState
+	batchSeq int64
+	wg       sync.WaitGroup // the worker and the batch enqueue goroutine
 }
 
 // New returns a Manager that stores in st, runs commands with r, uploads with
@@ -253,9 +290,9 @@ func (m *Manager) fire() {
 func (m *Manager) tmpDir() string { return filepath.Join(m.dataDir, "tmp") }
 
 // Start deletes the temporary files a previous process left
-// ($PANEL_DATA_DIR/tmp/backup-*) and starts the worker. Rows that process left
-// queued or running were made interrupted when the store opened; they are not
-// resumed.
+// ($PANEL_DATA_DIR/tmp/backup-*: the .gz and the .raw ones) and starts the
+// worker. Rows that process left queued or running were made interrupted when
+// the store opened; they are not resumed.
 func (m *Manager) Start(ctx context.Context) {
 	m.removeLeftovers()
 	m.mu.Lock()
@@ -283,8 +320,9 @@ func (m *Manager) removeLeftovers() {
 }
 
 // Close stops the worker: the running backup and the queued ones end
-// interrupted. Enqueue and Retry then return ErrClosed. Wait waits for the
-// worker to finish.
+// interrupted. Enqueue, Retry and StartAll then return ErrClosed, and a Back up
+// all batch stops queueing (the rest count as failed). Wait waits for the
+// worker and the batch to finish.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	if m.closed {
@@ -293,7 +331,14 @@ func (m *Manager) Close() {
 	}
 	m.closed = true
 	cancel, started := m.cancel, m.started
+	var stopBatch context.CancelFunc
+	if m.batch != nil {
+		stopBatch = m.batch.cancel
+	}
 	m.mu.Unlock()
+	if stopBatch != nil {
+		stopBatch() // an Enqueue the batch has in flight ends now
+	}
 	if started {
 		cancel()
 		return
@@ -301,7 +346,8 @@ func (m *Manager) Close() {
 	m.drain()
 }
 
-// Wait waits until the worker has stopped, or ctx is done.
+// Wait waits until the worker and a batch's enqueue goroutine have stopped, or
+// ctx is done.
 func (m *Manager) Wait(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
@@ -359,9 +405,10 @@ func (m *Manager) waiters(projectID int64, key string) int {
 	return 0
 }
 
-// Enqueue queues a backup of database dbKey of project t for actor and returns
-// its id. It runs spec §4's checks in order and answers a *Refusal when one
-// fails:
+// Enqueue queues a backup of database dbKey of project t started by by, and
+// returns its id. The job keeps the database's keep and compress settings
+// from t.Schedules (14 and on without a row). It runs spec §4's checks in
+// order and answers a *Refusal when one fails:
 //
 //  1. the project is present (not_found);
 //  2. dbKey is one of its databases (unknown_database);
@@ -376,13 +423,23 @@ func (m *Manager) waiters(projectID int64, key string) int {
 //     it is waited for (honouring ctx) and its outcome returned;
 //  7. its service resolves and runs (not_supported, no_db_name, docker_down,
 //     db_not_running);
-//  8. the disk has room for the dump (disk_short).
+//  8. the disk has room for the dump (disk_short): half its size + 100 MiB,
+//     or its whole size + 100 MiB when compression is off.
 //
 // Checks 1-3 are input errors and write nothing, and already_running writes
 // nothing. A refusal at 5, 7 or 8 is stored as a refused row and a refused
 // backup.run activity. When ctx ends during checks 7-8, Enqueue returns
 // ctx.Err() and records nothing.
-func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor string) (int64, error) {
+func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey string, by Actor) (int64, error) {
+	return m.enqueue(ctx, t, dbKey, by, nil)
+}
+
+// enqueue is Enqueue for a Back up all batch when s is not nil: the backup it
+// queues, the one it joins (already_running) and a refusal it stores count
+// toward batch s.batch, and s.counted says so. The membership is attached
+// under mu in the same critical section that finds the active backup, so a
+// joined backup cannot end unseen.
+func (m *Manager) enqueue(ctx context.Context, t store.Tracked, dbKey string, by Actor, s *slot) (int64, error) {
 	if m.isClosed() {
 		return 0, ErrClosed
 	}
@@ -397,25 +454,26 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 		return 0, r
 	}
 	key := dbRef{t.ID, dbKey}
-	if id, ok := m.active(key); ok {
+	if id, ok := m.active(key, s); ok {
 		return 0, alreadyRunning(id, db.Name)
 	}
-	row := m.newRow(t, db, actor)
+	row := m.newRow(t, db, by.Name)
+	keep, compress := settingsOf(t, dbKey)
 	if r := m.checkDrive(); r != nil {
-		return 0, m.refuse(ctx, row, r)
+		return 0, m.refuse(ctx, row, r, s)
 	}
 
-	res, err := m.reserve(ctx, key, db.Name)
+	res, err := m.reserve(ctx, key, db.Name, s)
 	if res == nil {
 		return 0, err
 	}
 	var queued *job
 	var id int64
-	defer func() { m.release(key, res, queued, id, err) }()
+	defer func() { m.release(key, res, queued, id, err, s) }()
 
 	p, r := m.plan(ctx, t, db)
 	if r == nil {
-		r = m.checkDisk(ctx, p)
+		r = m.checkDisk(ctx, p, compress)
 	}
 	if ctx.Err() != nil {
 		// The caller left during the slow checks: a cancelled container or size
@@ -428,7 +486,7 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 		if r.Service == "" {
 			r.Service = p.service
 		}
-		err = m.refuse(ctx, row, r)
+		err = m.refuse(ctx, row, r, s)
 		return 0, err
 	}
 	row.State = StateQueued
@@ -440,7 +498,7 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 		return 0, err
 	}
 	row.ID = id
-	queued = &job{b: row, t: t, db: db, plan: p}
+	queued = &job{b: row, t: t, db: db, plan: p, keep: keep, compress: compress}
 	return id, nil
 }
 
@@ -448,7 +506,7 @@ func (m *Manager) Enqueue(ctx context.Context, t store.Tracked, dbKey, actor str
 // failed, refused or interrupted row (else not_retryable). store.ErrNotFound for
 // an unknown id; not_found when the project is no longer tracked;
 // unknown_database when it no longer has that database.
-func (m *Manager) Retry(ctx context.Context, id int64, actor string) (int64, error) {
+func (m *Manager) Retry(ctx context.Context, id int64, by Actor) (int64, error) {
 	if m.isClosed() {
 		return 0, ErrClosed
 	}
@@ -468,13 +526,23 @@ func (m *Manager) Retry(ctx context.Context, id int64, actor string) (int64, err
 	if err != nil {
 		return 0, err
 	}
-	return m.Enqueue(ctx, t, b.DBKey, actor)
+	return m.Enqueue(ctx, t, b.DBKey, by)
 }
 
 func (m *Manager) isClosed() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.closed
+}
+
+// settingsOf is the number of copies to keep and the compression of database
+// key: its schedule row, else 14 and on.
+func settingsOf(t store.Tracked, key string) (keep int, compress bool) {
+	sc, ok := t.Schedules[key]
+	if !ok {
+		return defaultKeep, true
+	}
+	return max(sc.Keep, 1), sc.Compress
 }
 
 func findDatabase(t store.Tracked, key string) (project.Database, bool) {
@@ -589,10 +657,11 @@ func actions(dbType string, byDefault, override bool) (dump, size runner.Action)
 	return dump, size
 }
 
-// checkDisk is check 7: free ≥ size/2 + 100 MiB on the temporary folder. A
-// failed size read needs 500 MiB and is only logged; so is a failed free-space
-// read, which does not block.
-func (m *Manager) checkDisk(ctx context.Context, p plan) *Refusal {
+// checkDisk is check 7: free ≥ size/2 + 100 MiB on the temporary folder, or
+// size + 100 MiB when compression is off (the dump is stored raw). A failed
+// size read needs 500 MiB and is only logged; so is a failed free-space read,
+// which does not block.
+func (m *Manager) checkDisk(ctx context.Context, p plan, compress bool) *Refusal {
 	dir := m.tmpDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		m.log.Warn("backup: cannot create the temporary folder", "err", err)
@@ -601,9 +670,12 @@ func (m *Manager) checkDisk(ctx context.Context, p plan) *Refusal {
 	res, err := m.r.Run(ctx, runner.StackCompose, p.size, p.values, p.secrets)
 	if err == nil {
 		n, perr := strconv.ParseInt(strings.TrimSpace(string(res.Stdout)), 10, 64)
-		if perr == nil && n >= 0 {
+		switch {
+		case perr == nil && n >= 0 && compress:
 			need = n/2 + diskMargin
-		} else {
+		case perr == nil && n >= 0:
+			need = min(n, 1<<62) + diskMargin
+		default:
 			m.log.Warn("backup: the size read printed no size; needing 500 MiB free", "action", p.size)
 		}
 	} else {
@@ -667,9 +739,16 @@ func newSteps(state string) []store.BackupStep {
 	return steps
 }
 
+// activityOf is the backup.run activity of a backup. The actor's kind comes
+// from the row: started by "schedule" is the scheduler, anything else a
+// person's email.
 func activityOf(b store.Backup) store.Activity {
+	kind := store.ActorPerson
+	if b.StartedBy == ScheduleActor.Name {
+		kind = store.ActorSchedule
+	}
 	return store.Activity{
-		Actor: b.StartedBy, ActorKind: store.ActorPerson, Action: store.ActBackupRun,
+		Actor: b.StartedBy, ActorKind: kind, Action: store.ActBackupRun,
 		ProjectID: b.ProjectID, Target: b.ProjectName + " · " + b.DBName,
 	}
 }
@@ -681,8 +760,9 @@ func storeContext(ctx context.Context) (context.Context, context.CancelFunc) {
 }
 
 // refuse stores a refused row and its activity, and returns r with the row's
-// id. A failed write is logged; the refusal still stands.
-func (m *Manager) refuse(ctx context.Context, row store.Backup, r *Refusal) *Refusal {
+// id. A failed write is logged; the refusal still stands. For a batch Enqueue
+// (s not nil) the refusal counts toward the batch.
+func (m *Manager) refuse(ctx context.Context, row store.Backup, r *Refusal, s *slot) *Refusal {
 	row.State, row.Error = StateRefused, r.Words
 	if r.Service != "" {
 		row.DBService = r.Service
@@ -700,6 +780,7 @@ func (m *Manager) refuse(ctx context.Context, row store.Backup, r *Refusal) *Ref
 	if err := m.st.RecordActivity(sctx, activityOf(row), store.ResultRefused, r.Words); err != nil {
 		m.log.Error("backup: record the refusal", "project", row.ProjectID, "err", err)
 	}
+	m.countNow(StateRefused, s)
 	return r
 }
 
@@ -707,12 +788,17 @@ func (m *Manager) refuse(ctx context.Context, row store.Backup, r *Refusal) *Ref
 // outcome to answer: already_running for an active backup, or the outcome of
 // the Enqueue that held the reservation (ctx.Err() if ctx ends first). A holder
 // whose own caller left reached no outcome, so its waiters try again.
-func (m *Manager) reserve(ctx context.Context, key dbRef, dbName string) (*reservation, error) {
+//
+// For a batch Enqueue (s not nil) an active backup is joined in the critical
+// section that finds it; a waiter's outcome is joined or counted by
+// joinOutcome.
+func (m *Manager) reserve(ctx context.Context, key dbRef, dbName string, s *slot) (*reservation, error) {
 	for {
 		m.mu.Lock()
-		if id, ok := m.activeID(key); ok {
+		if j := m.activeJob(key); j != nil {
+			m.register(j, s)
 			m.mu.Unlock()
-			return nil, alreadyRunning(id, dbName)
+			return nil, alreadyRunning(j.b.ID, dbName)
 		}
 		r, ok := m.reserved[key]
 		if !ok {
@@ -728,7 +814,9 @@ func (m *Manager) reserve(ctx context.Context, key dbRef, dbName string) (*reser
 			if errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
 				continue
 			}
-			return nil, r.outcome(dbName)
+			out := r.outcome(dbName)
+			m.joinOutcome(ctx, out, s)
+			return nil, out
 		case <-ctx.Done():
 			m.mu.Lock()
 			r.waiters--
@@ -738,21 +826,27 @@ func (m *Manager) reserve(ctx context.Context, key dbRef, dbName string) (*reser
 	}
 }
 
-// active is the queued or running backup of key, under mu.
-func (m *Manager) active(key dbRef) (int64, bool) {
+// active is the queued or running backup of key, under mu; a batch Enqueue
+// (s not nil) joins it in the same critical section.
+func (m *Manager) active(key dbRef, s *slot) (int64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.activeID(key)
+	j := m.activeJob(key)
+	if j == nil {
+		return 0, false
+	}
+	m.register(j, s)
+	return j.b.ID, true
 }
 
-// activeID is the queued or running backup of key; mu is held.
-func (m *Manager) activeID(key dbRef) (int64, bool) {
+// activeJob is the queued or running backup of key, nil for none; mu is held.
+func (m *Manager) activeJob(key dbRef) *job {
 	for _, j := range m.jobs {
 		if j.b.ProjectID == key.project && j.b.DBKey == key.key {
-			return j.b.ID, true
+			return j
 		}
 	}
-	return 0, false
+	return nil
 }
 
 func alreadyRunning(id int64, dbName string) *Refusal {
@@ -775,9 +869,14 @@ func (r *reservation) outcome(dbName string) error {
 // release ends a reservation. A queued job joins the active list in the same
 // critical section, so a later Enqueue sees it; then the waiters get the
 // outcome.
-func (m *Manager) release(key dbRef, res *reservation, j *job, id int64, err error) {
+//
+// A batch job is registered with its batch in that critical section too.
+func (m *Manager) release(key dbRef, res *reservation, j *job, id int64, err error, s *slot) {
 	m.mu.Lock()
 	closed := m.closed
+	if j != nil {
+		m.register(j, s)
+	}
 	if j != nil && !closed {
 		m.jobs[j.b.ID] = j
 		m.queue = append(m.queue, j)
@@ -812,6 +911,7 @@ func (m *Manager) endUnstarted(j *job) {
 	m.mu.Unlock()
 	m.persist(b)
 	m.recordUnstarted(b, store.ResultInterrupted, b.Error)
+	m.ended(j)
 }
 
 // recordUnstarted records one finished backup.run activity for a backup that

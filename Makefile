@@ -27,7 +27,7 @@ test: setup
 
 ## lint: golangci-lint, Biome (warnings fail), the TypeScript typecheck and shellcheck on the deploy scripts
 lint: setup
-	$(RUN) sh -c 'golangci-lint run && pnpm -C web lint && pnpm -C web typecheck && shellcheck -x deploy/*.sh deploy/test/*.sh deploy/test/fake-docker'
+	$(RUN) sh -c 'golangci-lint run && pnpm -C web lint && pnpm -C web typecheck && shellcheck -x deploy/*.sh deploy/test/*.sh deploy/test/fake-docker deploy/test/fake-timedatectl'
 
 ## fmt: format Go and web sources
 fmt: setup

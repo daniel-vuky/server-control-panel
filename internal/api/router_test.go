@@ -368,6 +368,7 @@ func newTestDepsWith(t *testing.T, wrap func(drive.Client) drive.Client) Deps {
 	}
 	backups := backup.New(st, docker, drv, containers, dataDir, time.Now, log)
 	hub.SetBackupSource(backups.Active)
+	hub.SetBatchSource(backups.CurrentBatch)
 	hub.SetDriveSource(drv.Status)
 	backups.OnChange(hub.Publish)
 	drv.OnChange(hub.Publish)
@@ -543,6 +544,12 @@ func TestNewEndpointsNeedIdentity(t *testing.T) {
 		{http.MethodGet, "/api/backups/1"},
 		{http.MethodPost, "/api/backups/1/retry"},
 		{http.MethodGet, "/api/backups/1/download"},
+		{http.MethodGet, "/api/backup-settings"},
+		{http.MethodPost, "/api/backup-settings/defaults"},
+		{http.MethodPost, "/api/projects/1/backup-schedule"},
+		{http.MethodPost, "/api/backups/all"},
+		{http.MethodGet, "/api/backups"},
+		{http.MethodGet, "/api/backups/summary"},
 	} {
 		if rec := do(h, tc.method, tc.path); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", tc.method, tc.path, rec.Code)

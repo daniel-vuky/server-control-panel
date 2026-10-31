@@ -24,7 +24,7 @@ func (s *server) listProjects(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toProjects(s.readViews(r.Context(), ts)))
+	writeJSON(w, http.StatusOK, s.toProjects(s.readViews(r.Context(), ts)))
 }
 
 // readViews gives ts their views from one docker.containers read of its own
@@ -42,8 +42,10 @@ func (s *server) readViews(ctx context.Context, ts []store.Tracked) []control.Pr
 }
 
 // toProjects maps project views to the API type, shared by GET /api/projects
-// and the state event. Slices are never nil.
-func toProjects(vs []control.ProjectView) []Project {
+// and the state event. Each schedule's next run is computed here, with the
+// server zone and the clock (the hub has neither). Slices are never nil.
+func (s *server) toProjects(vs []control.ProjectView) []Project {
+	now := s.Now()
 	out := make([]Project, 0, len(vs))
 	for _, v := range vs {
 		actions := make([]string, 0, len(v.Actions))
@@ -58,7 +60,7 @@ func toProjects(vs []control.ProjectView) []Project {
 			Self:        v.Self,
 			Status:      string(v.Status),
 			Actions:     actions,
-			Databases:   toProjectDatabases(v.DatabaseViews),
+			Databases:   s.toProjectDatabases(v.DatabaseViews, now),
 
 			MissingSince:    formatTime(v.MissingSince),
 			PublicDomain:    v.PublicDomain,
@@ -77,17 +79,47 @@ func toProjects(vs []control.ProjectView) []Project {
 	return out
 }
 
-// toProjectDatabases maps a project's databases with their backup rules.
-// The slice is never nil.
-func toProjectDatabases(ds []control.DatabaseView) []Database {
+// toProjectDatabases maps a project's databases with their backup rules and
+// schedules. The slice is never nil.
+func (s *server) toProjectDatabases(ds []control.DatabaseView, now time.Time) []Database {
 	out := make([]Database, 0, len(ds))
 	for _, d := range ds {
 		db := toDatabase(d.Database)
 		db.Key = d.Key
 		db.Backup = &BackupRule{Allowed: d.Backup.Allowed, Reason: d.Backup.Reason, Service: d.Backup.Service}
+		if d.Schedule != nil {
+			// The scheduler never runs a database that cannot be backed up at
+			// all, so it has no next run, whatever its frequency.
+			db.Schedule = s.toSchedule(*d.Schedule, now, d.Backup.Reason != project.ReasonNotSupported)
+		}
 		out = append(out, db)
 	}
 	return out
+}
+
+// toSchedule maps a stored schedule with its next run: the first occurrence
+// after max(now, updated_at) in the server zone (so a time already passed
+// when it was saved is not shown), null when off or when runs is false (the
+// database can never be backed up, so the scheduler skips it).
+func (s *server) toSchedule(sc store.Schedule, now time.Time, runs bool) *DatabaseSchedule {
+	out := &DatabaseSchedule{
+		Frequency: sc.Frequency, Time: sc.Time, Weekday: sc.Weekday, Keep: sc.Keep, Compress: sc.Compress,
+	}
+	if next, ok := s.nextRun(sc, now); ok && runs {
+		v := next.In(s.Zone).Format(time.RFC3339)
+		out.NextRunAt = &v
+	}
+	return out
+}
+
+// nextRun is the schedule's next run after max(now, updated_at), ok false
+// when it is off.
+func (s *server) nextRun(sc store.Schedule, now time.Time) (time.Time, bool) {
+	after := now
+	if sc.UpdatedAt.After(after) {
+		after = sc.UpdatedAt
+	}
+	return backup.NextRun(sc.ScheduleFields, after, s.Zone)
 }
 
 // toContainers maps a view's components to the API type. Slices are never
@@ -122,11 +154,28 @@ func formatTime(t *time.Time) string {
 }
 
 // toLiveState maps a hub snapshot to the data of the state event.
-func toLiveState(st control.State) LiveState {
+func (s *server) toLiveState(st control.State) LiveState {
 	return LiveState{
 		DockerUp: st.DockerUp,
-		Projects: toProjects(st.Projects),
+		Projects: s.toProjects(st.Projects),
 		Backups:  toBackups(st.Backups),
+		Batch:    toBatch(st.Batch),
 		Drive:    toDriveStatus(st.Drive),
+	}
+}
+
+// toBatch maps the latest Back up all, nil before the first.
+func toBatch(b *backup.Batch) *BackupBatch {
+	if b == nil {
+		return nil
+	}
+	var finished *string
+	if b.FinishedAt != nil {
+		v := formatTime(b.FinishedAt)
+		finished = &v
+	}
+	return &BackupBatch{
+		ID: b.ID, StartedBy: b.StartedBy, StartedAt: formatTime(&b.StartedAt),
+		Total: b.Total, Done: b.Done, OK: b.OK, Failed: b.Failed, Skipped: b.Skipped, FinishedAt: finished,
 	}
 }

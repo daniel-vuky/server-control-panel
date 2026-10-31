@@ -5,7 +5,8 @@ import { FakeEventSource } from '../test/fakeEventSource'
 import { LiveProvider, useLive } from './live'
 
 function Probe() {
-  const { dockerUp, projects, backups, drive, checking, recheckDocker, connection } = useLive()
+  const { dockerUp, projects, backups, batch, drive, checking, recheckDocker, connection } =
+    useLive()
   return (
     <div>
       <span data-testid="connection">{connection}</span>
@@ -13,6 +14,7 @@ function Probe() {
       <span data-testid="projects">{projects === null ? 'null' : projects.length}</span>
       <span data-testid="backups">{backups.length}</span>
       <span data-testid="drive">{drive === null ? 'null' : drive.state}</span>
+      <span data-testid="batch">{batch === null ? 'null' : `${batch.done}/${batch.total}`}</span>
       <span data-testid="checking">{String(checking)}</span>
       <button type="button" onClick={() => void recheckDocker()}>
         recheck
@@ -24,6 +26,7 @@ function Probe() {
 const state: LiveState = {
   dockerUp: true,
   backups: [],
+  batch: null,
   drive: { state: 'connected', email: 'ops@example.com', folder: null, reason: '' },
   projects: [
     {
@@ -107,6 +110,34 @@ describe('LiveProvider', () => {
     act(() => FakeEventSource.instances[0].emit('state', { dockerUp: true, projects: [] }))
     expect(screen.getByTestId('drive')).toHaveTextContent('null')
     expect(screen.getByTestId('backups')).toHaveTextContent('0')
+  })
+
+  it('exposes the latest Back up all batch, null when the state has none', () => {
+    render(
+      <LiveProvider>
+        <Probe />
+      </LiveProvider>,
+    )
+    expect(screen.getByTestId('batch')).toHaveTextContent('null')
+    const batch = {
+      id: 3,
+      startedBy: 'ops@example.com',
+      startedAt: '2026-10-31T10:00:00Z',
+      total: 6,
+      done: 2,
+      ok: 2,
+      failed: 0,
+      skipped: 1,
+      finishedAt: null,
+    }
+    act(() => FakeEventSource.instances[0].emit('state', { ...state, batch }))
+    expect(screen.getByTestId('batch')).toHaveTextContent('2/6')
+    act(() => FakeEventSource.instances[0].emit('state', { ...state, batch: null }))
+    expect(screen.getByTestId('batch')).toHaveTextContent('null')
+    act(() => FakeEventSource.instances[0].emit('state', { ...state, batch }))
+    // An older server sends no batch field at all.
+    act(() => FakeEventSource.instances[0].emit('state', { dockerUp: true, projects: [] }))
+    expect(screen.getByTestId('batch')).toHaveTextContent('null')
   })
 
   it('ignores a malformed state event', () => {

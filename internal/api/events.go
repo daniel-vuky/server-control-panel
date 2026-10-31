@@ -21,7 +21,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	current, updates, cancel := s.Hub.Subscribe()
 	defer cancel()
 
-	if sw.send(eventState, toLiveState(current)) != nil {
+	if sw.send(eventState, s.toLiveState(current)) != nil {
 		return
 	}
 	ping := time.NewTicker(sseHeartbeat)
@@ -35,7 +35,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case st := <-updates:
-			if sw.send(eventState, toLiveState(st)) != nil {
+			if sw.send(eventState, s.toLiveState(st)) != nil {
 				return
 			}
 		}

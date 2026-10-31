@@ -266,7 +266,7 @@ describe('Google Drive card', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
     const dialog = screen.getByRole('dialog', { name: 'Disconnect Google Drive?' })
     expect(dialog).toHaveTextContent(
-      'Backups stop until you connect again. Files already on Drive stay there.',
+      'Scheduled backups will fail until Google Drive is connected again. Files already on Drive stay there.',
     )
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog')).toBeNull()

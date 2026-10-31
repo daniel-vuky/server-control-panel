@@ -212,8 +212,8 @@ describe('the progress dialog', () => {
             queuePosition: 0,
             driveLink: 'https://drive.google.com/file/d/abc/view',
             steps: steps(
-              ['done', 'done', 'done', 'skipped'],
-              ['', '', '', 'No retention set yet. All copies are kept.'],
+              ['done', 'done', 'done', 'done'],
+              ['', '', '', 'Removed 2 old copies · keeping 14'],
             ),
           }),
         ),
@@ -225,7 +225,7 @@ describe('the progress dialog', () => {
     await waitFor(() =>
       expect(within(dialog).getByTestId('backup-pill')).toHaveTextContent('Succeeded'),
     )
-    expect(dialog).toHaveTextContent('No retention set yet. All copies are kept.')
+    expect(dialog).toHaveTextContent('Removed 2 old copies · keeping 14')
     const link = within(dialog).getByRole('link', { name: 'Open in Drive' })
     expect(link).toHaveAttribute('href', 'https://drive.google.com/file/d/abc/view')
     expect(link).toHaveAttribute('target', '_blank')

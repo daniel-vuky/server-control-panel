@@ -1,8 +1,8 @@
 package api
 
 // The request and response bodies of the scan, rescan, track, workspace,
-// project, action, untrack, settings, logs, event, Docker check, Drive and
-// backup endpoints. tygo turns them into
+// project, action, untrack, settings, logs, event, Docker check, Drive,
+// backup and schedule endpoints. tygo turns them into
 // web/src/api/types.gen.ts, so every field is a built-in type, a slice of one,
 // or another type of this file. Slices are never null in a response.
 
@@ -116,15 +116,69 @@ type ScanRow struct {
 // Database is a database a project uses. It holds names only, never values:
 // Sources lists the variables or services it was found in. Key identifies it
 // within its project (type:location:name). Backup says whether a backup may
-// start now; it is null on a scan row and set on a tracked project's row.
+// start now and Schedule is its backup schedule; both are null on a scan row
+// and set on a tracked project's row (Schedule stays null for a database with
+// no schedule row).
 type Database struct {
-	Type         string      `json:"type"`         // postgresql | mysql | mongodb | sqlite
-	Name         string      `json:"name"`         // database name, or the service name
-	LocationKind string      `json:"locationKind"` // container | host | external | file | unknown
-	Location     string      `json:"location"`     // service or container name, host name or file path
-	Sources      []string    `json:"sources"`
-	Key          string      `json:"key"`
-	Backup       *BackupRule `json:"backup" tstype:"BackupRule | null,required"`
+	Type         string            `json:"type"`         // postgresql | mysql | mongodb | sqlite
+	Name         string            `json:"name"`         // database name, or the service name
+	LocationKind string            `json:"locationKind"` // container | host | external | file | unknown
+	Location     string            `json:"location"`     // service or container name, host name or file path
+	Sources      []string          `json:"sources"`
+	Key          string            `json:"key"`
+	Backup       *BackupRule       `json:"backup" tstype:"BackupRule | null,required"`
+	Schedule     *DatabaseSchedule `json:"schedule" tstype:"DatabaseSchedule | null,required"`
+}
+
+// DatabaseSchedule is a database's backup schedule. Frequency is off, daily or
+// weekly; Time is "HH:MM" in the server zone; Weekday is 0 (Sunday) to 6 and
+// only matters for weekly; Keep is how many copies stay on Drive (1 to 365);
+// Compress gzips the dump. NextRunAt is the next scheduled run, RFC 3339 with
+// the server zone's offset, null when the schedule is off or the database can
+// never be backed up (not_supported), since the scheduler skips it.
+type DatabaseSchedule struct {
+	Frequency string  `json:"frequency"`
+	Time      string  `json:"time"`
+	Weekday   int     `json:"weekday"`
+	Keep      int     `json:"keep"`
+	Compress  bool    `json:"compress"`
+	NextRunAt *string `json:"nextRunAt" tstype:"string | null,required"`
+}
+
+// ScheduleFields are a schedule's settings, as DatabaseSchedule describes
+// them: the body of POST /api/backup-settings/defaults, its 200 answer and
+// BackupSettings.Defaults.
+type ScheduleFields struct {
+	Frequency string `json:"frequency"`
+	Time      string `json:"time"`
+	Weekday   int    `json:"weekday"`
+	Keep      int    `json:"keep"`
+	Compress  bool   `json:"compress"`
+}
+
+// BackupScheduleInput is the body of POST /api/projects/{id}/backup-schedule:
+// the database (Database.Key) and its new schedule, replaced as a whole.
+type BackupScheduleInput struct {
+	Database  string `json:"database"`
+	Frequency string `json:"frequency"`
+	Time      string `json:"time"`
+	Weekday   int    `json:"weekday"`
+	Keep      int    `json:"keep"`
+	Compress  bool   `json:"compress"`
+}
+
+// TimeZone is the server's zone: its IANA name (UTC when TZ is unset) and its
+// offset now, such as "+07:00".
+type TimeZone struct {
+	Name   string `json:"name"`
+	Offset string `json:"offset"`
+}
+
+// BackupSettings is the body of GET /api/backup-settings: the settings a
+// newly found database starts from, and the zone schedule times are read in.
+type BackupSettings struct {
+	Defaults ScheduleFields `json:"defaults"`
+	TimeZone TimeZone       `json:"timeZone"`
 }
 
 // BackupRule says whether a database can be backed up now. Allowed is true
@@ -327,13 +381,15 @@ type RemoveResponse struct {
 
 // LiveState is the data of the "state" event of GET /api/events: whether
 // Docker answers, every tracked project as GET /api/projects returns it, the
-// active backups (running first, then the queue in order) and the Drive
+// active backups (running first, then the queue in order), the latest Back up
+// all (null before the first since the panel started) and the Drive
 // connection as GET /api/drive returns it.
 type LiveState struct {
-	DockerUp bool        `json:"dockerUp"`
-	Projects []Project   `json:"projects"`
-	Backups  []Backup    `json:"backups"`
-	Drive    DriveStatus `json:"drive"`
+	DockerUp bool         `json:"dockerUp"`
+	Projects []Project    `json:"projects"`
+	Backups  []Backup     `json:"backups"`
+	Batch    *BackupBatch `json:"batch" tstype:"BackupBatch | null,required"`
+	Drive    DriveStatus  `json:"drive"`
 }
 
 // DockerCheck is the body of POST /api/docker/check.
@@ -448,7 +504,9 @@ type BackupStep struct {
 // failed, refused or interrupted; FailedStep is the step that failed ("" when
 // none). Error and Hint are masked. The times are UTC RFC 3339 ("" when not
 // reached). QueuePosition is 0 when running or finished, and N ≥ 1 while
-// waiting.
+// waiting. StartedBy is the email of the person who started it, or
+// "schedule". PrunedAt is when retention removed its file from Drive (UTC RFC
+// 3339), null while the file is kept.
 type Backup struct {
 	ID            int64          `json:"id"`
 	ProjectID     int64          `json:"projectId"`
@@ -469,11 +527,97 @@ type Backup struct {
 	FinishedAt    string         `json:"finishedAt"`
 	DurationMS    int64          `json:"durationMs"`
 	QueuePosition int            `json:"queuePosition"`
+	PrunedAt      *string        `json:"prunedAt" tstype:"string | null,required"`
 }
 
 // BackupHistory is the body of GET /api/projects/{id}/backups: a page of the
-// project's backups, newest first, and whether older ones remain.
+// project's backups, newest first, whether older ones remain, and the number
+// of copies on Drive per database key (only keys with at least one).
 type BackupHistory struct {
+	Backups []Backup       `json:"backups"`
+	More    bool           `json:"more"`
+	Stored  map[string]int `json:"stored"`
+}
+
+// BackupList is the body of GET /api/backups: a page of every project's
+// backups, newest first, and whether older ones remain.
+type BackupList struct {
 	Backups []Backup `json:"backups"`
 	More    bool     `json:"more"`
+}
+
+// QueryError is the 400 body of GET /api/backups for a bad query parameter:
+// the message and the parameter's name.
+type QueryError struct {
+	Error string `json:"error"`
+	Field string `json:"field"`
+}
+
+// BackupBatch is LiveState.Batch, the latest Back up all. Total is the
+// databases it queued; Done counts those that ended, as OK, Failed (failed,
+// refused, interrupted or not queued) or Skipped (gone by the time it was
+// queued). Skipped also counts the databases that cannot be backed up, which
+// are not in Total. StartedBy is the email of who started it; the times are
+// UTC RFC 3339, FinishedAt null while it runs.
+type BackupBatch struct {
+	ID         int64   `json:"id"`
+	StartedBy  string  `json:"startedBy"`
+	StartedAt  string  `json:"startedAt"`
+	Total      int     `json:"total"`
+	Done       int     `json:"done"`
+	OK         int     `json:"ok"`
+	Failed     int     `json:"failed"`
+	Skipped    int     `json:"skipped"`
+	FinishedAt *string `json:"finishedAt" tstype:"string | null,required"`
+}
+
+// BackupAllResult is the 202 body of POST /api/backups/all: the batch, the
+// databases it queues and the ones skipped as not supported.
+type BackupAllResult struct {
+	ID      int64 `json:"id"`
+	Total   int   `json:"total"`
+	Skipped int   `json:"skipped"`
+}
+
+// BackupSummary is the body of GET /api/backups/summary. The Drive figures
+// are what the panel stored (every backup row with a Drive file that
+// retention has not removed, whatever its state), not a Drive query. Days
+// are the last 7 days of the server zone, oldest first, today last; OK7d and
+// Failed7d sum them (failed counts failed, refused and
+// interrupted). RecentFailures are the newest two failed or refused backups.
+// NextRun is the earliest scheduled run and the projects due at that minute,
+// null when nothing is scheduled.
+type BackupSummary struct {
+	DriveBytes     int64            `json:"driveBytes"`
+	DriveFiles     int              `json:"driveFiles"`
+	DriveProjects  int              `json:"driveProjects"`
+	Days           []SummaryDay     `json:"days"`
+	OK7d           int              `json:"ok7d"`
+	Failed7d       int              `json:"failed7d"`
+	RecentFailures []SummaryFailure `json:"recentFailures"`
+	NextRun        *SummaryNextRun  `json:"nextRun" tstype:"SummaryNextRun | null,required"`
+}
+
+// SummaryDay is one day of BackupSummary.Days: Date is YYYY-MM-DD in the
+// server zone.
+type SummaryDay struct {
+	Date   string `json:"date"`
+	OK     int    `json:"ok"`
+	Failed int    `json:"failed"`
+}
+
+// SummaryFailure is one of BackupSummary.RecentFailures: At is when the
+// backup was created (UTC RFC 3339).
+type SummaryFailure struct {
+	ProjectID   int64  `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	DBName      string `json:"dbName"`
+	At          string `json:"at"`
+}
+
+// SummaryNextRun is BackupSummary.NextRun: At is RFC 3339 with the server
+// zone's offset; Projects are the display names due at that minute.
+type SummaryNextRun struct {
+	At       string   `json:"at"`
+	Projects []string `json:"projects"`
 }

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/backup"
 	"github.com/daniel-vuky/server-control-panel/internal/drive"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
@@ -1499,5 +1500,79 @@ func TestNoStoreReadUnderMu(t *testing.T) {
 	}
 	if n := dockerReads(e.cmd); n != reads {
 		t.Fatalf("%d Docker reads during Publish, want none", n-reads)
+	}
+}
+
+func TestViewsCarrySchedules(t *testing.T) {
+	pg := project.Database{Type: "postgres", Name: "app", LocationKind: "container", Location: "db"}
+	other := project.Database{Type: "mysql", Name: "shop", LocationKind: "container", Location: "db"}
+	gone := project.Database{Type: "mongo", Name: "old", LocationKind: "container", Location: "db"}
+	last := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
+	sc := store.Schedule{
+		ScheduleFields: store.ScheduleFields{Frequency: "weekly", Time: "03:30", Weekday: 2, Keep: 7, Compress: false},
+		ProjectID:      1, DBKey: project.DatabaseKey(pg), LastRunAt: &last,
+	}
+	ts := []store.Tracked{{ID: 1, DisplayName: "shop", ComposeProject: "shop", Services: []string{"db"},
+		Databases: []project.Database{pg, other},
+		Schedules: map[string]store.Schedule{
+			project.DatabaseKey(pg):   sc,
+			project.DatabaseKey(gone): {ProjectID: 1, DBKey: project.DatabaseKey(gone)},
+		}}}
+	v := Views(ts, nil, nil, false, nil, nil, nil, drive.Status{State: drive.StateNotConnected})[0]
+	if len(v.DatabaseViews) != 2 {
+		t.Fatalf("got %d database views, want 2", len(v.DatabaseViews))
+	}
+	got := v.DatabaseViews[0].Schedule
+	if got == nil || got.Frequency != "weekly" || got.Time != "03:30" || got.Weekday != 2 || got.Keep != 7 || got.Compress ||
+		got.LastRunAt == nil || !got.LastRunAt.Equal(last) {
+		t.Fatalf("schedule = %+v, want the stored weekly one", got)
+	}
+	if v.DatabaseViews[1].Schedule != nil {
+		t.Fatalf("schedule of a database with none = %+v, want nil", v.DatabaseViews[1].Schedule)
+	}
+	// The view holds a copy: changing it leaves the tracked row alone.
+	got.Keep = 99
+	if ts[0].Schedules[project.DatabaseKey(pg)].Keep != 7 {
+		t.Fatal("the view shares the stored schedule")
+	}
+}
+
+func TestStateCarriesBatch(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+
+	if s := h.current(); s.Batch != nil {
+		t.Fatalf("state without a source has batch %+v, want nil", s.Batch)
+	}
+
+	var mu sync.Mutex
+	var cur *backup.Batch
+	set := func(b *backup.Batch) {
+		mu.Lock()
+		defer mu.Unlock()
+		cur = b
+	}
+	h.SetBatchSource(func() *backup.Batch {
+		mu.Lock()
+		defer mu.Unlock()
+		return cur
+	})
+	s, ch := subscribe(t, h)
+	if s.Batch != nil {
+		t.Fatalf("batch = %+v, want nil before any", s.Batch)
+	}
+
+	set(&backup.Batch{ID: 3, StartedBy: "owner@example.com", Total: 4, Done: 1, OK: 1})
+	h.Publish()
+	got := nextUpdate(t, ch, 5*time.Second)
+	if got.Batch == nil || got.Batch.ID != 3 || got.Batch.Total != 4 || got.Batch.Done != 1 {
+		t.Fatalf("batch after publish = %+v, want id 3 total 4 done 1", got.Batch)
+	}
+
+	set(&backup.Batch{ID: 3, StartedBy: "owner@example.com", Total: 4, Done: 2, OK: 2})
+	h.Publish()
+	got = nextUpdate(t, ch, 5*time.Second)
+	if got.Batch == nil || got.Batch.Done != 2 {
+		t.Fatalf("batch after progress = %+v, want done 2", got.Batch)
 	}
 }

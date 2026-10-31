@@ -29,17 +29,27 @@ const workspaces: Workspace[] = [
   },
 ]
 
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
+
+/** The Backup defaults card's load, answered the same in every test here. */
+const BACKUP_SETTINGS = '/api/backup-settings'
+const backupSettings = () =>
+  json(200, {
+    defaults: { frequency: 'daily', time: '02:00', weekday: 0, keep: 14, compress: true },
+    timeZone: { name: 'UTC', offset: '+00:00' },
+  })
+
+/** serve answers GET /api/workspaces in order, the last repeating; the defaults card gets its settings. */
 function serve(...answers: Array<[number, unknown]>) {
   let n = 0
-  const fetchStub = vi.fn(async () => {
+  const fetchStub = vi.fn(async (url: string) => {
+    if (url === BACKUP_SETTINGS) return backupSettings()
     const [status, body] = answers[Math.min(n++, answers.length - 1)]
     return new Response(JSON.stringify(body), { status })
   })
   vi.stubGlobal('fetch', fetchStub)
   return fetchStub
 }
-
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
 
 type Handler = (init?: RequestInit) => Response
 
@@ -49,6 +59,7 @@ function route(table: Record<string, Handler | Handler[]>) {
   const stub = vi.fn(async (url: string, init?: RequestInit) => {
     const key = `${init?.method ?? 'GET'} ${url}`
     const h = table[key]
+    if (h === undefined && key === `GET ${BACKUP_SETTINGS}`) return backupSettings()
     if (h === undefined) return json(404, { error: `unrouted ${key}` })
     if (!Array.isArray(h)) return h(init)
     const n = used[key] ?? 0
@@ -139,7 +150,7 @@ describe('SettingsPage', () => {
     expect(alert).toHaveTextContent('Could not load workspaces')
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     expect(await screen.findByText('/srv/solo')).toBeInTheDocument()
-    expect(fetchStub).toHaveBeenCalledTimes(2)
+    expect(fetchStub.mock.calls.filter((c) => c[0] === '/api/workspaces')).toHaveLength(2)
   })
 
   it('treats a JSON answer that is not a list as an error', async () => {
@@ -153,10 +164,7 @@ describe('SettingsPage', () => {
     renderPage()
     const issueUrl = (n: number) =>
       `https://github.com/daniel-vuky/server-control-panel/issues/${n}`
-    for (const [name, issue] of [
-      ['Alerts', 8],
-      ['Backup defaults', 6],
-    ] as const) {
+    for (const [name, issue] of [['Alerts', 8]] as const) {
       const section = screen.getByRole('region', { name })
       expect(section).toHaveTextContent('Coming in #')
       expect(within(section).getByRole('link', { name: `#${issue}` })).toHaveAttribute(
@@ -165,6 +173,9 @@ describe('SettingsPage', () => {
       )
     }
     expect(screen.getByRole('region', { name: 'Google Drive' })).not.toHaveTextContent('Coming in')
+    expect(screen.getByRole('region', { name: 'Backup defaults' })).not.toHaveTextContent(
+      'Coming in',
+    )
     await screen.findByText('No workspace yet')
   })
 

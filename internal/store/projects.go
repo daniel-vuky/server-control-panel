@@ -60,6 +60,10 @@ type Tracked struct {
 	StopTemplate    string
 	AlertCPUPercent *int
 	AlertRAMMB      *int
+	// Schedules are the project's backup schedules keyed by db_key
+	// (project.DatabaseKey), never nil. A row whose database is no longer
+	// detected is included; look schedules up by the databases' keys.
+	Schedules map[string]Schedule
 }
 
 // ComposeValues are the runner values that name the project's compose files:
@@ -98,10 +102,10 @@ func (s *Store) TrackedProject(ctx context.Context, id int64) (Tracked, error) {
 	return ts[0], nil
 }
 
-// tracked lists the tracked projects with their databases; a non-zero only
-// limits it to that project id.
+// tracked lists the tracked projects with their databases and schedules; a
+// non-zero only limits it to that project id.
 func (s *Store) tracked(ctx context.Context, only int64) ([]Tracked, error) {
-	// One transaction, so both reads see the same snapshot: a concurrent
+	// One transaction, so all reads see the same snapshot: a concurrent
 	// AddWorkspace cannot show up in the second query but not the first.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -177,6 +181,7 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 			t.Services = append(t.Services, sv.Name)
 		}
 		t.Databases = []project.Database{}
+		t.Schedules = map[string]Schedule{}
 		byID[t.ID] = len(ts)
 		ts = append(ts, t)
 	}
@@ -213,5 +218,19 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 		}
 		ts[i].Databases = append(ts[i].Databases, d)
 	}
-	return ts, drows.Err()
+	if err := drows.Err(); err != nil {
+		return nil, err
+	}
+	_ = drows.Close()
+
+	scs, err := projectSchedules(ctx, tx, only)
+	if err != nil {
+		return nil, err
+	}
+	for _, sc := range scs {
+		if i, ok := byID[sc.ProjectID]; ok {
+			ts[i].Schedules[sc.DBKey] = sc
+		}
+	}
+	return ts, nil
 }

@@ -167,4 +167,17 @@ describe('backupLine', () => {
     )
     expect(backupLine(backup({ state: 'interrupted' }))).toBe('Interrupted')
   })
+
+  it('says when a succeeded backup could not remove old copies', () => {
+    const failedPrune = steps(
+      ['done', 'done', 'done', 'failed'],
+      ['', '', '', 'Could not remove 1 old copy: Google Drive is not reachable.'],
+    )
+    expect(backupLine(backup({ state: 'ok', steps: failedPrune }))).toBe(
+      'Succeeded · old copies not removed',
+    )
+    expect(
+      backupLine(backup({ state: 'ok', steps: steps(['done', 'done', 'done', 'done']) })),
+    ).toBe('Succeeded')
+  })
 })

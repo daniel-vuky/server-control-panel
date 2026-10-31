@@ -1,6 +1,13 @@
 import { act } from '@testing-library/react'
 import { useLocation } from 'react-router'
-import type { Backup, Container, Database, DriveStatus, Project } from '../api/types.gen'
+import type {
+  Backup,
+  BackupBatch,
+  Container,
+  Database,
+  DriveStatus,
+  Project,
+} from '../api/types.gen'
 import { projectRoute } from '../app/App'
 import { FakeEventSource } from './fakeEventSource'
 import { renderApp } from './renderApp'
@@ -31,7 +38,7 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
   }
 }
 
-/** makeDatabase is a container Postgres database; key defaults from type, location and name, backup to null. */
+/** makeDatabase is a container Postgres database; key defaults from type, location and name, backup and schedule to null. */
 export function makeDatabase(overrides: Partial<Database> = {}): Database {
   const d = {
     type: 'postgresql',
@@ -41,7 +48,7 @@ export function makeDatabase(overrides: Partial<Database> = {}): Database {
     sources: [],
     ...overrides,
   }
-  return { key: `${d.type}:${d.location}:${d.name}`, backup: null, ...d }
+  return { key: `${d.type}:${d.location}:${d.name}`, backup: null, schedule: null, ...d }
 }
 
 /**
@@ -79,6 +86,7 @@ export function makeBackup(overrides: Partial<Backup> = {}): Backup {
     finishedAt: '',
     durationMs: 0,
     queuePosition: 1,
+    prunedAt: null,
     ...overrides,
   }
 }
@@ -120,7 +128,7 @@ export function renderProject(path: string) {
 export function pushState(
   projects: Project[],
   dockerUp = true,
-  extra: { backups?: Backup[]; drive?: DriveStatus } = {},
+  extra: { backups?: Backup[]; batch?: BackupBatch | null; drive?: DriveStatus } = {},
 ) {
   act(() => {
     const es = FakeEventSource.latest('/api/events')
@@ -130,6 +138,7 @@ export function pushState(
       dockerUp,
       projects,
       backups: extra.backups ?? [],
+      batch: extra.batch ?? null,
       drive: extra.drive ?? { state: 'not_connected', email: '', folder: null, reason: '' },
     })
   })

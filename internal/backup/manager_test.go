@@ -399,7 +399,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 func (e *env) enqueue(t *testing.T, key string) int64 {
 	t.Helper()
-	id, err := e.m.Enqueue(context.Background(), e.shop, key, actor)
+	id, err := e.m.Enqueue(context.Background(), e.shop, key, Person(actor))
 	if err != nil {
 		t.Fatalf("Enqueue(%s): %v", key, err)
 	}
@@ -474,7 +474,7 @@ func TestHappyPathStepsSizesFileActivityTempGone(t *testing.T) {
 	if b.State != "ok" || b.FailedStep != "" || b.Error != "" || b.Hint != "" {
 		t.Fatalf("row = %+v", b)
 	}
-	if got := stepStates(b); got != "dump=done compress=done upload=done prune=skipped" {
+	if got := stepStates(b); got != "dump=done compress=done upload=done prune=done" {
 		t.Errorf("steps = %s", got)
 	}
 	if d := b.Steps[0].Detail; !strings.HasPrefix(d, "pg_dump · ") || !strings.HasSuffix(d, "s") {
@@ -483,7 +483,7 @@ func TestHappyPathStepsSizesFileActivityTempGone(t *testing.T) {
 	if d := b.Steps[1].Detail; !strings.HasPrefix(d, "gzip · ") || !strings.Contains(d, "→") {
 		t.Errorf("compress detail = %q", d)
 	}
-	if d := b.Steps[3].Detail; d != "No retention set yet. All copies are kept." {
+	if d := b.Steps[3].Detail; d != "Nothing to remove · 1 of 14 kept" {
 		t.Errorf("prune detail = %q", d)
 	}
 	if b.ProjectID != e.shop.ID || b.ProjectName != "Shop" || b.DBType != "postgresql" || b.DBName != "shop" ||
@@ -493,7 +493,7 @@ func TestHappyPathStepsSizesFileActivityTempGone(t *testing.T) {
 	if b.StartedAt == nil || b.FinishedAt == nil || b.StartedAt.Before(before.Add(-time.Second)) || b.FinishedAt.Before(*b.StartedAt) || b.DurationMS < 0 {
 		t.Errorf("times = %v %v %d", b.StartedAt, b.FinishedAt, b.DurationMS)
 	}
-	if want := FileName("Shop", "shop", "postgresql", *b.StartedAt); b.FileName != want {
+	if want := FileName("Shop", "shop", "postgresql", true, *b.StartedAt); b.FileName != want {
 		t.Errorf("file name = %q, want %q", b.FileName, want)
 	}
 
@@ -808,7 +808,7 @@ func TestUploadTokenExpiredFlipsDriveState(t *testing.T) {
 		t.Errorf("drive state = %s, want expired", st)
 	}
 	// The next Enqueue is refused at the Drive check.
-	_, err = e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+	_, err = e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 	if r := refusalOf(t, err); r.Code != CodeDriveExpired {
 		t.Errorf("code = %s", r.Code)
 	}
@@ -946,7 +946,7 @@ func TestRefusalsWriteRowsAndActivity(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t, envOpt{noStart: true})
 			tr, key := c.setup(e)
-			id, err := e.m.Enqueue(context.Background(), tr, key, actor)
+			id, err := e.m.Enqueue(context.Background(), tr, key, Person(actor))
 			r := refusalOf(t, err)
 			if id != 0 || r.Code != c.code || (c.words != "" && r.Words != c.words) || r.Service != c.service {
 				t.Fatalf("Enqueue = %d, %+v; want code %s words %q service %q", id, r, c.code, c.words, c.service)
@@ -980,7 +980,7 @@ func TestRefusalsWriteRowsAndActivity(t *testing.T) {
 
 	t.Run("folder missing", func(t *testing.T) {
 		e := newEnv(t, envOpt{noStart: true, noFolder: true})
-		_, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+		_, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 		if r := refusalOf(t, err); r.Code != CodeFolderMissing || r.Words != drive.Words(drive.CodeFolderMissing) || r.ID == 0 {
 			t.Errorf("refusal = %+v", r)
 		}
@@ -992,7 +992,7 @@ func TestRefusalsWriteRowsAndActivity(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.m.d = d
-		_, err = e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+		_, err = e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 		if r := refusalOf(t, err); r.Code != CodeDriveNotConnected || r.Words != "Google Drive is not set up on this server." {
 			t.Errorf("refusal = %+v", r)
 		}
@@ -1000,7 +1000,7 @@ func TestRefusalsWriteRowsAndActivity(t *testing.T) {
 	t.Run("already running", func(t *testing.T) {
 		e := newEnv(t, envOpt{noStart: true})
 		id := e.enqueue(t, keyPG)
-		got, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+		got, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 		r := refusalOf(t, err)
 		if got != 0 || r.Code != CodeAlreadyRunning || r.ID != id || r.Words != "A backup of shop is already running." {
 			t.Errorf("Enqueue = %d, %+v; want already_running %d", got, r, id)
@@ -1139,13 +1139,13 @@ func TestEnqueueConcurrentSameDatabaseOneBackup(t *testing.T) {
 	}
 	first := make(chan result, 1)
 	go func() {
-		id, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+		id, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 		first <- result{id, err}
 	}()
 	<-entered // the first holds the reservation, in its disk check
 	second := make(chan result, 1)
 	go func() {
-		id, err := e.m.Enqueue(context.Background(), e.shop, keyPG, "other@example.com")
+		id, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person("other@example.com"))
 		second <- result{id, err}
 	}()
 	waitFor(t, "the second Enqueue to wait", func() bool { return e.m.waiters(e.shop.ID, keyPG) == 1 })
@@ -1176,9 +1176,9 @@ func TestEnqueueWaiterGetsTheSameRefusal(t *testing.T) {
 		once.Do(func() { close(entered); <-release })
 	}
 	errs := make(chan error, 2)
-	go func() { _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); errs <- err }()
+	go func() { _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); errs <- err }()
 	<-entered
-	go func() { _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); errs <- err }()
+	go func() { _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); errs <- err }()
 	waitFor(t, "the waiter", func() bool { return e.m.waiters(e.shop.ID, keyPG) == 1 })
 	close(release)
 	a, b := refusalOf(t, <-errs), refusalOf(t, <-errs)
@@ -1198,11 +1198,11 @@ func TestEnqueueWaiterHonoursContext(t *testing.T) {
 	var once sync.Once
 	e.r.sizeHook = func(context.Context, call) { once.Do(func() { close(entered); <-release }) }
 	done := make(chan struct{})
-	go func() { _, _ = e.m.Enqueue(context.Background(), e.shop, keyPG, actor); close(done) }()
+	go func() { _, _ = e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); close(done) }()
 	<-entered
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() { _, err := e.m.Enqueue(ctx, e.shop, keyPG, actor); errc <- err }()
+	go func() { _, err := e.m.Enqueue(ctx, e.shop, keyPG, Person(actor)); errc <- err }()
 	waitFor(t, "the waiter", func() bool { return e.m.waiters(e.shop.ID, keyPG) == 1 })
 	cancel()
 	if err := <-errc; !errors.Is(err, context.Canceled) {
@@ -1269,11 +1269,11 @@ func TestRetry(t *testing.T) {
 	e := newEnv(t, envOpt{noStart: true})
 	ctx := context.Background()
 	e.hub.setState("db", "exited")
-	_, err := e.m.Enqueue(ctx, e.shop, keyPG, actor)
+	_, err := e.m.Enqueue(ctx, e.shop, keyPG, Person(actor))
 	refused := refusalOf(t, err)
 	e.hub.setState("db", "running")
 
-	id, err := e.m.Retry(ctx, refused.ID, "other@example.com")
+	id, err := e.m.Retry(ctx, refused.ID, Person("other@example.com"))
 	if err != nil || id == 0 || id == refused.ID {
 		t.Fatalf("Retry = %d, %v", id, err)
 	}
@@ -1283,13 +1283,13 @@ func TestRetry(t *testing.T) {
 	}
 	// The retry is now queued: retrying it is not allowed, and a second retry of
 	// the refused row is already_running.
-	if _, err := e.m.Retry(ctx, id, actor); refusalOf(t, err).Code != CodeNotRetryable {
+	if _, err := e.m.Retry(ctx, id, Person(actor)); refusalOf(t, err).Code != CodeNotRetryable {
 		t.Errorf("retry of a queued row: %v", err)
 	}
-	if _, err := e.m.Retry(ctx, refused.ID, actor); refusalOf(t, err).Code != CodeAlreadyRunning {
+	if _, err := e.m.Retry(ctx, refused.ID, Person(actor)); refusalOf(t, err).Code != CodeAlreadyRunning {
 		t.Errorf("second retry: %v", err)
 	}
-	if _, err := e.m.Retry(ctx, 9999, actor); !errors.Is(err, store.ErrNotFound) {
+	if _, err := e.m.Retry(ctx, 9999, Person(actor)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown id: %v", err)
 	}
 
@@ -1299,7 +1299,7 @@ func TestRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.m.Retry(ctx, okID, actor); refusalOf(t, err).Code != CodeNotRetryable {
+	if _, err := e.m.Retry(ctx, okID, Person(actor)); refusalOf(t, err).Code != CodeNotRetryable {
 		t.Errorf("retry of an ok row: %v", err)
 	}
 	goneID, err := e.st.InsertBackup(ctx, store.Backup{ProjectID: e.shop.ID, ProjectName: "Shop", DBType: "postgresql", DBName: "old",
@@ -1307,7 +1307,7 @@ func TestRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.m.Retry(ctx, goneID, actor); refusalOf(t, err).Code != CodeUnknownDatabase {
+	if _, err := e.m.Retry(ctx, goneID, Person(actor)); refusalOf(t, err).Code != CodeUnknownDatabase {
 		t.Errorf("retry of a gone database: %v", err)
 	} else if r := refusalOf(t, err); r.Words != "This database is no longer detected." {
 		t.Errorf("words = %q", r.Words)
@@ -1318,7 +1318,7 @@ func TestRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.m.Retry(ctx, lostID, actor); refusalOf(t, err).Code != CodeNotFound {
+	if _, err := e.m.Retry(ctx, lostID, Person(actor)); refusalOf(t, err).Code != CodeNotFound {
 		t.Errorf("retry of an untracked project: %v", err)
 	}
 }
@@ -1329,7 +1329,7 @@ func TestStartupRemovesLeftoverTempFiles(t *testing.T) {
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"backup-7.gz", "backup-12.gz", "keep.txt"} {
+	for _, name := range []string{"backup-7.gz", "backup-12.gz", "backup-9.raw", "keep.txt"} {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -1361,7 +1361,7 @@ func TestPlaceholderNames(t *testing.T) {
 		t.Errorf("service = %q", dumps[0].v["service"])
 	}
 
-	_, err := e.m.Enqueue(context.Background(), e.shop, keyMyPlace, actor)
+	_, err := e.m.Enqueue(context.Background(), e.shop, keyMyPlace, Person(actor))
 	if r := refusalOf(t, err); r.Code != CodeNoDBName {
 		t.Errorf("mysql placeholder: %+v", r)
 	}
@@ -1378,7 +1378,7 @@ func TestPlaceholderNames(t *testing.T) {
 	if err := e.st.ApplyRescan(context.Background(), apply, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	id, err := e.m.Enqueue(context.Background(), withOverride, keyMongo, actor)
+	id, err := e.m.Enqueue(context.Background(), withOverride, keyMongo, Person(actor))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1406,7 +1406,7 @@ func TestServiceResolvedFromContainerName(t *testing.T) {
 	e.hub.mu.Lock()
 	e.hub.up, e.hub.cs = false, nil
 	e.hub.mu.Unlock()
-	_, err := e.m.Enqueue(context.Background(), e.shop, keyMySQL, actor)
+	_, err := e.m.Enqueue(context.Background(), e.shop, keyMySQL, Person(actor))
 	if r := refusalOf(t, err); r.Code != CodeDockerDown || r.Service != "mysql" || r.Words != "Docker is not responding." {
 		t.Errorf("refusal = %+v", r)
 	}
@@ -1507,7 +1507,7 @@ func TestDiskRuleAndFallback(t *testing.T) {
 			e := newEnv(t, envOpt{noStart: true})
 			e.r.sizeOut, e.r.sizeErr = c.sizeOut, c.sizeErr
 			e.free.Store(c.need - 1)
-			_, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+			_, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 			r := refusalOf(t, err)
 			if r.Code != CodeDiskShort || r.NeedBytes != c.need || r.FreeBytes != c.need-1 {
 				t.Fatalf("refusal = %+v, want need %d", r, c.need)
@@ -1517,7 +1517,7 @@ func TestDiskRuleAndFallback(t *testing.T) {
 				t.Errorf("words = %q, want %q", r.Words, want)
 			}
 			e.free.Store(c.need)
-			if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); err != nil {
+			if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); err != nil {
 				t.Errorf("with exactly the need free: %v", err)
 			}
 		})
@@ -1583,7 +1583,7 @@ func TestCloseInterruptsRunningAndQueued(t *testing.T) {
 	if len(e.m.Active()) != 0 {
 		t.Errorf("active = %+v", e.m.Active())
 	}
-	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); !errors.Is(err, ErrClosed) {
+	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); !errors.Is(err, ErrClosed) {
 		t.Errorf("Enqueue after Close: %v", err)
 	}
 }
@@ -1691,7 +1691,7 @@ func TestEnqueueCancelledDuringChecksRecordsNothing(t *testing.T) {
 	e.r.sizeHook = func(context.Context, call) { once.Do(cancel) }
 	// The cancelled size read would fall back to 500 MiB; this disk has less.
 	e.free.Store(1)
-	if _, err := e.m.Enqueue(ctx, e.shop, keyPG, actor); !errors.Is(err, context.Canceled) {
+	if _, err := e.m.Enqueue(ctx, e.shop, keyPG, Person(actor)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 	rows, _, _ := e.st.ProjectBackups(context.Background(), e.shop.ID, 0, 10)
@@ -1699,7 +1699,7 @@ func TestEnqueueCancelledDuringChecksRecordsNothing(t *testing.T) {
 		t.Errorf("a cancelled Enqueue recorded rows %+v, activity %+v", rows, e.activity(t))
 	}
 	e.free.Store(100 * gib)
-	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); err != nil {
+	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); err != nil {
 		t.Errorf("the reservation was not released: %v", err)
 	}
 }
@@ -1718,7 +1718,7 @@ func TestWaiterRetriesAfterCancelledHolder(t *testing.T) {
 		})
 	}
 	holder := make(chan error, 1)
-	go func() { _, err := e.m.Enqueue(holderCtx, e.shop, keyPG, actor); holder <- err }()
+	go func() { _, err := e.m.Enqueue(holderCtx, e.shop, keyPG, Person(actor)); holder <- err }()
 	<-entered
 	type result struct {
 		id  int64
@@ -1726,7 +1726,7 @@ func TestWaiterRetriesAfterCancelledHolder(t *testing.T) {
 	}
 	waiter := make(chan result, 1)
 	go func() {
-		id, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+		id, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 		waiter <- result{id, err}
 	}()
 	waitFor(t, "the waiter", func() bool { return e.m.waiters(e.shop.ID, keyPG) == 1 })
@@ -1749,7 +1749,7 @@ func TestStartContextCancelClosesManager(t *testing.T) {
 	if err := e.m.Wait(wctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); !errors.Is(err, ErrClosed) {
+	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); !errors.Is(err, ErrClosed) {
 		t.Errorf("Enqueue after the worker stopped: %v, want ErrClosed", err)
 	}
 }
@@ -1785,12 +1785,12 @@ func TestNoDBNameWordsPerType(t *testing.T) {
 	pg := e.shop
 	pg.Databases = append(append([]project.Database(nil), e.shop.Databases...),
 		project.Database{Type: "postgresql", Name: "-x", LocationKind: "container", Location: "db", Sources: []string{"service db"}})
-	_, err := e.m.Enqueue(context.Background(), pg, "postgresql:db:-x", actor)
+	_, err := e.m.Enqueue(context.Background(), pg, "postgresql:db:-x", Person(actor))
 	r := refusalOf(t, err)
 	if want := "The database name is not usable. Set POSTGRES_DB on the service, then rescan."; r.Code != CodeNoDBName || r.Words != want {
 		t.Errorf("postgres refusal = %+v, want %q", r, want)
 	}
-	_, err = e.m.Enqueue(context.Background(), e.shop, keyMyPlace, actor)
+	_, err = e.m.Enqueue(context.Background(), e.shop, keyMyPlace, Person(actor))
 	if r := refusalOf(t, err); r.Words != "The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan." {
 		t.Errorf("mysql words = %q", r.Words)
 	}
@@ -1805,7 +1805,7 @@ func TestAlreadyRunningBeforeDriveCheck(t *testing.T) {
 	if err := e.drv.Disconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor)
+	got, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
 	if r := refusalOf(t, err); got != 0 || r.Code != CodeAlreadyRunning || r.ID != id {
 		t.Fatalf("Enqueue = %d, %+v; want already_running %d", got, r, id)
 	}
@@ -1814,7 +1814,7 @@ func TestAlreadyRunningBeforeDriveCheck(t *testing.T) {
 		t.Errorf("rows = %+v, activity = %+v; want only the queued row", rows, e.activity(t))
 	}
 	// Another database still gets the Drive refusal.
-	_, err = e.m.Enqueue(context.Background(), e.shop, keyMongo, actor)
+	_, err = e.m.Enqueue(context.Background(), e.shop, keyMongo, Person(actor))
 	if r := refusalOf(t, err); r.Code != CodeDriveNotConnected {
 		t.Errorf("other database = %+v", r)
 	}
@@ -1865,7 +1865,7 @@ func TestInterruptedWithoutStartRecordsActivity(t *testing.T) {
 		var once sync.Once
 		e.r.sizeHook = func(context.Context, call) { once.Do(func() { close(entered); <-release }) }
 		done := make(chan int64, 1)
-		go func() { id, _ := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); done <- id }()
+		go func() { id, _ := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor)); done <- id }()
 		<-entered
 		e.m.Close()
 		close(release)
@@ -1964,5 +1964,171 @@ func TestAvailBytesUsesFragmentSize(t *testing.T) {
 	s.Frsize = 0
 	if got := availBytes(&s); got != 1000<<20 {
 		t.Errorf("availBytes without Frsize = %d, want %d", got, 1000<<20)
+	}
+}
+
+// setSchedule stores key's schedule with keep and compress (frequency off) and
+// re-reads the project, whose Schedules Enqueue snapshots.
+func (e *env) setSchedule(t *testing.T, key string, keep int, compress bool) {
+	t.Helper()
+	ctx := context.Background()
+	f := store.ScheduleFields{Frequency: store.FrequencyOff, Time: "02:00", Keep: keep, Compress: compress}
+	if _, _, err := e.st.SetSchedule(ctx, e.shop.ID, key, f, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := e.st.TrackedProject(ctx, e.shop.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.shop = tr
+}
+
+func TestScheduleActorRecorded(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if ScheduleActor != (Actor{Name: "schedule", Kind: store.ActorSchedule}) || Person(actor) != (Actor{Name: actor, Kind: store.ActorPerson}) {
+		t.Fatalf("actors = %+v %+v", ScheduleActor, Person(actor))
+	}
+
+	id, err := e.m.Enqueue(ctx, e.shop, keyPG, ScheduleActor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := e.waitDone(t, id)
+	if b.State != "ok" || b.StartedBy != "schedule" {
+		t.Fatalf("row = %q started by %q", b.State, b.StartedBy)
+	}
+	// A refusal stored at Enqueue is the schedule's too.
+	_, err = e.m.Enqueue(ctx, e.shop, keyStopped, ScheduleActor)
+	r := refusalOf(t, err)
+	if r.Code != CodeDBNotRunning || r.ID == 0 {
+		t.Fatalf("refusal = %+v", r)
+	}
+	if rb, _ := e.st.GetBackup(ctx, r.ID); rb.State != "refused" || rb.StartedBy != "schedule" {
+		t.Fatalf("refused row = %q started by %q", rb.State, rb.StartedBy)
+	}
+	// A person's backup stays a person's.
+	pb := e.waitDone(t, e.enqueue(t, keyMongo))
+
+	acts := e.activity(t)
+	if len(acts) != 3 {
+		t.Fatalf("activity = %+v", acts)
+	}
+	byResult := map[string]store.ActivityRow{}
+	for _, a := range acts {
+		byResult[a.Target+" "+a.Result] = a
+	}
+	for what, want := range map[string][2]string{
+		"Shop · shop " + store.ResultOK:    {"schedule", store.ActorSchedule},
+		"Shop · st " + store.ResultRefused: {"schedule", store.ActorSchedule},
+		"Shop · notes " + store.ResultOK:   {actor, store.ActorPerson},
+	} {
+		a, ok := byResult[what]
+		if !ok || a.Actor != want[0] || a.ActorKind != want[1] {
+			t.Errorf("activity %s = %+v, want actor %s kind %s", what, a, want[0], want[1])
+		}
+	}
+	if pb.StartedBy != actor {
+		t.Errorf("person's row started by %q", pb.StartedBy)
+	}
+}
+
+// A backup that ends before its activity started (drained at Close) records
+// the schedule as its actor too.
+func TestScheduleActorRecordedWhenUnstarted(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, ScheduleActor); err != nil {
+		t.Fatal(err)
+	}
+	e.m.Close()
+	acts := e.activity(t)
+	if len(acts) != 1 || acts[0].Result != store.ResultInterrupted || acts[0].Actor != "schedule" || acts[0].ActorKind != store.ActorSchedule {
+		t.Fatalf("activity = %+v", acts)
+	}
+}
+
+func TestCompressionOffRawFileSkippedStepAndDiskRule(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.setSchedule(t, keyPG, 14, false)
+
+	// The disk rule needs the whole size + 100 MiB (the size read says 1 MiB).
+	e.free.Store(mib + 100*mib - 1)
+	_, err := e.m.Enqueue(ctx, e.shop, keyPG, Person(actor))
+	if r := refusalOf(t, err); r.Code != CodeDiskShort || r.NeedBytes != mib+100*mib {
+		t.Fatalf("refusal = %+v, want disk_short needing 101 MiB", r)
+	}
+	e.free.Store(100 * gib)
+
+	seen := make(chan []string, 1)
+	e.r.dump = func(_ context.Context, c call, w io.Writer) ([]byte, error) {
+		m, _ := filepath.Glob(filepath.Join(e.dataDir, "tmp", "backup-*"))
+		seen <- m
+		_, err := w.Write(defaultDump(c))
+		return nil, err
+	}
+	id := e.enqueue(t, keyPG)
+	b := e.waitDone(t, id)
+	if b.State != "ok" {
+		t.Fatalf("row = %+v", b)
+	}
+	if got, want := <-seen, []string{filepath.Join(e.dataDir, "tmp", fmt.Sprintf("backup-%d.raw", id))}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("temp files during the dump = %v, want %v", got, want)
+	}
+	if got := stepStates(b); got != "dump=done compress=skipped upload=done prune=done" {
+		t.Errorf("steps = %s", got)
+	}
+	if b.Steps[1].Detail != "Compression off" {
+		t.Errorf("compress detail = %q", b.Steps[1].Detail)
+	}
+	if want := FileName("Shop", "shop", "postgresql", false, *b.StartedAt); b.FileName != want || !strings.HasSuffix(b.FileName, ".sql") {
+		t.Errorf("file name = %q, want %q", b.FileName, want)
+	}
+	raw := defaultDump(e.r.callsOf(isDumpAction)[0])
+	if b.RawBytes != int64(len(raw)) || b.SizeBytes != b.RawBytes {
+		t.Errorf("sizes = raw %d, size %d; want both %d", b.RawBytes, b.SizeBytes, len(raw))
+	}
+	sess, _, err := e.drv.Session(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := sess.Download(ctx, b.DriveFileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if !bytes.Equal(got, raw) {
+		t.Error("the uploaded file is not the raw dump")
+	}
+	if left := tempFiles(t, e.dataDir); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+
+	// MongoDB is an .archive; compression on again needs only half the size.
+	e.r.mu.Lock()
+	e.r.dump = nil
+	e.r.mu.Unlock()
+	e.setSchedule(t, keyMongo, 14, false)
+	if mb := e.waitDone(t, e.enqueue(t, keyMongo)); !strings.HasSuffix(mb.FileName, ".archive") {
+		t.Errorf("mongo file = %q", mb.FileName)
+	}
+	e.setSchedule(t, keyPG, 14, true)
+	e.free.Store(mib + 100*mib - 1)
+	if zb := e.waitDone(t, e.enqueue(t, keyPG)); zb.State != "ok" || !strings.HasSuffix(zb.FileName, ".sql.gz") || zb.Steps[1].State != "done" {
+		t.Errorf("compressed row = %q %q %s", zb.State, zb.FileName, stepStates(zb))
+	}
+}
+
+// The job snapshots the database's settings at Enqueue; a later change
+// applies to the next backup.
+func TestCompressionSnapshotAtEnqueue(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	e.setSchedule(t, keyPG, 14, false)
+	id := e.enqueue(t, keyPG)
+	e.setSchedule(t, keyPG, 14, true)
+	e.start(t)
+	if b := e.waitDone(t, id); b.State != "ok" || !strings.HasSuffix(b.FileName, ".sql") {
+		t.Fatalf("row = %q %q", b.State, b.FileName)
 	}
 }

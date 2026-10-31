@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/backup"
@@ -33,6 +34,12 @@ type Deps struct {
 
 	Drive   *drive.Service  // the Google Drive connection
 	Backups *backup.Manager // queues and runs the backups
+
+	// Zone is the server zone schedule times, next runs and the backup page's
+	// days are read in (UTC when nil); Now is the clock (time.Now when nil).
+	// Neither is required: main owns the scheduler that uses the same ones.
+	Zone *time.Location
+	Now  func() time.Time
 }
 
 // server holds what the handlers share.
@@ -43,8 +50,8 @@ type server struct {
 
 // NewRouter returns the panel's handler. Only GET /api/health is public; every
 // other path needs a verified identity (ADR 0006). It panics when a dependency
-// other than Version is nil, so a misconfigured server fails at startup rather
-// than per request.
+// other than Version, Zone or Now is nil, so a misconfigured server fails at
+// startup rather than per request.
 func NewRouter(d Deps) http.Handler {
 	for _, dep := range []struct {
 		name string
@@ -65,6 +72,12 @@ func NewRouter(d Deps) http.Handler {
 		if dep.nil {
 			panic("api.NewRouter: Deps." + dep.name + " is nil")
 		}
+	}
+	if d.Zone == nil {
+		d.Zone = time.UTC
+	}
+	if d.Now == nil {
+		d.Now = time.Now
 	}
 	s := &server{Deps: d, log: slog.Default()}
 	protect := auth.Require(d.Verifier)
@@ -87,11 +100,18 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/projects/{id}/untrack", protect(requireJSON(http.HandlerFunc(s.untrackProject))))
 	mux.Handle("POST /api/projects/{id}/settings", protect(requireJSON(http.HandlerFunc(s.projectSettings))))
 	mux.Handle("GET /api/projects/{id}/logs", protect(http.HandlerFunc(s.projectLogs)))
-	// The literal backups segment wins over {action} too, so a backup never
-	// reaches projectAction.
+	// The literal backups and backup-schedule segments win over {action} too,
+	// so neither ever reaches projectAction.
 	mux.Handle("POST /api/projects/{id}/backups", protect(requireJSON(http.HandlerFunc(s.enqueueBackup))))
 	mux.Handle("GET /api/projects/{id}/backups", protect(http.HandlerFunc(s.projectBackups)))
+	mux.Handle("POST /api/projects/{id}/backup-schedule", protect(requireJSON(http.HandlerFunc(s.backupSchedule))))
 	mux.Handle("POST /api/projects/{id}/{action}", protect(requireJSON(http.HandlerFunc(s.projectAction))))
+	mux.Handle("GET /api/backup-settings", protect(http.HandlerFunc(s.backupSettings)))
+	mux.Handle("POST /api/backup-settings/defaults", protect(requireJSON(http.HandlerFunc(s.backupDefaults))))
+	// The literal all and summary segments win over {id}.
+	mux.Handle("POST /api/backups/all", protect(requireJSON(http.HandlerFunc(s.backupAll))))
+	mux.Handle("GET /api/backups", protect(http.HandlerFunc(s.listBackups)))
+	mux.Handle("GET /api/backups/summary", protect(http.HandlerFunc(s.backupSummary)))
 	mux.Handle("GET /api/backups/{id}", protect(http.HandlerFunc(s.getBackup)))
 	mux.Handle("POST /api/backups/{id}/retry", protect(requireJSON(http.HandlerFunc(s.retryBackup))))
 	mux.Handle("GET /api/backups/{id}/download", protect(http.HandlerFunc(s.downloadBackup)))

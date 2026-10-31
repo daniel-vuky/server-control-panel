@@ -179,7 +179,10 @@ export function backupLine(b: Backup): string {
       return pct === null ? doing : `${doing} · ${pct}%`
     }
     case 'ok':
-      return 'Succeeded'
+      // Removing old copies failed: the new copy is safe on Drive (decision 11).
+      return b.steps.some((s) => s.step === 'prune' && s.state === 'failed')
+        ? 'Succeeded · old copies not removed'
+        : 'Succeeded'
     case 'failed': {
       const step = STEP_NAMES[b.failedStep]
       const head = step ? `Failed at ${step}` : 'Failed'

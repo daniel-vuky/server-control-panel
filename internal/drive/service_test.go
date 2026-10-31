@@ -424,6 +424,57 @@ func TestReconnectSameAccountKeepsFolder(t *testing.T) {
 	}
 }
 
+// TestReconnectSameAccountKeepsFolderAfterExpiry pins decision 26 of the
+// schedules flow: an expired connection reconnected with the same Google
+// account keeps its folder; one reconnected with another account loses it.
+func TestReconnectSameAccountKeepsFolderAfterExpiry(t *testing.T) {
+	ctx := context.Background()
+	e := newSvcEnv(t)
+	e.connect(t, "a@x")
+	f, err := e.svc.CreateFolder(ctx, "server-backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expire := func() {
+		t.Helper()
+		sess, _, err := e.svc.Session(ctx)
+		if err != nil {
+			t.Fatalf("Session = %v", err)
+		}
+		if err := e.client.Session(e.client.lastRefresh()).Revoke(ctx); err != nil {
+			t.Fatal(err)
+		}
+		_, err = sess.ListFolders(ctx)
+		wantCode(t, err, CodeTokenExpired)
+		if st := e.svc.Status(); st.State != StateExpired {
+			t.Fatalf("Status = %+v, want expired", st)
+		}
+	}
+
+	expire()
+	e.connect(t, "b@x")
+	st := e.svc.Status()
+	if st.State != StateConnected || st.Folder == nil || *st.Folder != f {
+		t.Fatalf("Status after same-account reconnect = %+v, want connected with folder %+v", st, f)
+	}
+	if row, _, _ := e.st.Drive(ctx); row.State != "connected" || row.FolderID != f.ID {
+		t.Fatalf("row = %+v, want connected with folder %q", row, f.ID)
+	}
+
+	expire()
+	e.client.mu.Lock()
+	e.client.email = "other@example.com"
+	e.client.mu.Unlock()
+	e.connect(t, "b@x")
+	st = e.svc.Status()
+	if st.State != StateConnected || st.Email != "other@example.com" || st.Folder != nil {
+		t.Fatalf("Status after other-account reconnect = %+v, want connected, no folder", st)
+	}
+	if row, _, _ := e.st.Drive(ctx); row.FolderID != "" {
+		t.Fatalf("row folder = %q, want none", row.FolderID)
+	}
+}
+
 func TestOtherAccountClearsFolder(t *testing.T) {
 	ctx := context.Background()
 	e := newSvcEnv(t)
