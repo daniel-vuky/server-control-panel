@@ -58,8 +58,9 @@ func (s *Store) RemoveWorkspace(ctx context.Context, id int64) (Workspace, error
 }
 
 // UntrackProject stops tracking a project and returns it as it was. A normal
-// tracked project becomes ignored, its databases dropped; a project that a
-// rescan could not find (missing_since set) is deleted, so a gone folder does
+// tracked project becomes ignored, its databases and schedules dropped; a
+// project that a rescan could not find (missing_since set) is deleted (its
+// databases and schedules by cascade), so a gone folder does
 // not linger as an ignored row. An unknown or ignored id gives ErrNotFound.
 func (s *Store) UntrackProject(ctx context.Context, id int64) (Tracked, error) {
 	if id <= 0 { // 0 would list every tracked project in trackedIn
@@ -79,10 +80,13 @@ func (s *Store) UntrackProject(ctx context.Context, id int64) (Tracked, error) {
 	}
 	t := ts[0]
 	if t.MissingSince != nil {
-		_, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id) // databases cascade
+		_, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id) // databases and schedules cascade
 	} else {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM databases WHERE project_id = ?`, id); err == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE projects SET state = 'ignored', missing_since = NULL WHERE id = ?`, id)
+			// Re-tracking starts from the defaults.
+			if _, err = tx.ExecContext(ctx, `DELETE FROM backup_schedules WHERE project_id = ?`, id); err == nil {
+				_, err = tx.ExecContext(ctx, `UPDATE projects SET state = 'ignored', missing_since = NULL WHERE id = ?`, id)
+			}
 		}
 	}
 	if err != nil {
@@ -142,7 +146,7 @@ func (s *Store) ApplyRescan(ctx context.Context, r RescanApply, now time.Time) e
 			continue
 		}
 		for _, p := range w.Refresh {
-			if err := refreshProject(ctx, tx, p); err != nil {
+			if err := refreshProject(ctx, tx, p, formatTime(now)); err != nil {
 				return err
 			}
 		}
@@ -171,7 +175,7 @@ func (s *Store) ApplyRescan(ctx context.Context, r RescanApply, now time.Time) e
 	return nil
 }
 
-func refreshProject(ctx context.Context, tx *sql.Tx, p ProjectRefresh) error {
+func refreshProject(ctx context.Context, tx *sql.Tx, p ProjectRefresh, now string) error {
 	var id int64
 	err := tx.QueryRowContext(ctx,
 		`SELECT id FROM projects WHERE path = ? AND state = 'tracked'`, p.Path).Scan(&id)
@@ -203,7 +207,7 @@ func refreshProject(ctx context.Context, tx *sql.Tx, p ProjectRefresh) error {
 		files, c.ComposeProject, details, id); err != nil {
 		return fmt.Errorf("store: apply rescan: %w", err)
 	}
-	return replaceDatabases(ctx, tx, id, c.Databases)
+	return replaceDatabases(ctx, tx, id, c.Databases, now)
 }
 
 func encodeConfig(files []string, d project.Details) (filesJSON, detailsJSON string, err error) {
@@ -241,14 +245,18 @@ func insertProject(ctx context.Context, tx *sql.Tx, workspaceID int64, p NewProj
 		return 0, err
 	}
 	if p.Tracked {
-		if err := replaceDatabases(ctx, tx, id, p.Databases); err != nil {
+		if err := replaceDatabases(ctx, tx, id, p.Databases, now); err != nil {
 			return 0, err
 		}
 	}
 	return id, nil
 }
 
-func replaceDatabases(ctx context.Context, tx *sql.Tx, projectID int64, dbs []project.Database) error {
+// replaceDatabases replaces a project's stored databases and, for a tracked
+// project, gives each new one a schedule from the current defaults, in the
+// caller's transaction (now is its updated_at). Schedules of databases no
+// longer detected are kept, so one that comes back finds its settings.
+func replaceDatabases(ctx context.Context, tx *sql.Tx, projectID int64, dbs []project.Database, now string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM databases WHERE project_id = ?`, projectID); err != nil {
 		return fmt.Errorf("store: replace databases: %w", err)
 	}
@@ -263,7 +271,7 @@ func replaceDatabases(ctx context.Context, tx *sql.Tx, projectID int64, dbs []pr
 			return fmt.Errorf("store: replace databases: %w", err)
 		}
 	}
-	return nil
+	return insertDefaultSchedules(ctx, tx, projectID, now)
 }
 
 // AddItem is a project a rescan found, for an existing workspace.
@@ -349,7 +357,7 @@ func (s *Store) AddProjects(ctx context.Context, jobID int64, items []AddItem) (
 			if it.Tracked {
 				dbs = it.Databases
 			}
-			if err := replaceDatabases(ctx, tx, id, dbs); err != nil {
+			if err := replaceDatabases(ctx, tx, id, dbs, now); err != nil {
 				return 0, err
 			}
 		}

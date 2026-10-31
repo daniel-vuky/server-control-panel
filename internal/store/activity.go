@@ -32,6 +32,9 @@ const (
 	ActDriveConnect    = "drive.connect"
 	ActDriveFolder     = "drive.folder"
 	ActDriveDisconnect = "drive.disconnect"
+	ActBackupSchedule  = "backup.schedule"
+	ActBackupDefaults  = "backup.defaults"
+	ActBackupAll       = "backup.all"
 )
 
 // How it ended.
