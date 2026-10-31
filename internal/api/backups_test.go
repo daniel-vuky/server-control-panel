@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -837,5 +838,55 @@ func TestSafeFileNameFallback(t *testing.T) {
 	}
 	if got := contentTypeOf("x.archive"); got != "application/octet-stream" {
 		t.Errorf("archive = %q", got)
+	}
+}
+
+func TestLatestBackupsRoute(t *testing.T) {
+	d, h, alpha := scheduleSetup(t, mustZone(t, "Asia/Ho_Chi_Minh"))
+	ledger := addLedger(t, d)
+
+	// No backup at all: a null latest and an empty list, not null.
+	rec := do(h, http.MethodGet, "/api/backups/latest")
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"latest":null,"projects":[]}` {
+		t.Fatalf("empty latest = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Alpha's newest ended backup counts, not the running one after it; the
+	// ledger's refused row is the highest id.
+	insertAt(t, d, alpha, "ok", time.Date(2030, 1, 14, 1, 0, 0, 0, time.UTC), nil)
+	failed := insertAt(t, d, alpha, "failed", time.Date(2030, 1, 15, 1, 0, 0, 0, time.UTC), nil)
+	insertAt(t, d, alpha, "running", time.Date(2030, 1, 15, 2, 0, 0, 0, time.UTC), nil)
+	refused := insertAt(t, d, ledger, "refused", time.Date(2030, 1, 15, 3, 0, 0, 0, time.UTC), func(b *store.Backup) {
+		b.ProjectName, b.DBName = "Ledger", "books"
+	})
+
+	rec = do(h, http.MethodGet, "/api/backups/latest")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("latest = %d %s", rec.Code, rec.Body.String())
+	}
+	got := decode[LatestBackups](t, rec)
+	wantAlpha := LatestBackup{ID: failed, ProjectID: alpha, ProjectName: "Alpha", Database: "alpha", State: "failed", At: "2030-01-15T01:00:00Z"}
+	wantLedger := LatestBackup{ID: refused, ProjectID: ledger, ProjectName: "Ledger", Database: "books", State: "refused", At: "2030-01-15T03:00:00Z"}
+	if got.Latest == nil || *got.Latest != wantLedger {
+		t.Errorf("latest = %+v, want %+v", got.Latest, wantLedger)
+	}
+	if !reflect.DeepEqual(got.Projects, []LatestBackup{wantLedger, wantAlpha}) {
+		t.Errorf("projects = %+v, want ledger then alpha", got.Projects)
+	}
+}
+
+func TestLatestBackupsLiteralWinsOverID(t *testing.T) {
+	_, h, _ := scheduleSetup(t, time.UTC)
+
+	// GET is the literal route (getBackup would answer 404 for "latest").
+	rec := do(h, http.MethodGet, "/api/backups/latest")
+	if raw := decodeRaw(t, rec.Body.Bytes()); rec.Code != http.StatusOK || raw["projects"] == nil {
+		t.Errorf("GET /api/backups/latest = %d %s", rec.Code, rec.Body.String())
+	}
+	// Only GET is routed: a POST answers as a POST to summary does.
+	want := doJSON(h, http.MethodPost, "/api/backups/summary", "")
+	got := doJSON(h, http.MethodPost, "/api/backups/latest", "")
+	if got.Code != want.Code || got.Body.String() != want.Body.String() {
+		t.Errorf("POST latest = %d %s, POST summary = %d %s", got.Code, got.Body.String(), want.Code, want.Body.String())
 	}
 }

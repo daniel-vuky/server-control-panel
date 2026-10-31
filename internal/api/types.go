@@ -628,7 +628,9 @@ type SummaryNextRun struct {
 // server metrics). Hostname, OS, Kernel and Docker.Version are "" before
 // Docker has answered once. DisksPartial means the one fallback row ("/
 // (panel data)"): re-running install.sh lists every disk. SampleSeconds is the
-// sampling interval and RetentionDays how long history is kept.
+// sampling interval and RetentionDays how long history is kept. Load is the
+// host's load averages and BootTime when it booted (RFC 3339 in the server
+// zone), each null when /proc cannot be read.
 type ServerInfo struct {
 	Available     bool          `json:"available"`
 	Reason        string        `json:"reason,omitempty"`
@@ -645,6 +647,15 @@ type ServerInfo struct {
 	SampleSeconds int           `json:"sampleSeconds"`
 	RetentionDays int           `json:"retentionDays"`
 	TimeZone      TimeZone      `json:"timeZone"`
+	Load          *LoadAverage  `json:"load" tstype:"LoadAverage | null,required"`
+	BootTime      *string       `json:"bootTime" tstype:"string | null,required"`
+}
+
+// LoadAverage is ServerInfo.Load: the 1, 5 and 15 minute load averages.
+type LoadAverage struct {
+	One     float64 `json:"one"`
+	Five    float64 `json:"five"`
+	Fifteen float64 `json:"fifteen"`
 }
 
 // DockerService is ServerInfo.Docker: State is running, not_responding or
@@ -679,8 +690,10 @@ type Thresholds struct {
 }
 
 // ServerPoint is one bucket of a ServerSeries: T is the bucket start; CPU is %
-// of the whole machine, memory in bytes, the rates in bytes per second; a
-// value is null where nothing was sampled (a gap).
+// of the whole machine, memory and disk space in bytes, the rates in bytes per
+// second, Load1 the 1-minute load average and Tunnel the share of the bucket
+// cloudflared was connected (1 connected, 0 not); a value is null where
+// nothing was sampled (a gap).
 type ServerPoint struct {
 	T         string   `json:"t"`
 	CPU       *float64 `json:"cpu" tstype:"number | null,required"`
@@ -690,6 +703,10 @@ type ServerPoint struct {
 	DiskWrite *float64 `json:"diskWrite" tstype:"number | null,required"`
 	NetIn     *float64 `json:"netIn" tstype:"number | null,required"`
 	NetOut    *float64 `json:"netOut" tstype:"number | null,required"`
+	Load1     *float64 `json:"load1" tstype:"number | null,required"`
+	DiskUsed  *int64   `json:"diskUsed" tstype:"number | null,required"`
+	DiskTotal *int64   `json:"diskTotal" tstype:"number | null,required"`
+	Tunnel    *float64 `json:"tunnel" tstype:"number | null,required"`
 }
 
 // ServerLatest is ServerSeries.Latest, the newest sample (at most 90 s old):
@@ -703,6 +720,10 @@ type ServerLatest struct {
 	DiskWrite *float64 `json:"diskWrite" tstype:"number | null,required"`
 	NetIn     *float64 `json:"netIn" tstype:"number | null,required"`
 	NetOut    *float64 `json:"netOut" tstype:"number | null,required"`
+	Load1     *float64 `json:"load1" tstype:"number | null,required"`
+	DiskUsed  *int64   `json:"diskUsed" tstype:"number | null,required"`
+	DiskTotal *int64   `json:"diskTotal" tstype:"number | null,required"`
+	Tunnel    *float64 `json:"tunnel" tstype:"number | null,required"`
 }
 
 // ServerSeries is the body of GET /api/server/metrics: one point per bucket
@@ -802,4 +823,25 @@ type UsageReport struct {
 // days of history are kept (7 to 30).
 type MetricsSettings struct {
 	RetentionDays int `json:"retentionDays"`
+}
+
+// LatestBackups is the body of GET /api/backups/latest: for each tracked
+// project its newest ended backup (ok, failed, refused or interrupted; never a
+// queued or running one), newest first, and Latest, the first of them (null
+// when no project has one).
+type LatestBackups struct {
+	Latest   *LatestBackup  `json:"latest" tstype:"LatestBackup | null,required"`
+	Projects []LatestBackup `json:"projects"`
+}
+
+// LatestBackup is one project's newest ended backup: Database is the name the
+// backup was taken of, At when it finished (UTC RFC 3339; when it was created
+// for a row with no finish time).
+type LatestBackup struct {
+	ID          int64  `json:"id"`
+	ProjectID   int64  `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	Database    string `json:"database"`
+	State       string `json:"state"`
+	At          string `json:"at"`
 }

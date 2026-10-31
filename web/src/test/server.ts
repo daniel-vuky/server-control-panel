@@ -20,6 +20,8 @@ export function makeServerInfo(overrides: Partial<ServerInfo> = {}): ServerInfo 
     sampleSeconds: 30,
     retentionDays: 7,
     timeZone: { name: 'UTC', offset: '+00:00' },
+    load: { one: 1.36, five: 1.12, fifteen: 0.98 },
+    bootTime: '2026-10-20T08:00:00Z',
     ...overrides,
   }
 }
@@ -33,6 +35,10 @@ const point = (t: string, v: Partial<ServerPoint> = {}): ServerPoint => ({
   diskWrite: 0.5 * MB,
   netIn: 2 * MB,
   netOut: 1 * MB,
+  load1: 1.36,
+  diskUsed: 92 * GB,
+  diskTotal: 160 * GB,
+  tunnel: 1,
   ...v,
 })
 
@@ -56,6 +62,10 @@ export function makeSeries(overrides: Partial<ServerSeries> = {}): ServerSeries 
       diskWrite: 0.9 * MB,
       netIn: 2 * MB,
       netOut: 1.1 * MB,
+      load1: 1.36,
+      diskUsed: 92 * GB,
+      diskTotal: 160 * GB,
+      tunnel: 1,
     },
     points: [
       point('2026-10-31T09:50:00Z'),

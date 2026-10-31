@@ -552,6 +552,7 @@ func TestNewEndpointsNeedIdentity(t *testing.T) {
 		{http.MethodPost, "/api/backups/all"},
 		{http.MethodGet, "/api/backups"},
 		{http.MethodGet, "/api/backups/summary"},
+		{http.MethodGet, "/api/backups/latest"},
 		{http.MethodGet, "/api/server"},
 		{http.MethodGet, "/api/server/metrics?range=1h"},
 		{http.MethodGet, "/api/server/usage"},

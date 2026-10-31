@@ -90,7 +90,8 @@ func (s *server) historyStart(ctx context.Context, projectID int64) (*string, er
 }
 
 // serverInfo is GET /api/server: the System info and System services cards,
-// the thresholds, the sampling interval, the retention and the server zone.
+// the thresholds, the sampling interval, the retention, the server zone and
+// the load averages and boot time, read now.
 func (s *server) serverInfo(w http.ResponseWriter, r *http.Request) {
 	sys := s.Metrics.System(r.Context())
 	days, err := s.Store.MetricsRetention(r.Context())
@@ -113,6 +114,13 @@ func (s *server) serverInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	if !sys.Available {
 		info.Reason = msgNoHostProc
+	}
+	if one, five, fifteen, ok := s.Metrics.Load(); ok {
+		info.Load = &LoadAverage{One: one, Five: five, Fifteen: fifteen}
+	}
+	if t, ok := s.Metrics.BootTime(); ok {
+		v := s.zoneTime(t)
+		info.BootTime = &v
 	}
 	for _, d := range sys.Disks {
 		info.Disks = append(info.Disks, DiskInfo{Mount: d.Mount, UsedBytes: d.Used, TotalBytes: d.Total})
@@ -147,6 +155,7 @@ func (s *server) serverMetrics(w http.ResponseWriter, r *http.Request) {
 		out.Points = append(out.Points, ServerPoint{
 			T: s.zoneTime(p.TS), CPU: p.CPU, MemUsed: p.MemUsed, MemTotal: p.MemTotal,
 			DiskRead: p.DiskRead, DiskWrite: p.DiskWrite, NetIn: p.NetIn, NetOut: p.NetOut,
+			Load1: p.Load1, DiskUsed: p.DiskUsed, DiskTotal: p.DiskTotal, Tunnel: p.Tunnel,
 		})
 	}
 	if fresh && tk.Server != nil {
@@ -154,6 +163,7 @@ func (s *server) serverMetrics(w http.ResponseWriter, r *http.Request) {
 		out.Latest = &ServerLatest{
 			At: s.zoneTime(tk.At), CPU: v.CPU, MemUsed: v.MemUsed, MemTotal: v.MemTotal,
 			DiskRead: v.DiskRead, DiskWrite: v.DiskWrite, NetIn: v.NetIn, NetOut: v.NetOut,
+			Load1: v.Load1, DiskUsed: v.DiskUsed, DiskTotal: v.DiskTotal, Tunnel: v.Tunnel,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -54,6 +54,8 @@ type Monitor interface {
 	System(ctx context.Context) metrics.System
 	Prune(ctx context.Context) error
 	Thresholds() metrics.Thresholds
+	Load() (one, five, fifteen float64, ok bool)
+	BootTime() (time.Time, bool)
 }
 
 var _ Monitor = (*metrics.Monitor)(nil)
@@ -132,10 +134,11 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /api/metrics-settings", protect(http.HandlerFunc(s.metricsSettings)))
 	mux.Handle("POST /api/metrics-settings", protect(requireJSON(http.HandlerFunc(s.saveMetricsSettings))))
 	mux.Handle("POST /api/backup-settings/defaults", protect(requireJSON(http.HandlerFunc(s.backupDefaults))))
-	// The literal all and summary segments win over {id}.
+	// The literal all, summary and latest segments win over {id}.
 	mux.Handle("POST /api/backups/all", protect(requireJSON(http.HandlerFunc(s.backupAll))))
 	mux.Handle("GET /api/backups", protect(http.HandlerFunc(s.listBackups)))
 	mux.Handle("GET /api/backups/summary", protect(http.HandlerFunc(s.backupSummary)))
+	mux.Handle("GET /api/backups/latest", protect(http.HandlerFunc(s.latestBackups)))
 	mux.Handle("GET /api/backups/{id}", protect(http.HandlerFunc(s.getBackup)))
 	mux.Handle("POST /api/backups/{id}/retry", protect(requireJSON(http.HandlerFunc(s.retryBackup))))
 	mux.Handle("GET /api/backups/{id}/download", protect(http.HandlerFunc(s.downloadBackup)))

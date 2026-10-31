@@ -27,6 +27,10 @@ type fakeMonitor struct {
 	disks    []metrics.Disk
 	fallback bool
 	sys      metrics.System
+	load     [3]float64
+	loadOK   bool
+	boot     time.Time
+	bootOK   bool
 	prunes   int
 	pruneCtx context.Context
 }
@@ -57,6 +61,18 @@ func (f *fakeMonitor) System(context.Context) metrics.System {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.sys
+}
+
+func (f *fakeMonitor) Load() (one, five, fifteen float64, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.load[0], f.load[1], f.load[2], f.loadOK
+}
+
+func (f *fakeMonitor) BootTime() (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.boot, f.bootOK
 }
 
 func (f *fakeMonitor) Prune(ctx context.Context) error {
@@ -108,6 +124,8 @@ func TestServerInfo(t *testing.T) {
 			Tunnel: metrics.Tunnel{State: metrics.TunnelConnected, Hostnames: ptr(5)},
 			Disks:  []metrics.Disk{{Mount: "/", Used: 40 << 30, Total: 100 << 30}},
 		}
+		f.load, f.loadOK = [3]float64{1.36, 1.12, 0.98}, true
+		f.boot, f.bootOK = time.Date(2030, 1, 10, 3, 0, 0, 0, time.UTC), true
 	})
 
 	rec := do(h, http.MethodGet, "/api/server")
@@ -123,6 +141,8 @@ func TestServerInfo(t *testing.T) {
 		Thresholds:    Thresholds{CPUPercent: 90, RAMPercent: 90, DiskPercent: 85},
 		SampleSeconds: 30, RetentionDays: 7,
 		TimeZone: TimeZone{Name: "Asia/Ho_Chi_Minh", Offset: "+07:00"},
+		Load:     &LoadAverage{One: 1.36, Five: 1.12, Fifteen: 0.98},
+		BootTime: ptr("2030-01-10T10:00:00+07:00"),
 	}
 	if got := decode[ServerInfo](t, rec); !reflect.DeepEqual(got, want) {
 		t.Errorf("server info = %+v,\nwant %+v", got, want)
@@ -147,6 +167,13 @@ func TestServerInfo(t *testing.T) {
 		t.Errorf("disks = %+v, partial = %v", got.Disks, got.DisksPartial)
 	}
 
+	// A load or boot time that cannot be read is JSON null, the keys present.
+	monitorOf(d).set(func(f *fakeMonitor) { f.loadOK, f.bootOK = false, false })
+	body := do(h, http.MethodGet, "/api/server").Body.String()
+	if !strings.Contains(body, `"load":null`) || !strings.Contains(body, `"bootTime":null`) {
+		t.Errorf("body = %s, want load and bootTime null", body)
+	}
+
 	// No disk at all is an empty list, not null.
 	monitorOf(d).set(func(f *fakeMonitor) { f.sys = metrics.System{Docker: metrics.DockerNotResponding} })
 	rec = do(h, http.MethodGet, "/api/server")
@@ -168,7 +195,9 @@ func jsonOf(t *testing.T, v any) string {
 // serverSample is a raw server sample at at with CPU cpu and 1 GiB used.
 func serverSample(at time.Time, cpu float64) *store.ServerSample {
 	used, total := int64(1<<30), int64(8<<30)
-	return &store.ServerSample{TS: at, CPU: &cpu, MemUsed: &used, MemTotal: &total}
+	load, du, dt, tun := 1.5, int64(40<<30), int64(100<<30), 1.0
+	return &store.ServerSample{TS: at, CPU: &cpu, MemUsed: &used, MemTotal: &total,
+		Load1: &load, DiskUsed: &du, DiskTotal: &dt, Tunnel: &tun}
 }
 
 func insertSample(t *testing.T, d Deps, srv *store.ServerSample, ps ...store.ProjectSample) {
@@ -243,6 +272,17 @@ func TestServerMetricsRanges(t *testing.T) {
 	s := serverSeries(t, h, "1h")
 	if s.Latest == nil || s.Latest.At != zoned(t, at) || s.Latest.CPU == nil || *s.Latest.CPU != 33 || *s.Latest.MemTotal != 8<<30 {
 		t.Errorf("latest = %+v, want the tick's sample at %s", s.Latest, zoned(t, at))
+	}
+	if l := s.Latest; l.Load1 == nil || *l.Load1 != 1.5 || l.DiskUsed == nil || *l.DiskUsed != 40<<30 ||
+		l.DiskTotal == nil || *l.DiskTotal != 100<<30 || l.Tunnel == nil || *l.Tunnel != 1 {
+		t.Errorf("latest = %+v, want load1 1.5, disk 40 of 100 GiB, tunnel 1", l)
+	}
+	if p := s.Points[118]; p.Load1 == nil || *p.Load1 != 1.5 || p.DiskUsed == nil || *p.DiskUsed != 40<<30 ||
+		p.DiskTotal == nil || *p.DiskTotal != 100<<30 || p.Tunnel == nil || *p.Tunnel != 1 {
+		t.Errorf("point 118 = %+v, want load1 1.5, disk 40 of 100 GiB, tunnel 1", p)
+	}
+	if p := s.Points[0]; p.Load1 != nil || p.DiskUsed != nil || p.DiskTotal != nil || p.Tunnel != nil {
+		t.Errorf("point 0 = %+v, want a gap", p)
 	}
 	monitorOf(d).set(func(f *fakeMonitor) { f.tick.At = metricsNow.Add(-91 * time.Second) })
 	if s := serverSeries(t, h, "1h"); s.Latest != nil {
