@@ -16,10 +16,11 @@ import (
 // Mount is one row of a mount table.
 type Mount struct {
 	Device, Point, FSType string
+	DevID                 string // major:minor, the same for every name of one filesystem
 }
 
-// ParseMountinfo reads /proc/<pid>/mountinfo: the mount point (with its octal
-// escapes decoded), then, after the " - " separator, the filesystem type and
+// ParseMountinfo reads /proc/<pid>/mountinfo: the major:minor, the mount point
+// (with its octal escapes decoded), then, after the " - " separator, the filesystem type and
 // the device. A row it cannot read is skipped.
 func ParseMountinfo(b []byte) []Mount {
 	var ms []Mount
@@ -35,7 +36,7 @@ func ParseMountinfo(b []byte) []Mount {
 		if len(l) < 5 || len(r) < 2 {
 			continue
 		}
-		ms = append(ms, Mount{Device: unescapeMount(r[1]), Point: unescapeMount(l[4]), FSType: r[0]})
+		ms = append(ms, Mount{Device: unescapeMount(r[1]), Point: unescapeMount(l[4]), FSType: r[0], DevID: l[2]})
 	}
 	return ms
 }
@@ -76,9 +77,10 @@ const panelDataLabel = "/ (panel data)"
 
 // Disks lists the server's disks from the host's mount table (decision 10):
 // real block filesystems only, mount points under /snap and /boot/efi dropped,
-// one row per device at its shortest mount point, used and total read with
-// statfs under Root. A mount the panel cannot reach is left out. Without a Root
-// (an install whose compose file predates the mount) it returns the one
+// one row per device (major:minor) at its shortest mount point, used and total
+// read with statfs under Root. A mount the panel cannot reach is left out.
+// Without a Root (an install whose compose file predates the mount), or when
+// Root exists but the mount table is unreadable or empty, it returns the one
 // filesystem holding DataDir and fallback true.
 func (h Host) Disks() (disks []Disk, fallback bool) {
 	var mounts []Mount
@@ -91,13 +93,13 @@ func (h Host) Disks() (disks []Disk, fallback bool) {
 		return h.panelDataDisk(), true
 	}
 
-	best := make(map[string]string) // device -> shortest mount point
+	best := make(map[string]string) // major:minor -> shortest mount point
 	for _, m := range mounts {
 		if !diskFS[m.FSType] || underAny(m.Point, "/snap", "/boot/efi") {
 			continue
 		}
-		if cur, ok := best[m.Device]; !ok || len(m.Point) < len(cur) || (len(m.Point) == len(cur) && m.Point < cur) {
-			best[m.Device] = m.Point
+		if cur, ok := best[m.DevID]; !ok || len(m.Point) < len(cur) || (len(m.Point) == len(cur) && m.Point < cur) {
+			best[m.DevID] = m.Point
 		}
 	}
 	statfs := h.statfs()

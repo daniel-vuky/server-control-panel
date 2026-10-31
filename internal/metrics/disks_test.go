@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -15,16 +16,16 @@ func TestParseMountinfo(t *testing.T) {
 	for _, m := range ms {
 		byPoint[m.Point] = m
 	}
-	if len(ms) != 18 {
-		t.Fatalf("got %d mounts, want 18", len(ms))
+	if len(ms) != 19 {
+		t.Fatalf("got %d mounts, want 19", len(ms))
 	}
 	for point, want := range map[string]Mount{
-		"/":                        {Device: "/dev/sda1", Point: "/", FSType: "ext4"},
-		"/var/lib/docker":          {Device: "/dev/sdb1", Point: "/var/lib/docker", FSType: "ext4"},
-		"/dev/shm":                 {Device: "tmpfs", Point: "/dev/shm", FSType: "tmpfs"},
-		"/boot/efi":                {Device: "/dev/sda15", Point: "/boot/efi", FSType: "vfat"},
-		"/mnt/backup disk":         {Device: "/dev/sdd1", Point: "/mnt/backup disk", FSType: "xfs"},
-		"/proc/sys/fs/binfmt_misc": {Device: "systemd-1", Point: "/proc/sys/fs/binfmt_misc", FSType: "autofs"},
+		"/":                        {Device: "/dev/sda1", Point: "/", FSType: "ext4", DevID: "8:1"},
+		"/var/lib/docker":          {Device: "/dev/sdb1", Point: "/var/lib/docker", FSType: "ext4", DevID: "8:17"},
+		"/dev/shm":                 {Device: "tmpfs", Point: "/dev/shm", FSType: "tmpfs", DevID: "0:27"},
+		"/boot/efi":                {Device: "/dev/sda15", Point: "/boot/efi", FSType: "vfat", DevID: "8:15"},
+		"/mnt/backup disk":         {Device: "/dev/sdd1", Point: "/mnt/backup disk", FSType: "xfs", DevID: "8:49"},
+		"/proc/sys/fs/binfmt_misc": {Device: "systemd-1", Point: "/proc/sys/fs/binfmt_misc", FSType: "autofs", DevID: "0:26"},
 	} {
 		if byPoint[point] != want {
 			t.Errorf("%s = %+v, want %+v", point, byPoint[point], want)
@@ -55,25 +56,50 @@ func TestUnescapeMount(t *testing.T) {
 	}
 }
 
-// statfsStub answers by path relative to root, as the panel sees /host/root.
-func statfsStub(root string, rows map[string]Disk, fail map[string]error) func(string) (uint64, uint64, error) {
-	return func(p string) (uint64, uint64, error) {
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return 0, 0, err
-		}
-		point := "/" + rel
-		if rel == "." {
-			point = "/"
-		}
-		if e, ok := fail[point]; ok {
-			return 0, 0, e
-		}
-		d, ok := rows[point]
-		if !ok {
-			return 0, 0, errors.New("unexpected statfs path " + p)
-		}
-		return d.Used, d.Total, nil
+// statfsStub answers by path relative to root, as the panel sees /host/root,
+// and records every path it is asked, so a test can pin which mounts Disks
+// looked at. A path it has no row for fails the test.
+type statfsStub struct {
+	t     *testing.T
+	root  string
+	rows  map[string]Disk
+	fail  map[string]error
+	asked []string
+}
+
+func (s *statfsStub) statfs(p string) (uint64, uint64, error) {
+	s.asked = append(s.asked, p)
+	rel, err := filepath.Rel(s.root, p)
+	if err != nil {
+		return 0, 0, err
+	}
+	point := "/" + rel
+	if rel == "." {
+		point = "/"
+	}
+	if e, ok := s.fail[point]; ok {
+		return 0, 0, e
+	}
+	d, ok := s.rows[point]
+	if !ok {
+		s.t.Errorf("unexpected statfs path %s", p)
+		return 0, 0, errors.New("unexpected statfs path " + p)
+	}
+	return d.Used, d.Total, nil
+}
+
+// wantAsked pins the exact set of paths statfs was asked, in any order.
+func (s *statfsStub) wantAsked(points ...string) {
+	s.t.Helper()
+	var want []string
+	for _, p := range points {
+		want = append(want, filepath.Join(s.root, p))
+	}
+	got := append([]string(nil), s.asked...)
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		s.t.Errorf("statfs asked %v, want %v", got, want)
 	}
 }
 
@@ -81,17 +107,22 @@ func TestDisksFilterDedupeAndVarLibDocker(t *testing.T) {
 	root := t.TempDir()
 	h := testHost()
 	h.Root = root
-	h.Statfs = statfsStub(root, map[string]Disk{
+	stub := &statfsStub{t: t, root: root, rows: map[string]Disk{
 		"/":                {Used: 10, Total: 100},
 		"/var/lib/docker":  {Used: 400, Total: 500},
 		"/mnt/backup disk": {Used: 7, Total: 70},
-	}, map[string]error{
+	}, fail: map[string]error{
 		"/home/private": &fs.PathError{Op: "statfs", Path: "/home/private", Err: os.ErrPermission},
-	})
+	}}
+	h.Statfs = stub.statfs
 	got, fallback := h.Disks()
 	if fallback {
 		t.Fatal("Root exists, so not the fallback")
 	}
+	// Exactly one statfs per surviving device: sda1 (reached as /, /mnt/shared,
+	// /mnt/rootbind and, under another source name, /mnt/by-uuid) is read once
+	// at /; overlay, tmpfs, vfat, squashfs and the rest are never read.
+	stub.wantAsked("/", "/var/lib/docker", "/mnt/backup disk", "/home/private")
 	// The ext4 at /var/lib/docker is kept; overlay, tmpfs, vfat at /boot/efi and
 	// squashfs under /snap are dropped; the binds of / dedupe to /; the 0700
 	// /home/private (EACCES) is left out.
@@ -118,10 +149,12 @@ func TestDisksDropSnapAndEFIByPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(proc, "1", "mountinfo"), []byte(mi), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := Host{Proc: proc, Root: root, Statfs: statfsStub(root, map[string]Disk{
+	stub := &statfsStub{t: t, root: root, rows: map[string]Disk{
 		"/": {Used: 1, Total: 2}, "/snapshots": {Used: 3, Total: 4},
-	}, nil)}
+	}}
+	h := Host{Proc: proc, Root: root, Statfs: stub.statfs}
 	got, _ := h.Disks()
+	stub.wantAsked("/", "/snapshots")
 	want := []Disk{{Mount: "/", Used: 1, Total: 2}, {Mount: "/snapshots", Used: 3, Total: 4}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Disks = %+v, want %+v", got, want)
@@ -180,4 +213,30 @@ func TestStatfsDefault(t *testing.T) {
 	if got, fb := h.Disks(); !fb || len(got) != 1 || got[0].Total == 0 {
 		t.Fatalf("default statfs fallback: %+v %v", got, fb)
 	}
+}
+
+func TestDisksDedupeByMajorMinor(t *testing.T) {
+	root := t.TempDir()
+	proc := t.TempDir()
+	// One filesystem (8:1) under two source names (the shorter mount point wins), and two filesystems that
+	// share a source name but not a major:minor.
+	mi := "1 0 8:1 / /data rw - ext4 /dev/sda1 rw\n" +
+		"2 1 8:1 / /srv rw - ext4 /dev/disk/by-uuid/aaaa rw\n" +
+		"3 1 8:16 / /a rw - ext4 none rw\n" +
+		"4 1 8:32 / /b rw - ext4 none rw\n"
+	if err := os.MkdirAll(filepath.Join(proc, "1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proc, "1", "mountinfo"), []byte(mi), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stub := &statfsStub{t: t, root: root, rows: map[string]Disk{
+		"/srv": {Used: 1, Total: 2}, "/a": {Used: 3, Total: 4}, "/b": {Used: 5, Total: 6},
+	}}
+	got, _ := Host{Proc: proc, Root: root, Statfs: stub.statfs}.Disks()
+	want := []Disk{{Mount: "/a", Used: 3, Total: 4}, {Mount: "/b", Used: 5, Total: 6}, {Mount: "/srv", Used: 1, Total: 2}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Disks = %+v, want %+v", got, want)
+	}
+	stub.wantAsked("/srv", "/a", "/b")
 }

@@ -187,10 +187,67 @@ func TestHostRead(t *testing.T) {
 		MemUsed:  (8024196 - 5173184) * 1024,
 		MemTotal: 8024196 * 1024,
 		DiskRead: uint64(4426090+529168+80000+14000) * 512, DiskWrite: uint64(5860616+20480+40000+6000) * 512,
-		NetIn: 1500000, NetOut: 600000,
+		NetIn: 1500000, NetOut: 600000, DiskOK: true, NetOK: true,
 	}
 	if c != want {
 		t.Fatalf("Read = %+v, want %+v", c, want)
+	}
+}
+
+// procWithout copies the testdata /proc to a temp dir without the named files.
+func procWithout(t *testing.T, drop ...string) Host {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"stat", "meminfo", "diskstats", "1/net/dev"} {
+		skip := false
+		for _, d := range drop {
+			skip = skip || d == name
+		}
+		if skip {
+			continue
+		}
+		dst := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, readFile(t, name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Host{Proc: dir, Sys: "testdata/sys"}
+}
+
+func TestHostReadWithoutNetDev(t *testing.T) {
+	c, err := procWithout(t, "1/net/dev").Read(time.Now())
+	if err != nil {
+		t.Fatalf("a missing net/dev must not fail the reading: %v", err)
+	}
+	if c.NetOK || c.NetIn != 0 || c.NetOut != 0 {
+		t.Fatalf("net: %+v", c)
+	}
+	if !c.DiskOK || c.DiskRead == 0 || c.CPU.Total == 0 || c.MemTotal == 0 {
+		t.Fatalf("the rest should still be read: %+v", c)
+	}
+}
+
+func TestHostReadWithoutDiskstats(t *testing.T) {
+	c, err := procWithout(t, "diskstats").Read(time.Now())
+	if err != nil {
+		t.Fatalf("a missing diskstats must not fail the reading: %v", err)
+	}
+	if c.DiskOK || c.DiskRead != 0 || c.DiskWrite != 0 {
+		t.Fatalf("disk: %+v", c)
+	}
+	if !c.NetOK || c.NetIn == 0 || c.CPU.Total == 0 || c.MemTotal == 0 {
+		t.Fatalf("the rest should still be read: %+v", c)
+	}
+}
+
+func TestHostReadNeedsStatAndMeminfo(t *testing.T) {
+	for _, name := range []string{"stat", "meminfo"} {
+		if _, err := procWithout(t, name).Read(time.Now()); err == nil {
+			t.Errorf("without %s: want an error", name)
+		}
 	}
 }
 

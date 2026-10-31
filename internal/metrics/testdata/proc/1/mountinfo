@@ -16,3 +16,4 @@
 39 26 0:46 / /run/user/1000 rw,nosuid,nodev,relatime shared:70 - tmpfs tmpfs rw,size=800000k,mode=700,uid=1000,gid=1000
 40 29 8:33 / /home/private rw,relatime shared:80 - ext4 /dev/sdc1 rw
 41 29 8:49 / /mnt/backup\040disk rw,relatime shared:81 - xfs /dev/sdd1 rw,attr2,inode64,noquota
+42 29 8:1 / /mnt/by-uuid rw,relatime shared:1 - ext4 /dev/disk/by-uuid/5f1c2d3e-aaaa-bbbb-cccc-0123456789ab rw,discard,errors=remount-ro

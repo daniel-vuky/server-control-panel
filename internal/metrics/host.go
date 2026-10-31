@@ -234,11 +234,15 @@ type Counters struct {
 	MemUsed, MemTotal   int64
 	DiskRead, DiskWrite uint64
 	NetIn, NetOut       uint64
+	// DiskOK and NetOK are false when that file could not be read, so the
+	// sampler stores a gap for just that series.
+	DiskOK, NetOK bool
 }
 
 // Read takes one set of host counters. Network is pid 1's namespace, the
 // host's, through /proc/1/net/dev (a container's own /proc/net would show only
-// the panel's namespace).
+// the panel's namespace). Only stat and meminfo are required: when diskstats or
+// net/dev cannot be read the rest is still returned, with DiskOK or NetOK false.
 func (h Host) Read(now time.Time) (Counters, error) {
 	c := Counters{At: now}
 	b, err := os.ReadFile(filepath.Join(h.Proc, "stat"))
@@ -254,14 +258,14 @@ func (h Host) Read(now time.Time) (Counters, error) {
 	if c.MemUsed, c.MemTotal, err = ParseMeminfo(b); err != nil {
 		return Counters{}, err
 	}
-	if b, err = os.ReadFile(filepath.Join(h.Proc, "diskstats")); err != nil {
-		return Counters{}, fmt.Errorf("metrics: read diskstats: %w", err)
+	if b, err = os.ReadFile(filepath.Join(h.Proc, "diskstats")); err == nil {
+		c.DiskRead, c.DiskWrite = ParseDiskstats(b, h.WholeDisk())
+		c.DiskOK = true
 	}
-	c.DiskRead, c.DiskWrite = ParseDiskstats(b, h.WholeDisk())
-	if b, err = os.ReadFile(filepath.Join(h.Proc, "1", "net", "dev")); err != nil {
-		return Counters{}, fmt.Errorf("metrics: read net/dev: %w", err)
+	if b, err = os.ReadFile(filepath.Join(h.Proc, "1", "net", "dev")); err == nil {
+		c.NetIn, c.NetOut = ParseNetDev(b, SkipHostIface)
+		c.NetOK = true
 	}
-	c.NetIn, c.NetOut = ParseNetDev(b, SkipHostIface)
 	return c, nil
 }
 
@@ -277,7 +281,8 @@ func (h Host) ContainerNet(pid int) (in, out uint64, err error) {
 }
 
 // Running reports whether any process of the host has this command name (the
-// kernel's comm, cut to 15 characters).
+// kernel's comm, cut to 15 characters). It reads every pid's comm, so callers
+// cache the answer.
 func (h Host) Running(comm string) bool {
 	entries, err := os.ReadDir(h.Proc)
 	if err != nil {
