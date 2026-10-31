@@ -77,6 +77,12 @@ Added on 2026-10-31 with the manual backup flow (#45, #46, #15, #48, #49, #50, #
 31. A backup is downloaded through the panel, so any Operator on the Access list can fetch it without access to the Drive account; Open in Drive is offered next to it (E5-F17-US01).
 32. The Google Cloud app must be published to Production. The `drive.file` scope needs no review, but a token issued while the app is in Testing expires after 7 days, and the panel then asks to reconnect (E5-F14-US01, E5-F14-US03).
 
+Added on 2026-10-31 with the Dashboard flow (#27, #28, #29, #30, #73), numbering on from the list above:
+
+33. In-flight projects stay visible under any status filter while counted under none, so a chip can read 0 above a card that is starting or stopping (E3-F08-US04).
+34. The latest backup counts refused and interrupted backups as not OK (E3-F08-US02).
+35. The tunnel tile treats Not running as down (E3-F08-US01).
+
 <a id="open-questions"></a>
 ## Decisions (2026-10-28)
 
