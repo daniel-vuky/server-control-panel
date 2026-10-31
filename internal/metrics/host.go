@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -278,6 +279,59 @@ func (h Host) Read(now time.Time) (Counters, error) {
 		c.NetOK = n > 0
 	}
 	return c, nil
+}
+
+// ParseLoadavg reads the 1, 5 and 15 minute load averages, the first three
+// fields of /proc/loadavg.
+func ParseLoadavg(b []byte) (one, five, fifteen float64, err error) {
+	f := strings.Fields(string(b))
+	if len(f) < 3 {
+		return 0, 0, 0, errors.New("metrics: short loadavg")
+	}
+	var v [3]float64
+	for i := range v {
+		if v[i], err = strconv.ParseFloat(f[i], 64); err != nil || math.IsNaN(v[i]) || math.IsInf(v[i], 0) || v[i] < 0 {
+			return 0, 0, 0, fmt.Errorf("metrics: bad load average %q in loadavg", f[i])
+		}
+	}
+	return v[0], v[1], v[2], nil
+}
+
+// ParseUptime reads the seconds since boot, the first field of /proc/uptime
+// (rounded to the millisecond).
+func ParseUptime(b []byte) (time.Duration, error) {
+	f := strings.Fields(string(b))
+	if len(f) < 1 {
+		return 0, errors.New("metrics: empty uptime")
+	}
+	secs, err := strconv.ParseFloat(f[0], 64)
+	if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) || secs < 0 || secs > float64(math.MaxInt64/int64(time.Second)) {
+		return 0, fmt.Errorf("metrics: bad uptime %q", f[0])
+	}
+	return time.Duration(math.Round(secs*1000)) * time.Millisecond, nil
+}
+
+// Loadavg reads the host's load averages from <Proc>/loadavg.
+func (h Host) Loadavg() (one, five, fifteen float64, err error) {
+	b, err := os.ReadFile(filepath.Join(h.Proc, "loadavg"))
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("metrics: read loadavg: %w", err)
+	}
+	return ParseLoadavg(b)
+}
+
+// BootTime is when the host booted: now minus <Proc>/uptime, cut to the
+// second.
+func (h Host) BootTime(now time.Time) (time.Time, error) {
+	b, err := os.ReadFile(filepath.Join(h.Proc, "uptime"))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("metrics: read uptime: %w", err)
+	}
+	up, err := ParseUptime(b)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return now.Add(-up).Truncate(time.Second), nil
 }
 
 // ContainerNet is the bytes in and out of a container's own namespace, read

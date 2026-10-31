@@ -231,8 +231,17 @@ function Share({
   return (
     <span className="flex flex-col gap-1.5">
       <span className="flex justify-between gap-2 font-mono text-[13px] tabular-nums">
-        <span>{value === null ? '—' : word(value)}</span>
-        {share !== null && <span className="text-muted">{share}%</span>}
+        <span data-testid="usage-value" className="inline-block min-w-[9ch]">
+          {value === null ? '—' : word(value)}
+        </span>
+        {share !== null && (
+          <span
+            data-testid="usage-share"
+            className="inline-block min-w-[4ch] text-right text-muted"
+          >
+            {share}%
+          </span>
+        )}
       </span>
       <span aria-hidden="true" className="flex h-1.5 rounded-[3px] bg-[#1A1E24]">
         {share !== null && (

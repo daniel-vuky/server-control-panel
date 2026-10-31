@@ -57,6 +57,7 @@ export default function ServerCharts({ series, info }: { series: ServerSeries; i
         <MetricChart
           title="CPU"
           current={formatPercent(latest?.cpu ?? null)}
+          currentWidth={5}
           sub={`average of ${info.cores} vCPU · threshold ${th.cpuPercent}%`}
           series={[{ name: 'CPU', values: values((p) => p.cpu), color: BLUE }]}
           max={100}
@@ -69,7 +70,15 @@ export default function ServerCharts({ series, info }: { series: ServerSeries; i
         <MetricChart
           title="RAM"
           current={memNow}
-          sub={`${formatPercent(memPercent)} · threshold ${th.ramPercent}%`}
+          currentWidth={15}
+          sub={
+            <>
+              <span className="inline-block min-w-[4ch] text-right">
+                {formatPercent(memPercent)}
+              </span>
+              {` · threshold ${th.ramPercent}%`}
+            </>
+          }
           series={[{ name: 'Used', values: values((p) => p.memUsed), color: ORANGE }]}
           max={memTotal ?? undefined}
           threshold={memTotal === null ? undefined : (memTotal * th.ramPercent) / 100}

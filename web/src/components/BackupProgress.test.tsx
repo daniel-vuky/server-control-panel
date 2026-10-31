@@ -91,8 +91,16 @@ describe('BackupSteps', () => {
     expect(within(items[2]).getByTestId('step-running')).toBeInTheDocument()
     expect(items[2]).toHaveAttribute('aria-current', 'step')
     expect(items[2]).toHaveTextContent('3. Upload to Drive')
-    expect(items[2]).toHaveTextContent('23.6 / 38 MB · 62%')
+    expect(items[2]).toHaveTextContent('23.6 / 38 MB')
+    expect(items[2]).toHaveTextContent('62%')
+    // The separator goes with the percent: the words never end with it.
+    const words = within(items[2]).getByTestId('step-percent').previousElementSibling
+    expect(words).toHaveTextContent(/^23\.6 \/ 38 MB$/)
+    expect(words?.textContent?.trimEnd().endsWith('·')).toBe(false)
     expect(within(items[2]).getByTestId('step-bar')).toHaveStyle({ width: '62%' })
+    // The percent sits in its own fixed-width box.
+    expect(within(items[2]).getByTestId('step-percent')).toHaveClass('min-w-[4ch]', 'text-right')
+    expect(within(items[2]).getByTestId('step-percent')).toHaveTextContent('62%')
     expect(within(items[3]).getByTestId('step-waiting')).toBeInTheDocument()
     expect(items[3]).toHaveTextContent('4. Remove old copies')
   })
@@ -199,7 +207,8 @@ describe('the progress dialog', () => {
         ),
       }),
     ])
-    expect(dialog).toHaveTextContent('0.5 / 1.0 MB · 50%')
+    expect(dialog).toHaveTextContent('0.5 / 1.0 MB')
+    expect(dialog).toHaveTextContent('50%')
   })
 
   it('fetches the final state once when the backup leaves the active list', async () => {

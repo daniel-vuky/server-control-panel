@@ -44,7 +44,10 @@ describe('ServerCharts', () => {
     renderCharts()
     const ram = chart('RAM')
     expect(within(ram).getByText('5.2 GB / 8.0 GB')).toBeInTheDocument()
-    expect(within(ram).getByText('65% · threshold 90%')).toBeInTheDocument()
+    expect(ram).toHaveTextContent('65% · threshold 90%')
+    // The live percent and the used / total pair sit in fixed-width slots.
+    expect(within(ram).getByText('65%')).toHaveClass('min-w-[4ch]', 'text-right')
+    expect(within(ram).getByTestId('chart-current')).toHaveClass('min-w-[15ch]')
     // 90% of the 8 GB total, on a scale whose top is the total.
     expect(ram.querySelector('line[data-threshold]')).toHaveAttribute('y1', '18.8')
     expect(ram).toHaveTextContent('4.0 GB')
@@ -53,8 +56,8 @@ describe('ServerCharts', () => {
   it('RAM falls back to the server total without a latest sample', () => {
     renderCharts(makeSeries({ latest: null }), makeServerInfo({ ramBytes: 16 * GB }))
     const ram = chart('RAM')
-    expect(within(ram).getByText('—')).toBeInTheDocument()
-    expect(within(ram).getByText('— · threshold 90%')).toBeInTheDocument()
+    expect(within(ram).getByTestId('chart-current')).toHaveTextContent('—')
+    expect(ram).toHaveTextContent('— · threshold 90%')
     expect(ram.querySelector('line[data-threshold]')).toBeInTheDocument()
     expect(ram).toHaveTextContent('16 GB')
   })

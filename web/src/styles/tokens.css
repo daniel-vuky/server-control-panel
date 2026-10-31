@@ -25,13 +25,70 @@
   --color-switch-off: #2c323a;
   --color-error-border: #5c2228;
   --color-error-text: #f2b8bb;
+  --color-error-fg: #ffd7d8;
+  --color-error-bg: #2a1215;
+  --color-error-strong: #7a2f36;
+  --color-error-soft: #1a1012;
+  --color-danger-text: #ff8c8f;
+  --color-danger-border: #6b262c;
+  --color-field-error: #b5373e;
+  --color-field: #0f1215;
+  --color-selected: #262c35;
+  --color-divider: #1a1e24;
+  --color-menu: #181c22;
+  --color-menu-hover: #222830;
+  --color-disabled-text: #5e6672;
+  --color-warning-bg: #221c0e;
+  --color-warning-border: #5c4a1e;
+  --color-warning-text: #f2cf6b;
+  --color-warning-strong: #8a6d1e;
+  --color-warning-soft: #f7e2a6;
+  --color-success-bg: #1e3a2d;
+  --color-success-soft: #0f1a15;
+  --color-success-text: #8fe3b9;
+  --color-info-surface: #0f141b;
+  --color-info-border: #22344a;
+  --color-accent-text: #7fb8ff;
 
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --animate-scp-pulse: scp-pulse 1.4s ease-in-out infinite;
+
+  @keyframes scp-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 0.9;
+    }
+  }
 }
 
 @layer base {
   body {
     @apply bg-bg text-text font-sans text-sm;
+    font-variant-numeric: tabular-nums;
+  }
+
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  [role="menuitem"] {
+    &:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+  }
+
+  a {
+    color: var(--color-text-2);
+
+    &:hover {
+      color: #fff;
+    }
   }
 }

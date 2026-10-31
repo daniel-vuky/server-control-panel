@@ -746,7 +746,9 @@ export interface SummaryNextRun {
  * server metrics). Hostname, OS, Kernel and Docker.Version are "" before
  * Docker has answered once. DisksPartial means the one fallback row ("/
  * (panel data)"): re-running install.sh lists every disk. SampleSeconds is the
- * sampling interval and RetentionDays how long history is kept.
+ * sampling interval and RetentionDays how long history is kept. Load is the
+ * host's load averages and BootTime when it booted (RFC 3339 in the server
+ * zone), each null when /proc cannot be read.
  */
 export interface ServerInfo {
   available: boolean;
@@ -764,6 +766,16 @@ export interface ServerInfo {
   sampleSeconds: number /* int */;
   retentionDays: number /* int */;
   timeZone: TimeZone;
+  load: LoadAverage | null;
+  bootTime: string | null;
+}
+/**
+ * LoadAverage is ServerInfo.Load: the 1, 5 and 15 minute load averages.
+ */
+export interface LoadAverage {
+  one: number /* float64 */;
+  five: number /* float64 */;
+  fifteen: number /* float64 */;
 }
 /**
  * DockerService is ServerInfo.Docker: State is running, not_responding or
@@ -802,8 +814,10 @@ export interface Thresholds {
 }
 /**
  * ServerPoint is one bucket of a ServerSeries: T is the bucket start; CPU is %
- * of the whole machine, memory in bytes, the rates in bytes per second; a
- * value is null where nothing was sampled (a gap).
+ * of the whole machine, memory and disk space in bytes, the rates in bytes per
+ * second, Load1 the 1-minute load average and Tunnel the share of the bucket
+ * cloudflared was connected (1 connected, 0 not); a value is null where
+ * nothing was sampled (a gap).
  */
 export interface ServerPoint {
   t: string;
@@ -814,6 +828,10 @@ export interface ServerPoint {
   diskWrite: number | null;
   netIn: number | null;
   netOut: number | null;
+  load1: number | null;
+  diskUsed: number | null;
+  diskTotal: number | null;
+  tunnel: number | null;
 }
 /**
  * ServerLatest is ServerSeries.Latest, the newest sample (at most 90 s old):
@@ -828,6 +846,10 @@ export interface ServerLatest {
   diskWrite: number | null;
   netIn: number | null;
   netOut: number | null;
+  load1: number | null;
+  diskUsed: number | null;
+  diskTotal: number | null;
+  tunnel: number | null;
 }
 /**
  * ServerSeries is the body of GET /api/server/metrics: one point per bucket
@@ -935,4 +957,27 @@ export interface UsageReport {
  */
 export interface MetricsSettings {
   retentionDays: number /* int */;
+}
+/**
+ * LatestBackups is the body of GET /api/backups/latest: for each tracked
+ * project its newest ended backup (ok, failed, refused or interrupted; never a
+ * queued or running one), newest first, and Latest, the first of them (null
+ * when no project has one).
+ */
+export interface LatestBackups {
+  latest: LatestBackup | null;
+  projects: LatestBackup[];
+}
+/**
+ * LatestBackup is one project's newest ended backup: Database is the name the
+ * backup was taken of, At when it finished (UTC RFC 3339; when it was created
+ * for a row with no finish time).
+ */
+export interface LatestBackup {
+  id: number /* int64 */;
+  projectId: number /* int64 */;
+  projectName: string;
+  database: string;
+  state: string;
+  at: string;
 }

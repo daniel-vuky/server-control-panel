@@ -40,6 +40,26 @@ describe('MetricChart', () => {
     expect(screen.getByText('average of 4 vCPU · threshold 90%')).toBeInTheDocument()
   })
 
+  it('keeps the current value in a fixed-width, right-aligned box', () => {
+    const { rerender } = chart()
+    expect(screen.getByTestId('chart-current')).toHaveClass('min-w-[9ch]', 'text-right')
+    rerender(
+      <MetricChart
+        title="RAM"
+        current="5.2 GB / 15 GB"
+        currentWidth={15}
+        series={[cpu([1, 2])]}
+        formatValue={(v) => String(v)}
+        range="1h"
+        historyStart={null}
+        from="2025-10-28T05:00:00Z"
+        zone={UTC}
+        height={120}
+      />,
+    )
+    expect(screen.getByTestId('chart-current')).toHaveClass('min-w-[15ch]', 'text-right')
+  })
+
   it('is an image named after the chart and the period', () => {
     chart({ range: '7d' })
     expect(screen.getByRole('img', { name: 'CPU chart, last 7 days' })).toBeInTheDocument()

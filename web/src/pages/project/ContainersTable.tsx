@@ -12,6 +12,8 @@ const ROW_TINT = {
 
 const HEAD = 'px-3 py-2.5 font-normal first:pl-4 last:pr-4'
 const CELL = 'px-3 py-[11px] align-top first:pl-4 last:pr-4'
+/** The live columns (CPU, RAM, Restart) keep their width and align their digits to the right. */
+const NUMBER = 'text-right whitespace-nowrap'
 
 /**
  * ContainersTable is design 02's Containers card: "docker compose · R/T
@@ -48,7 +50,7 @@ export default function ContainersTable({
         <p className="m-0 px-4 py-5 text-[13px] text-muted">No containers yet.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] border-collapse text-left">
+          <table className="w-full min-w-[880px] table-fixed border-collapse text-left">
             <colgroup>
               <col className="w-[20%]" />
               <col className="w-[13%]" />
@@ -60,8 +62,8 @@ export default function ContainersTable({
             </colgroup>
             <thead>
               <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
-                {['Name', 'Status', 'Image', 'Port', 'CPU', 'RAM', 'Restart'].map((h) => (
-                  <th key={h} scope="col" className={HEAD}>
+                {['Name', 'Status', 'Image', 'Port', 'CPU', 'RAM', 'Restart'].map((h, i) => (
+                  <th key={h} scope="col" className={i >= 4 ? `${HEAD} text-right` : HEAD}>
                     {h}
                   </th>
                 ))}
@@ -92,12 +94,12 @@ export default function ContainersTable({
                       <ContainerStatus container={c} />
                     </td>
                     <td className={`${CELL} break-all text-text-2`}>{c.image || '—'}</td>
-                    <td className={`${CELL} text-text-2`}>
+                    <td className={`${CELL} break-all text-text-2`}>
                       {c.ports.length > 0 ? c.ports.join(', ') : '—'}
                     </td>
-                    <td className={CELL}>{formatCpu(c.cpuPercent, 1)}</td>
-                    <td className={CELL}>{formatMem(c.memBytes)}</td>
-                    <td className={CELL}>{c.restartCount}</td>
+                    <td className={`${CELL} ${NUMBER}`}>{formatCpu(c.cpuPercent, 1)}</td>
+                    <td className={`${CELL} ${NUMBER}`}>{formatMem(c.memBytes)}</td>
+                    <td className={`${CELL} ${NUMBER}`}>{c.restartCount}</td>
                   </tr>
                 )
               })}

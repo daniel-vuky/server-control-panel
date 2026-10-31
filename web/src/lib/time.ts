@@ -46,6 +46,20 @@ export function formatWhen(iso: string, now: Date = new Date()): string {
   return `${date}${year} ${clock(d)}`
 }
 
+/**
+ * formatRecent is formatWhen with the near days in words, for the Dashboard's
+ * latest backup: "02:00 today", "Yesterday 02:00", else formatWhen's date. An
+ * empty or invalid time is "—".
+ */
+export function formatRecent(iso: string, now: Date = new Date()): string {
+  const d = parse(iso)
+  if (d === null) return '—'
+  if (sameDay(d, now)) return `${clock(d)} today`
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (sameDay(d, yesterday)) return `Yesterday ${clock(d)}`
+  return formatWhen(iso, now)
+}
+
 /** formatClock is "HH:MM" of a time in local time; an empty or invalid time is "—". */
 export function formatClock(iso: string): string {
   const d = parse(iso)

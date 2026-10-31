@@ -4,6 +4,7 @@ import type { DriveStatus } from '../api/types.gen'
 import { FakeEventSource } from '../test/fakeEventSource'
 import { showPage } from '../test/pageshow'
 import { renderApp } from '../test/renderApp'
+import { holdShellReads } from '../test/server'
 
 const json = (code: number, body: unknown) => new Response(JSON.stringify(body), { status: code })
 const drive = (state: string): DriveStatus => ({
@@ -37,6 +38,7 @@ beforeEach(() => {
   vi.stubGlobal('EventSource', FakeEventSource)
   assign = vi.fn()
   vi.stubGlobal('location', { ...window.location, assign })
+  holdShellReads()
 })
 afterEach(() => vi.unstubAllGlobals())
 

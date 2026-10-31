@@ -984,3 +984,126 @@ func waitFor(t *testing.T, ok func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// withDisks gives the sampler's host a Root and a mount table of two disks, 10
+// of 100 and 7 of 70 bytes, so Disks sums to 17 of 170.
+func (e *samplerEnv) withDisks() {
+	e.t.Helper()
+	root := e.t.TempDir()
+	e.write(e.proc, "1/mountinfo", "1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 8:17 / /data rw - ext4 /dev/sdb1 rw\n")
+	stub := &statfsStub{t: e.t, root: root, rows: map[string]Disk{
+		"/": {Used: 10, Total: 100}, "/data": {Used: 7, Total: 70},
+	}, devs: map[string]string{"/": "8:1", "/data": "8:17"}}
+	e.s.host.Root, e.s.host.Statfs, e.s.host.Dev = root, stub.statfs, stub.dev
+}
+
+func TestSamplerNewReadings(t *testing.T) {
+	e := newSamplerEnv(t)
+	e.standardScene()
+	e.withDisks()
+	e.write(e.proc, "loadavg", "1.36 1.12 0.98 2/345 6789\n")
+	state := TunnelConnected
+	e.s.Tunnel = func(context.Context) TunnelState { return state }
+	e.tick()
+
+	next := func() store.ServerSample {
+		t.Helper()
+		e.clock.add(30 * time.Second)
+		e.tick()
+		r, _ := e.server(e.clock.now())
+		return r
+	}
+	r := next()
+	if !near(r.Load1, 1.36) || r.DiskUsed == nil || *r.DiskUsed != 17 || r.DiskTotal == nil || *r.DiskTotal != 170 || !near(r.Tunnel, 1) {
+		t.Fatalf("connected: load %s disk %s/%s tunnel %s, want 1.36, 17/170, 1", f64(r.Load1), i64(r.DiskUsed), i64(r.DiskTotal), f64(r.Tunnel))
+	}
+	state = TunnelNotRunning
+	if r = next(); !near(r.Tunnel, 0) {
+		t.Fatalf("not running: tunnel %s, want 0", f64(r.Tunnel))
+	}
+	state = TunnelDisconnected
+	if r = next(); !near(r.Tunnel, 0) {
+		t.Fatalf("disconnected: tunnel %s, want 0", f64(r.Tunnel))
+	}
+	state = TunnelUnknown
+	if r = next(); r.Tunnel != nil || !near(r.Load1, 1.36) {
+		t.Fatalf("unknown: tunnel %s, want a gap", f64(r.Tunnel))
+	}
+	e.s.Tunnel = nil
+	if r = next(); r.Tunnel != nil || !near(r.Load1, 1.36) {
+		t.Fatalf("no hook: tunnel %s, want a gap", f64(r.Tunnel))
+	}
+	tk, ok := e.s.Latest()
+	if !ok || tk.Server == nil || !near(tk.Server.Load1, 1.36) || tk.Server.DiskTotal == nil {
+		t.Fatalf("Latest = %+v %v, want the new readings", tk.Server, ok)
+	}
+
+	// No loadavg: Load1 is a gap, the rest is stored.
+	if err := os.Remove(filepath.Join(e.proc, "loadavg")); err != nil {
+		t.Fatal(err)
+	}
+	e.s.Tunnel = func(context.Context) TunnelState { return TunnelConnected }
+	if r = next(); r.Load1 != nil || r.DiskUsed == nil || !near(r.Tunnel, 1) || r.MemUsed == nil {
+		t.Fatalf("no loadavg: load %s disk %s tunnel %s mem %s, want only load missing", f64(r.Load1), i64(r.DiskUsed), f64(r.Tunnel), i64(r.MemUsed))
+	}
+}
+
+func TestSamplerNoDisksIsAGap(t *testing.T) {
+	e := newSamplerEnv(t)
+	e.standardScene()
+	e.s.host.DataDir = filepath.Join(t.TempDir(), "absent") // the fallback's statfs fails
+	e.s.host.Statfs = func(string) (uint64, uint64, error) { return 0, 0, errors.New("no statfs") }
+	e.tick()
+	e.clock.add(30 * time.Second)
+	e.tick()
+	if r, _ := e.server(e.clock.now()); r.DiskUsed != nil || r.DiskTotal != nil || r.MemUsed == nil {
+		t.Fatalf("disk %s/%s mem %s, want no disk values and the rest stored", i64(r.DiskUsed), i64(r.DiskTotal), i64(r.MemUsed))
+	}
+}
+
+func TestSamplerTunnelHookBounded(t *testing.T) {
+	old := tunnelTimeout
+	tunnelTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { tunnelTimeout = old })
+
+	for name, honours := range map[string]bool{"honours its context": true, "ignores its context": false} {
+		t.Run(name, func(t *testing.T) {
+			e := newSamplerEnv(t)
+			e.standardScene()
+			release := make(chan struct{})
+			t.Cleanup(func() { close(release) })
+			var mu sync.Mutex
+			var calls int
+			e.s.Tunnel = func(ctx context.Context) TunnelState {
+				mu.Lock()
+				calls++
+				mu.Unlock()
+				if _, ok := ctx.Deadline(); !ok {
+					t.Error("the tunnel hook's context has no deadline")
+				}
+				if honours {
+					<-ctx.Done() // a probe that never answers
+				} else {
+					<-release
+				}
+				return TunnelConnected
+			}
+			e.tick()
+			e.clock.add(30 * time.Second)
+			start := time.Now()
+			e.tick()
+			if d := time.Since(start); d > 5*time.Second {
+				t.Fatalf("the tick took %s with a stuck hook", d)
+			}
+			r, _ := e.server(e.clock.now())
+			if r.Tunnel != nil || r.MemUsed == nil {
+				t.Fatalf("tunnel %s mem %s, want the tunnel a gap and the sample stored", f64(r.Tunnel), i64(r.MemUsed))
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if calls != 2 {
+				t.Fatalf("the hook ran %d times, want 2", calls)
+			}
+		})
+	}
+}

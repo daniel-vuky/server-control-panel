@@ -1,4 +1,5 @@
 import { type KeyboardEvent, type ReactNode, type RefObject, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), a[href], select:not([disabled])'
 
@@ -17,7 +18,9 @@ type Props = {
 /**
  * Dialog is the modal frame of designs 01 and 09: the dimmed overlay and the
  * panel. Focus starts inside and stays there; Escape and a click on the
- * overlay close it; closing returns focus to whatever opened it.
+ * overlay close it; closing returns focus to whatever opened it. It renders
+ * in a portal on document.body, so a dimmed or filtered page (LiveDim) around
+ * the component that opens it neither dims it nor moves its fixed overlay.
  */
 export default function Dialog({
   labelledBy,
@@ -60,7 +63,7 @@ export default function Dialog({
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-[180px] pb-4">
       <button
         type="button"
@@ -81,7 +84,8 @@ export default function Dialog({
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

@@ -112,6 +112,18 @@ function StepItem({ step, backup }: { step: BackupStep; backup: Backup }) {
         {step.detail === '' ? 'Skipped' : `Skipped · ${step.detail}`}
       </span>
     )
+  } else if (step.detail !== '' && pct !== null) {
+    // The progress detail ends "… · 62%": the percent keeps its own box, so the words before it never shift
+    // (the separator goes with it).
+    const words = step.detail.replace(/\s*·?\s*\d{1,3}%\s*$/, '')
+    detail = (
+      <span className="flex items-baseline justify-between gap-2 font-mono text-xs text-muted">
+        <span className="min-w-0 break-words">{words}</span>
+        <span data-testid="step-percent" className="inline-block min-w-[4ch] flex-none text-right">
+          {pct}%
+        </span>
+      </span>
+    )
   } else if (step.detail !== '') {
     detail = <span className="font-mono text-xs break-words text-muted">{step.detail}</span>
   }

@@ -96,7 +96,7 @@ func New(o Options) *Monitor {
 	if o.CloudflaredAddr != "" {
 		addrs = []string{o.CloudflaredAddr}
 	}
-	return &Monitor{
+	m := &Monitor{
 		st: o.Store, cmd: o.Cmd, src: o.Source, host: o.Host, socket: o.Socket, now: o.Now, log: o.Log,
 		sampler: NewSampler(o.Store, o.Cmd, o.Source, o.Host, o.Now, o.Log),
 		client:  newCloudflaredClient(),
@@ -107,6 +107,8 @@ func New(o Options) *Monitor {
 		},
 		disk: map[int64]DiskUsage{},
 	}
+	m.sampler.Tunnel = func(ctx context.Context) TunnelState { return m.cloudflared(ctx).State }
+	return m
 }
 
 // Start starts the sampler and the disk usage loop (its first read 2 minutes
@@ -153,6 +155,20 @@ func (m *Monitor) Prune(ctx context.Context) error { return m.sampler.Prune(ctx)
 // Disks lists the server's disks (Host.Disks): one statfs per disk, no
 // Docker read.
 func (m *Monitor) Disks() (disks []Disk, fallback bool) { return m.host.Disks() }
+
+// Load is the host's 1, 5 and 15 minute load averages, read now; ok is false
+// when /proc/loadavg cannot be read.
+func (m *Monitor) Load() (one, five, fifteen float64, ok bool) {
+	one, five, fifteen, err := m.host.Loadavg()
+	return one, five, fifteen, err == nil
+}
+
+// BootTime is when the host booted (its /proc/uptime read against the
+// Monitor's clock), ok false when it cannot be read.
+func (m *Monitor) BootTime() (time.Time, bool) {
+	t, err := m.host.BootTime(m.now())
+	return t, err == nil
+}
 
 // Thresholds are the server's alert lines.
 func (m *Monitor) Thresholds() Thresholds { return DefaultThresholds }

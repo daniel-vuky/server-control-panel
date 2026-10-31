@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
+import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ActionMenu from './ActionMenu'
 import ConfirmDialog from './ConfirmDialog'
@@ -27,6 +28,10 @@ function MenuWithDialog() {
       )}
     </>
   )
+}
+
+function Where() {
+  return <output data-testid="where">{useLocation().pathname}</output>
 }
 
 function setup(actions: string[]) {
@@ -217,6 +222,131 @@ describe('ActionMenu', () => {
       withUntrack(['untrack'])
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' })
       expect(screen.getByRole('menuitem', { name: 'Stop tracking' })).toHaveFocus()
+    })
+  })
+
+  it('Tab closes the menu and leaves focus on the trigger, so the page order continues from it', () => {
+    const { trigger } = setup(['start', 'restart'])
+    open(trigger)
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Tab' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(trigger).toHaveFocus()
+    open(trigger)
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Tab', shiftKey: true })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('gives every item a 15px aria-hidden icon in a flex row', () => {
+    render(
+      <MemoryRouter>
+        <ActionMenu
+          name="shop"
+          actions={['start', 'restart', 'untrack']}
+          onStart={() => {}}
+          onRestart={() => {}}
+          onUntrack={() => {}}
+          backup={{ enabled: true, reason: '', onRun: () => {} }}
+          logsHref="/projects/7/logs"
+          detailsHref="/projects/7"
+        />
+      </MemoryRouter>,
+    )
+    open(screen.getByRole('button', { name: 'More actions for shop' }))
+    const items = screen.getAllByRole('menuitem')
+    expect(items).toHaveLength(6)
+    for (const item of items) {
+      expect(item).toHaveClass('flex', 'items-center', 'gap-2.5')
+      const icon = item.querySelector('svg')
+      expect(icon).not.toBeNull()
+      expect(icon).toHaveAttribute('aria-hidden', 'true')
+      expect(icon).toHaveAttribute('width', '15')
+      expect(icon).toHaveAttribute('height', '15')
+      expect(icon).toHaveAttribute('stroke-width', '1.9')
+    }
+  })
+
+  describe('View logs and Open details', () => {
+    function withLinks(props: { logsDisabledReason?: string; links?: boolean } = {}) {
+      const { links = true, logsDisabledReason } = props
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <ActionMenu
+            name="shop"
+            actions={['start', 'restart', 'untrack']}
+            onStart={() => {}}
+            onRestart={() => {}}
+            onUntrack={() => {}}
+            backup={{ enabled: true, reason: '', onRun: () => {} }}
+            logsHref={links ? '/projects/7/logs' : undefined}
+            logsDisabledReason={logsDisabledReason}
+            detailsHref={links ? '/projects/7' : undefined}
+          />
+          <Where />
+        </MemoryRouter>,
+      )
+      open(screen.getByRole('button', { name: 'More actions for shop' }))
+    }
+
+    it('lists Start, Restart, Back up now, View logs, Open details, Stop tracking in order', () => {
+      withLinks()
+      expect(screen.getAllByRole('menuitem').map((el) => el.textContent)).toEqual([
+        'Start',
+        'Restart',
+        'Back up now',
+        'View logs',
+        'Open details',
+        'Stop tracking',
+      ])
+      expect(screen.getByRole('menuitem', { name: 'View logs' })).toHaveAttribute(
+        'href',
+        '/projects/7/logs',
+      )
+      expect(screen.getByRole('menuitem', { name: 'Open details' })).toHaveAttribute(
+        'href',
+        '/projects/7',
+      )
+    })
+
+    it('arrow keys move through the link items too', () => {
+      withLinks()
+      const menu = screen.getByRole('menu')
+      for (let i = 0; i < 3; i++) fireEvent.keyDown(menu, { key: 'ArrowDown' })
+      expect(screen.getByRole('menuitem', { name: 'View logs' })).toHaveFocus()
+      fireEvent.keyDown(menu, { key: 'ArrowDown' })
+      expect(screen.getByRole('menuitem', { name: 'Open details' })).toHaveFocus()
+      fireEvent.keyDown(menu, { key: 'ArrowDown' })
+      expect(screen.getByRole('menuitem', { name: 'Stop tracking' })).toHaveFocus()
+    })
+
+    it('clicking a link navigates and closes the menu', () => {
+      withLinks()
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Open details' }))
+      expect(screen.getByTestId('where')).toHaveTextContent('/projects/7')
+      expect(screen.queryByRole('menu')).toBeNull()
+    })
+
+    it('a disabled View logs is aria-disabled with the reason, focusable, and goes nowhere', () => {
+      withLinks({ logsDisabledReason: 'The project folder is missing' })
+      const logs = screen.getByRole('menuitem', { name: 'View logs' })
+      expect(logs).toHaveAttribute('aria-disabled', 'true')
+      expect(logs).toHaveAttribute('title', 'The project folder is missing')
+      expect(logs).not.toHaveAttribute('href')
+      fireEvent.click(logs)
+      expect(screen.getByTestId('where').textContent).toBe('/')
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+      for (let i = 0; i < 3; i++) fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+      expect(logs).toHaveFocus()
+    })
+
+    it('without the props the items are as before', () => {
+      withLinks({ links: false })
+      expect(screen.getAllByRole('menuitem').map((el) => el.textContent)).toEqual([
+        'Start',
+        'Restart',
+        'Back up now',
+        'Stop tracking',
+      ])
     })
   })
 

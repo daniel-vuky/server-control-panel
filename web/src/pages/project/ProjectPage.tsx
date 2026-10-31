@@ -2,8 +2,10 @@ import { CloudUpload, Folder, Globe, Play, RotateCw, Square } from 'lucide-react
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from 'react'
 import { Link, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import type { Project } from '../../api/types.gen'
-import { useLive } from '../../app/live'
+import { LiveDim, useLive } from '../../app/live'
+import ConnectionBadge from '../../components/ConnectionBadge'
 import MonitorOnlyTag from '../../components/MonitorOnlyTag'
+import { BadgeRow } from '../../components/PageHeader'
 import StatusBadge from '../../components/StatusBadge'
 import { projectRule } from '../../lib/backup'
 import { isNotCreated } from '../../lib/containers'
@@ -49,9 +51,23 @@ export default function ProjectPage() {
     // On its way back to the list: nothing to show for the paint before it goes.
     body = null
   } else if (loading) {
-    body = <Loading />
+    body = (
+      <>
+        <BadgeRow />
+        <LiveDim>
+          <Loading />
+        </LiveDim>
+      </>
+    )
   } else if (project === null) {
-    body = <NotTracked />
+    body = (
+      <>
+        <BadgeRow />
+        <LiveDim>
+          <NotTracked />
+        </LiveDim>
+      </>
+    )
   } else {
     const shown = actions.overlay(project)
     const outlet: ProjectOutlet = {
@@ -63,24 +79,29 @@ export default function ProjectPage() {
     }
     body = (
       <>
-        <Breadcrumb name={shown.displayName} />
-        <Header
-          project={shown}
-          raw={project}
-          dockerDown={outlet.dockerDown}
-          actions={actions}
-          backup={backup}
-          driveState={live.drive?.state}
-        />
-        <Tabs base={`/projects/${project.id}`} databases={shown.databases.length}>
-          <Outlet context={outlet} />
-        </Tabs>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Breadcrumb name={shown.displayName} />
+          <ConnectionBadge />
+        </div>
+        <LiveDim className="flex flex-col gap-5">
+          <Header
+            project={shown}
+            raw={project}
+            dockerDown={outlet.dockerDown}
+            actions={actions}
+            backup={backup}
+            driveState={live.drive?.state}
+          />
+          <Tabs base={`/projects/${project.id}`} databases={shown.databases.length}>
+            <Outlet context={outlet} />
+          </Tabs>
+        </LiveDim>
       </>
     )
   }
 
   return (
-    <div className="flex max-w-[1040px] flex-col gap-5">
+    <div className="flex flex-col gap-5">
       {body}
       {actions.dialogs}
       {backup.dialogs}
@@ -230,7 +251,13 @@ function Header({ project: p, raw, dockerDown, actions, backup, driveState }: He
             </a>
           )}
           <span>
-            Uptime <span className="font-mono text-text-2">{formatUptime(p.upSince, now)}</span>
+            Uptime{' '}
+            <span
+              data-testid="header-uptime"
+              className="inline-block min-w-[8ch] font-mono text-text-2"
+            >
+              {formatUptime(p.upSince, now)}
+            </span>
           </span>
         </div>
       </div>

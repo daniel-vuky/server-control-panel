@@ -550,3 +550,25 @@ func (s *server) backupSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// latestBackups is GET /api/backups/latest: each tracked project's newest
+// ended backup, and the newest of those.
+func (s *server) latestBackups(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Store.LatestBackups(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out := LatestBackups{Projects: make([]LatestBackup, 0, len(rows))}
+	for _, l := range rows {
+		out.Projects = append(out.Projects, LatestBackup{
+			ID: l.ID, ProjectID: l.ProjectID, ProjectName: l.ProjectName, Database: l.Database,
+			State: l.State, At: formatTime(&l.At),
+		})
+	}
+	if len(out.Projects) > 0 {
+		// Latest points into Projects: row 0 is the newest by the store's ordering.
+		out.Latest = &out.Projects[0]
+	}
+	writeJSON(w, http.StatusOK, out)
+}

@@ -2,9 +2,11 @@ import { type ReactNode, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { Workspace } from '../api/types.gen'
 import { listWorkspaces, removeWorkspace } from '../api/workspaces'
+import { LiveDim } from '../app/live'
 import ConfirmDialog from '../components/ConfirmDialog'
 import IssueLinks from '../components/IssueLinks'
 import LoadError from '../components/LoadError'
+import PageHeader from '../components/PageHeader'
 import { useToast } from '../components/Toast'
 import { plural } from '../lib/plural'
 import { formatLastScan } from '../lib/time'
@@ -25,22 +27,22 @@ const head = 'flex flex-col gap-1 border-b border-border px-[18px] py-4'
 /** SettingsPage is /settings: workspaces, Google Drive, alerts (still to come), backup defaults and metrics history. */
 export default function SettingsPage() {
   return (
-    <div className="flex max-w-[1040px] flex-col gap-[18px]">
-      <header className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-[13px] text-muted">
-          Workspaces, Google Drive, alert channels and backup defaults
-        </p>
-      </header>
+    <div className="flex flex-col gap-[18px]">
+      <PageHeader
+        title="Settings"
+        subtitle="Workspaces, Google Drive, alert channels and backup defaults"
+      />
 
-      <WorkspacesCard />
+      <LiveDim className="flex flex-col gap-[18px]">
+        <WorkspacesCard />
 
-      <DriveCard />
-      <Soon id="alert-title" title="Alerts" issues={[8]}>
-        Where the panel sends alerts.
-      </Soon>
-      <BackupDefaultsCard />
-      <MetricsHistoryCard />
+        <DriveCard />
+        <Soon id="alert-title" title="Alerts" issues={[8]}>
+          Where the panel sends alerts.
+        </Soon>
+        <BackupDefaultsCard />
+        <MetricsHistoryCard />
+      </LiveDim>
     </div>
   )
 }

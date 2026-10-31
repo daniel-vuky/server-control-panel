@@ -10,6 +10,7 @@ import type {
   BackupSettings,
   BackupStarted,
   BackupSummary,
+  LatestBackups,
   Project,
   ScheduleFields,
 } from './types.gen'
@@ -28,6 +29,15 @@ export function retryBackup(id: number): Promise<BackupStarted> {
 /** getBackup is one backup: an active one with its queue position, else the stored row. */
 export function getBackup(id: number, signal?: AbortSignal): Promise<Backup> {
   return getJSON<Backup>(`/api/backups/${id}`, signal)
+}
+
+/** getLatestBackups is each tracked project's newest ended backup (D10). */
+export async function getLatestBackups(signal?: AbortSignal): Promise<LatestBackups> {
+  const l = await getJSON<LatestBackups>('/api/backups/latest', signal)
+  if (typeof l !== 'object' || l === null || !Array.isArray(l.projects)) {
+    throw new ApiError(200, null, 'Unexpected response from the server.')
+  }
+  return { latest: l.latest ?? null, projects: l.projects }
 }
 
 /** HISTORY_PAGE is how many backups the history reads at a time. */

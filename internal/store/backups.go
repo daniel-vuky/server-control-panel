@@ -480,3 +480,49 @@ func parseNullTime(s sql.NullString) (*time.Time, error) {
 	}
 	return &t, nil
 }
+
+// LatestBackup is a tracked project's most recent ended backup: its state is
+// ok, failed, refused or interrupted, never queued or running. At is when it
+// finished, or when it was created for a row with no finish time.
+type LatestBackup struct {
+	ID, ProjectID         int64
+	ProjectName, Database string
+	State                 string
+	At                    time.Time
+}
+
+// LatestBackups returns the newest ended backup of every tracked project that
+// has one (a Not found project included), newest first by id, so the first row
+// is the latest overall. The project name is its current display name. A
+// project with no ended backup, and an ignored one, has no row.
+func (s *Store) LatestBackups(ctx context.Context) ([]LatestBackup, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT b.id, b.project_id, p.display_name, b.db_name, b.state, COALESCE(b.finished_at, b.created_at)
+		 FROM backups b JOIN projects p ON p.id = b.project_id
+		 WHERE p.state = 'tracked'
+		   AND b.id = (SELECT MAX(id) FROM backups x WHERE x.project_id = b.project_id
+		               AND x.state IN ('ok', 'failed', 'refused', 'interrupted'))
+		 ORDER BY b.id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("store: latest backups: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []LatestBackup{}
+	for rows.Next() {
+		var (
+			l  LatestBackup
+			at string
+		)
+		if err := rows.Scan(&l.ID, &l.ProjectID, &l.ProjectName, &l.Database, &l.State, &at); err != nil {
+			return nil, fmt.Errorf("store: read latest backup: %w", err)
+		}
+		if l.At, err = parseTime(at); err != nil {
+			return nil, fmt.Errorf("store: latest backup %d time: %w", l.ID, err)
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: latest backups: %w", err)
+	}
+	return out, nil
+}

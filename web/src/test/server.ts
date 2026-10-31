@@ -1,3 +1,4 @@
+import { vi } from 'vitest'
 import type { ServerInfo, ServerPoint, ServerSeries, UsageReport, UsageRow } from '../api/types.gen'
 
 export const MB = 1024 * 1024
@@ -20,6 +21,8 @@ export function makeServerInfo(overrides: Partial<ServerInfo> = {}): ServerInfo 
     sampleSeconds: 30,
     retentionDays: 7,
     timeZone: { name: 'UTC', offset: '+00:00' },
+    load: { one: 1.36, five: 1.12, fifteen: 0.98 },
+    bootTime: '2026-10-20T08:00:00Z',
     ...overrides,
   }
 }
@@ -33,6 +36,10 @@ const point = (t: string, v: Partial<ServerPoint> = {}): ServerPoint => ({
   diskWrite: 0.5 * MB,
   netIn: 2 * MB,
   netOut: 1 * MB,
+  load1: 1.36,
+  diskUsed: 92 * GB,
+  diskTotal: 160 * GB,
+  tunnel: 1,
   ...v,
 })
 
@@ -56,6 +63,10 @@ export function makeSeries(overrides: Partial<ServerSeries> = {}): ServerSeries 
       diskWrite: 0.9 * MB,
       netIn: 2 * MB,
       netOut: 1.1 * MB,
+      load1: 1.36,
+      diskUsed: 92 * GB,
+      diskTotal: 160 * GB,
+      tunnel: 1,
     },
     points: [
       point('2026-10-31T09:50:00Z'),
@@ -90,4 +101,22 @@ export function makeUsage(rows: UsageRow[]): UsageReport {
     totals: { cpuPercent: 40, memBytes: 6400 * MB, diskUsedBytes: 100 * GB, netBps: 4 * MB },
     rows,
   }
+}
+
+/**
+ * holdShellReads makes the shell's two reads (`/api/server` and
+ * `/api/backups/latest`) wait forever and leaves every other request to the
+ * fetch stub in place, for the tests of one banner or badge that render the
+ * whole shell and must not see a state update land after they ended.
+ */
+export function holdShellReads() {
+  const inner = fetch
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      input === '/api/server' || input === '/api/backups/latest'
+        ? new Promise<Response>(() => {})
+        : inner(input, init),
+    ),
+  )
 }

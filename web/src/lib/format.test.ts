@@ -6,7 +6,9 @@ import {
   formatMem,
   formatPercent,
   formatRate,
+  formatSince,
   formatUptime,
+  formatUsedOfTotal,
   niceMax,
 } from './format'
 
@@ -151,5 +153,76 @@ describe('niceMax', () => {
     [8 * GB, 8 * GB],
   ])('%s bytes round up to %s', (v, want) => {
     expect(niceMax(v, true)).toBe(want)
+  })
+})
+
+const GB = 1024 * MB
+
+describe('formatUsedOfTotal', () => {
+  it.each([
+    [5.2 * GB, 8 * GB, '5.2 / 8', 'GB'],
+    [92 * GB, 160 * GB, '92 / 160', 'GB'],
+    [99.94 * GB, 150 * GB, '99.9 / 150', 'GB'],
+    [120.4 * GB, 160 * GB, '120 / 160', 'GB'],
+    [0, 8 * GB, '0 / 8', 'GB'],
+    [300 * MB, 512 * MB, '300 / 512', 'MB'],
+    [1.5 * 1024 * GB, 2 * 1024 * GB, '1.5 / 2', 'TB'],
+  ])('%d of %d is %s %s', (used, total, value, unit) => {
+    expect(formatUsedOfTotal(used, total)).toEqual({ value, unit })
+  })
+})
+
+describe('formatSince', () => {
+  const now = new Date('2026-10-31T10:00:00Z')
+  const ago = (min: number) => new Date(now.getTime() - min * 60_000).toISOString()
+  it.each([
+    [23 * 1440 + 6 * 60 + 30, '23 days', '6 h'],
+    [1440, '1 day', '0 h'],
+    [5 * 60 + 12, '5 h', '12 min'],
+    [60, '1 h', '0 min'],
+    [12, '12 min', ''],
+    [0, '0 min', ''],
+  ])('%d minutes ago is %s / %s', (min, value, sub) => {
+    expect(formatSince(ago(min), now)).toEqual({ value, sub })
+  })
+  it('clamps a future boot to zero and dashes an invalid time', () => {
+    expect(formatSince(ago(-5), now)).toEqual({ value: '0 min', sub: '' })
+    expect(formatSince('', now)).toEqual({ value: '—', sub: '' })
+    expect(formatSince('nope', now)).toEqual({ value: '—', sub: '' })
+  })
+})
+
+describe('units are always stated (#73)', () => {
+  it('words a rate in MB/s', () => {
+    expect(formatRate(1048576)).toBe('1.0 MB/s')
+  })
+
+  it('words a CPU share in %', () => {
+    expect(formatCpu(12)).toBe('12%')
+    expect(formatCpu(9.84, 1)).toBe('9.8%')
+  })
+
+  it.each([0, 640 * MB, 1023 * MB, 1024 * MB, 5 * 1024 * MB])(
+    'words memory %s in MB or GB',
+    (b) => {
+      expect(formatMem(b)).toMatch(/ (MB|GB)$/)
+    },
+  )
+
+  it('words a duration in s, min or h', () => {
+    expect(formatDuration(65_000)).toBe('1m 05s')
+    expect(formatDuration(41_000)).toMatch(/s$/)
+    expect(formatDuration(3_900_000)).toBe('1h 05m')
+  })
+
+  it.each([0, 512, 38 * MB, 4.2 * 1024 * MB])('words bytes %s with a unit', (n) => {
+    expect(formatBytes(n)).toMatch(/ (B|KB|MB|GB|TB|PB)$/)
+  })
+
+  it('words an uptime in m, h and d', () => {
+    const now = new Date('2025-10-28T12:00:00Z')
+    expect(formatUptime('2025-10-28T11:15:00Z', now)).toBe('45m')
+    expect(formatUptime('2025-10-28T06:48:00Z', now)).toBe('5h 12m')
+    expect(formatUptime('2025-10-16T08:00:00Z', now)).toBe('12d 4h')
   })
 })

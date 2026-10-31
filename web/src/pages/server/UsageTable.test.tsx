@@ -130,6 +130,13 @@ describe('UsageTable', () => {
     expect(net).toHaveTextContent('25%')
   })
 
+  it('keeps each value and its share in fixed-width slots', () => {
+    const table = renderTable()
+    const [cpu] = cells(table, 'shop')
+    expect(within(cpu).getByTestId('usage-value')).toHaveClass('min-w-[9ch]')
+    expect(within(cpu).getByTestId('usage-share')).toHaveClass('min-w-[4ch]', 'text-right')
+  })
+
   it('caps a share at 100%', () => {
     const r = makeUsage([makeUsageRow({ cpuPercent: 80 })])
     const table = renderTable(r)

@@ -609,3 +609,67 @@ func TestRemoveWorkspaceCascadesSamples(t *testing.T) {
 		t.Fatalf("server_samples = %d rows", n)
 	}
 }
+
+func TestServerSamplesNewColumns(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+
+	full := ServerSample{
+		TS: clock(11, 55, 0), CPU: f64(10),
+		Load1: f64(1.5), DiskUsed: i64(100), DiskTotal: i64(1000), Tunnel: f64(1),
+	}
+	second := ServerSample{
+		TS: clock(11, 55, 30), CPU: f64(20),
+		Load1: f64(2.5), DiskUsed: i64(201), DiskTotal: i64(1000), Tunnel: f64(0),
+	}
+	empty := ServerSample{TS: clock(11, 56, 0), CPU: f64(30)}
+	mustInsert(t, s, &full)
+	mustInsert(t, s, &second)
+	mustInsert(t, s, &empty)
+	mustInsert(t, s, &ServerSample{TS: clock(11, 20, 0), CPU: f64(5)})
+
+	// 1 hour: raw 30-second points carry the values and the nils.
+	hour, err := s.ServerSeries(ctx, rangeFor(metricsNow, 30*time.Second, 120))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(pts []ServerSample, ts time.Time) ServerSample {
+		t.Helper()
+		for _, p := range pts {
+			if p.TS.Equal(ts) {
+				return p
+			}
+		}
+		t.Fatalf("no point at %v", ts)
+		return ServerSample{}
+	}
+	if p := at(hour, full.TS); p.Load1 == nil || *p.Load1 != 1.5 || *p.DiskUsed != 100 || *p.DiskTotal != 1000 || *p.Tunnel != 1 {
+		t.Fatalf("11:55:00 = %+v", p)
+	}
+	if p := at(hour, empty.TS); p.Load1 != nil || p.DiskUsed != nil || p.DiskTotal != nil || p.Tunnel != nil {
+		t.Fatalf("11:56:00 = %+v, want nil new fields", p)
+	}
+
+	// Rollup, then 24 hours: the 11:55 bucket averages 1 and 0 to 0.5, the
+	// disk bytes round to whole numbers, and the 11:55 values the empty tick
+	// lacks do not drag them down (avg ignores NULL).
+	mustRollup(t, s, metricsNow)
+	day, err := s.ServerSeries(ctx, rangeFor(metricsNow, 300*time.Second, 288))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := at(day, clock(11, 55, 0))
+	if p.Tunnel == nil || *p.Tunnel != 0.5 {
+		t.Fatalf("tunnel = %v, want 0.5", p.Tunnel)
+	}
+	if p.Load1 == nil || *p.Load1 != 2 {
+		t.Fatalf("load1 = %v, want 2", p.Load1)
+	}
+	if p.DiskUsed == nil || *p.DiskUsed != 151 || *p.DiskTotal != 1000 { // avg(100, 201) = 150.5 rounds to 151
+		t.Fatalf("disk = %v / %v, want 151 / 1000", p.DiskUsed, p.DiskTotal)
+	}
+	// A bucket whose samples all lack the fields stays nil.
+	if p := at(day, clock(11, 20, 0)); p.CPU == nil || p.Load1 != nil || p.DiskUsed != nil || p.DiskTotal != nil || p.Tunnel != nil {
+		t.Fatalf("11:20 = %+v, want only cpu", p)
+	}
+}

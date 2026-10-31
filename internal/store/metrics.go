@@ -18,9 +18,11 @@ const (
 )
 
 // ServerSample is one reading of the whole server: CPU % of the machine, RAM
-// bytes used and total, and disk and network rates in bytes per second. A nil
-// field is a value that could not be read (a gap). In a series TS is the
-// bucket start and each field the bucket's average.
+// bytes used and total, disk and network rates in bytes per second, the
+// one-minute load average, the disk bytes used and total over the listed
+// disks and the Cloudflare Tunnel state (1 connected, 0 not). A nil field is a
+// value that could not be read (a gap). In a series TS is the bucket start and
+// each field the bucket's average.
 type ServerSample struct {
 	TS        time.Time
 	CPU       *float64
@@ -30,6 +32,10 @@ type ServerSample struct {
 	DiskWrite *float64
 	NetIn     *float64
 	NetOut    *float64
+	Load1     *float64
+	DiskUsed  *int64
+	DiskTotal *int64
+	Tunnel    *float64
 }
 
 // ProjectSample is one reading of a tracked project: CPU in Docker's % (100 =
@@ -59,12 +65,13 @@ func (r Range) Buckets() int {
 	return int(r.To.Sub(r.From)/r.Step) + 1
 }
 
-// The value columns of each tier and their averages. Memory is whole bytes,
-// so its average is rounded back to an integer; the average of an all-null
+// The value columns of each tier and their averages. Memory and disk space are
+// whole bytes, so their average is rounded back to an integer; the average of an all-null
 // group is null (a gap).
 const (
-	serverCols  = `cpu, mem_used, mem_total, disk_read, disk_write, net_in, net_out`
-	serverAvgs  = `avg(cpu), CAST(round(avg(mem_used)) AS INTEGER), CAST(round(avg(mem_total)) AS INTEGER), avg(disk_read), avg(disk_write), avg(net_in), avg(net_out)`
+	serverCols = `cpu, mem_used, mem_total, disk_read, disk_write, net_in, net_out, load1, disk_used, disk_total, tunnel`
+	serverAvgs = `avg(cpu), CAST(round(avg(mem_used)) AS INTEGER), CAST(round(avg(mem_total)) AS INTEGER), avg(disk_read), avg(disk_write), avg(net_in), avg(net_out), ` +
+		`avg(load1), CAST(round(avg(disk_used)) AS INTEGER), CAST(round(avg(disk_total)) AS INTEGER), avg(tunnel)`
 	projectCols = `cpu, mem, net_in, net_out`
 	projectAvgs = `avg(cpu), CAST(round(avg(mem)) AS INTEGER), avg(net_in), avg(net_out)`
 )
@@ -113,7 +120,7 @@ var (
 	serverTier = metricsTier{
 		series:    serverSeriesSQL,
 		watermark: `SELECT max(ts) + 300 FROM server_rollups`,
-		mem:       []bool{false, true, true, false, false, false, false},
+		mem:       []bool{false, true, true, false, false, false, false, false, true, true, false},
 	}
 	projectTier = metricsTier{
 		series:    projectSeriesSQL,
@@ -138,9 +145,10 @@ func (s *Store) InsertSamples(ctx context.Context, srv *ServerSample, ps []Proje
 	defer func() { _ = tx.Rollback() }()
 	if srv != nil {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO server_samples (ts, cpu, mem_used, mem_total, disk_read, disk_write, net_in, net_out)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			slot(srv.TS), srv.CPU, srv.MemUsed, srv.MemTotal, srv.DiskRead, srv.DiskWrite, srv.NetIn, srv.NetOut); err != nil {
+			`INSERT OR IGNORE INTO server_samples (ts, `+serverCols+`)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			slot(srv.TS), srv.CPU, srv.MemUsed, srv.MemTotal, srv.DiskRead, srv.DiskWrite, srv.NetIn, srv.NetOut,
+			srv.Load1, srv.DiskUsed, srv.DiskTotal, srv.Tunnel); err != nil {
 			return fmt.Errorf("store: insert samples: %w", err)
 		}
 	}
@@ -198,6 +206,8 @@ func (s *Store) ServerSeries(ctx context.Context, r Range) ([]ServerSample, erro
 		out[i].CPU, out[i].MemUsed, out[i].MemTotal = floatOf(v[0]), intOf(v[1]), intOf(v[2])
 		out[i].DiskRead, out[i].DiskWrite = floatOf(v[3]), floatOf(v[4])
 		out[i].NetIn, out[i].NetOut = floatOf(v[5]), floatOf(v[6])
+		out[i].Load1, out[i].DiskUsed = floatOf(v[7]), intOf(v[8])
+		out[i].DiskTotal, out[i].Tunnel = intOf(v[9]), floatOf(v[10])
 	})
 	if err != nil {
 		return nil, fmt.Errorf("store: read server series: %w", err)
