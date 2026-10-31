@@ -567,6 +567,7 @@ func (s *server) latestBackups(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if len(out.Projects) > 0 {
+		// Latest points into Projects: row 0 is the newest by the store's ordering.
 		out.Latest = &out.Projects[0]
 	}
 	writeJSON(w, http.StatusOK, out)

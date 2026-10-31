@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { backupRefusal, retryBackup, startBackup } from '../api/backups'
 import { connectDrive, driveIssue, fieldIssue } from '../api/drive'
 import type { Backup, BackupStarted, Database, Project } from '../api/types.gen'
+import { useLatestBackups } from '../app/latestBackups'
 import { useLive } from '../app/live'
 import BackupChooser from '../components/BackupChooser'
 import BackupProgress from '../components/BackupProgress'
@@ -58,6 +59,7 @@ const ROW_CODES = new Set([
 export function useBackup() {
   const live = useLive()
   const toast = useToast()
+  const { refresh: refreshLatest } = useLatestBackups()
   const driveState = live.drive?.state
   const [chooser, setChooser] = useState<{ project: Project; key: string | null } | null>(null)
   const [driveAsk, setDriveAsk] = useState<Target | null>(null)
@@ -85,9 +87,12 @@ export function useBackup() {
       try {
         id = (await call()).id
       } catch (err) {
-        if (!mounted.current) return
         const refusal = backupRefusal(err)
-        if (refusal !== null && ROW_CODES.has(refusal.error)) setRefusals((n) => n + 1)
+        const stored = refusal !== null && ROW_CODES.has(refusal.error)
+        // A refused row never enters the live backups: read the latest again (the provider outlives this hook).
+        if (stored) refreshLatest()
+        if (!mounted.current) return
+        if (stored) setRefusals((n) => n + 1)
         if (refusal?.error === 'already_running' && refusal.id !== null) {
           toast.show(<>A backup of {mono(t.name)} is already running.</>)
           setOpenId(refusal.id)
@@ -119,7 +124,7 @@ export function useBackup() {
       }
       if (mounted.current) setOpenId(id)
     },
-    [toast],
+    [toast, refreshLatest],
   )
 
   /** run backs up one database: the Drive dialog for a Drive reason, else the POST. */

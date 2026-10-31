@@ -298,7 +298,7 @@ func ParseLoadavg(b []byte) (one, five, fifteen float64, err error) {
 }
 
 // ParseUptime reads the seconds since boot, the first field of /proc/uptime
-// (kept to its centisecond).
+// (rounded to the millisecond).
 func ParseUptime(b []byte) (time.Duration, error) {
 	f := strings.Fields(string(b))
 	if len(f) < 1 {

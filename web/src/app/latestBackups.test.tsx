@@ -27,6 +27,13 @@ function Probe() {
   )
 }
 
+// Grab keeps the context's refresh where a test can call it.
+let refresh: () => void = () => {}
+function Grab() {
+  refresh = useLatestBackups().refresh
+  return null
+}
+
 const live = (backups: Partial<Backup>[]): LiveState =>
   ({ dockerUp: true, projects: [], backups, batch: null, drive: null }) as unknown as LiveState
 
@@ -108,6 +115,49 @@ describe('LatestBackupsProvider', () => {
     emit(live([]))
     await waitFor(() => expect(screen.getByTestId('error')).toHaveTextContent('true'))
     expect(screen.getByTestId('data')).toHaveTextContent('null')
+  })
+
+  it('reads again on refresh() and on the 60 s interval while visible', async () => {
+    // Only the interval is faked (before the provider mounts); the flush uses the real setTimeout.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const flush = () =>
+      act(async () => {
+        await new Promise((r) => setTimeout(r, 5))
+      })
+    try {
+      render(
+        <LiveProvider>
+          <LatestBackupsProvider>
+            <Grab />
+          </LatestBackupsProvider>
+        </LiveProvider>,
+      )
+      emit(live([]))
+      await flush()
+      expect(reads()).toBe(1)
+
+      act(() => refresh())
+      await flush()
+      expect(reads()).toBe(2)
+
+      act(() => {
+        vi.advanceTimersByTime(59_000)
+      })
+      await flush()
+      expect(reads()).toBe(2)
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+      await flush()
+      expect(reads()).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('answers no data, no error and a no-op refresh without a provider', () => {
+    render(<Grab />)
+    expect(() => refresh()).not.toThrow()
   })
 
   it('answers no data and no error without a provider', () => {

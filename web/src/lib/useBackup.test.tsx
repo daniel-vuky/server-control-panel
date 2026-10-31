@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Backup, DriveStatus, Project } from '../api/types.gen'
+import { LatestBackupsProvider } from '../app/latestBackups'
 import { FakeEventSource } from '../test/fakeEventSource'
 import { showPage } from '../test/pageshow'
 import { makeBackup, makeDatabase, makeProject, pushState } from '../test/projects'
@@ -356,6 +357,42 @@ describe('useBackup', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
     expect(screen.getByTestId('refusals')).toHaveTextContent(String(want))
+  })
+
+  it('reads /api/backups/latest again after a refusal that stored a row, and not after one that did not', async () => {
+    let code = 'db_not_running'
+    const stub = serve(
+      post('/api/projects/1/backups', () => json(409, { error: code, message: 'words' })),
+      get('/api/backups/latest', () => json(200, { latest: null, projects: [] })),
+    )
+    const project = makeProject({ databases: [shopDb] })
+    renderApp('/', {
+      routes: [
+        {
+          path: '/',
+          element: (
+            <LatestBackupsProvider>
+              <Harness project={project} />
+            </LatestBackupsProvider>
+          ),
+        },
+      ],
+    })
+    pushState([project], true, { drive: connected, backups: [] })
+    await waitFor(() => expect(calls(stub, '/api/backups/latest')).toHaveLength(1))
+
+    go()
+    await waitFor(() => expect(calls(stub, '/api/projects/1/backups', 'POST')).toHaveLength(1))
+    await waitFor(() => expect(calls(stub, '/api/backups/latest')).toHaveLength(2))
+
+    // A refusal that wrote no row leaves the latest alone.
+    code = 'not_found'
+    go()
+    await waitFor(() => expect(calls(stub, '/api/projects/1/backups', 'POST')).toHaveLength(2))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(calls(stub, '/api/backups/latest')).toHaveLength(2)
   })
 
   it.each([
