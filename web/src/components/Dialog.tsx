@@ -71,7 +71,7 @@ export default function Dialog({
         aria-hidden="true"
         data-testid="confirm-overlay"
         onClick={onClose}
-        className="absolute inset-0 cursor-default border-0 bg-[rgba(5,6,8,0.72)] p-0"
+        className="fixed inset-0 cursor-default border-0 bg-[rgba(5,6,8,0.72)] p-0"
       />
       <div
         ref={dialog}
