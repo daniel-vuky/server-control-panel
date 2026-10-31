@@ -588,12 +588,15 @@ func TestBackupDownloadClientCancelIsNotAWarning(t *testing.T) {
 
 	logs.Reset()
 	ctx, c := context.WithCancel(context.Background())
+	defer c()
 	cancel = c
 	req := httptest.NewRequest(http.MethodGet, backupURL(id, "/download"), nil).WithContext(ctx)
 	func() {
 		defer func() {
-			if p := recover(); p != nil && p != http.ErrAbortHandler {
-				panic(p)
+			if p := recover(); p != nil {
+				if err, ok := p.(error); !ok || !errors.Is(err, http.ErrAbortHandler) {
+					panic(p)
+				}
 			}
 		}()
 		h.ServeHTTP(httptest.NewRecorder(), req)
