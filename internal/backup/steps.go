@@ -239,27 +239,32 @@ func skipAfter(b *store.Backup, i int) {
 // finish sets the Prune step (always skipped: no retention yet), the end time
 // and the duration, stores the row, finishes the activity and takes the job off
 // the active list. Prune says "temp file deleted" only when the file was made.
+//
+// The active row turns ok only once the store has it: a client that sees ok in
+// the live state and downloads at once reads a stored ok row.
 func (m *Manager) finish(j *job) {
 	now := m.now()
 	m.mu.Lock()
-	b := &j.b
-	if b.State == StateRunning {
-		b.State = StateOK
+	final := copyBackup(j.b)
+	m.mu.Unlock()
+	if final.State == StateRunning {
+		final.State = StateOK
 	}
-	prune := &b.Steps[iPrune]
-	if b.State == StateOK {
+	prune := &final.Steps[iPrune]
+	if final.State == StateOK {
 		prune.State, prune.Detail = stepSkipped, wordsRetention
 	} else if j.tmpMade {
 		prune.State, prune.Detail = stepSkipped, wordsTempDeleted
 	}
-	b.FinishedAt = &now
-	if b.StartedAt != nil {
-		b.DurationMS = now.Sub(*b.StartedAt).Milliseconds()
+	final.FinishedAt = &now
+	if final.StartedAt != nil {
+		final.DurationMS = now.Sub(*final.StartedAt).Milliseconds()
 	}
-	final := copyBackup(*b)
-	m.mu.Unlock()
 
 	m.persist(final)
+	m.mu.Lock()
+	j.b = copyBackup(final)
+	m.mu.Unlock()
 	result, reason := store.ResultOK, ""
 	switch final.State {
 	case StateFailed:
