@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -303,6 +304,105 @@ func TestFinishConnectExchangeError(t *testing.T) {
 	to, err := e.svc.FinishConnect(ctx, "a@x", state, "fake-other", "")
 	if err != nil || to != "/settings?drive=error&code=token_expired" {
 		t.Fatalf("bad code = %q, %v", to, err)
+	}
+}
+
+// captureLog sends slog.Default to a buffer for the test.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// accountFailClient answers every Account with no_access, as Google does when
+// the token cannot read the account.
+type accountFailClient struct{ *recClient }
+
+func (c accountFailClient) Session(refresh string) Session {
+	return accountFailSession{c.recClient.Session(refresh)}
+}
+
+type accountFailSession struct{ Session }
+
+func (accountFailSession) Account(context.Context) (string, error) {
+	return "", errCode(CodeNoAccess, "drive gave no account email")
+}
+
+// Both failure branches of FinishConnect log the reduced error: its code and
+// its sanitised words, never the authorization code.
+func TestFinishConnectFailureIsLogged(t *testing.T) {
+	ctx := context.Background()
+	e := newSvcEnv(t)
+	logs := captureLog(t)
+	state := e.startState(t, "a@x", "/settings")
+	if _, err := e.svc.FinishConnect(ctx, "a@x", state, "fake-other", ""); err != nil {
+		t.Fatal(err)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "drive: connect failed") || !strings.Contains(out, "code=token_expired") {
+		t.Errorf("exchange failure log = %q", out)
+	}
+	if strings.Contains(out, "fake-other") || strings.Contains(out, state) {
+		t.Errorf("the log holds the code or state: %q", out)
+	}
+
+	logs.Reset()
+	e.svc.client = accountFailClient{e.client}
+	state = e.startState(t, "a@x", "/settings")
+	to, err := e.svc.FinishConnect(ctx, "a@x", state, "fake-"+state, "")
+	if err != nil || to != "/settings?drive=error&code=no_access" {
+		t.Fatalf("account failure = %q, %v", to, err)
+	}
+	if out := logs.String(); !strings.Contains(out, "drive: connect failed") || !strings.Contains(out, "code=no_access") {
+		t.Errorf("account failure log = %q", out)
+	}
+	if out := logs.String(); strings.Contains(out, e.client.lastRefresh()) {
+		t.Errorf("the log holds the refresh token: %q", out)
+	}
+	// The token the exchange gave is not kept anywhere: it is revoked.
+	_, err = e.client.Client.Session(e.client.lastRefresh()).Account(ctx)
+	wantCode(t, err, CodeTokenExpired)
+}
+
+// closeStoreClient closes the store once the account is read, so the write
+// that follows a successful exchange fails.
+type closeStoreClient struct {
+	*recClient
+	st *store.Store
+}
+
+func (c closeStoreClient) Session(refresh string) Session {
+	return closeStoreSession{Session: c.recClient.Session(refresh), st: c.st}
+}
+
+type closeStoreSession struct {
+	Session
+	st *store.Store
+}
+
+func (s closeStoreSession) Account(ctx context.Context) (string, error) {
+	email, err := s.Session.Account(ctx)
+	_ = s.st.Close()
+	return email, err
+}
+
+// A fresh refresh token the panel cannot store is revoked, not left valid at
+// Google with no row to revoke it from.
+func TestFinishConnectRevokesAnUnstoredToken(t *testing.T) {
+	ctx := context.Background()
+	e := newSvcEnv(t)
+	state := e.startState(t, "a@x", "/settings")
+	e.svc.client = closeStoreClient{recClient: e.client, st: e.st}
+	if _, err := e.svc.FinishConnect(ctx, "a@x", state, "fake-"+state, ""); err == nil {
+		t.Fatal("FinishConnect succeeded with a closed store")
+	}
+	_, err := e.client.Client.Session(e.client.lastRefresh()).Account(ctx)
+	wantCode(t, err, CodeTokenExpired)
+	if st := e.svc.Status(); st.State != StateNotConnected {
+		t.Errorf("Status = %+v, want not_connected", st)
 	}
 }
 
@@ -721,9 +821,9 @@ func TestDisconnectSkipsAConnectThatLanded(t *testing.T) {
 	ctx := context.Background()
 	e := newSvcEnv(t)
 	e.connect(t, "a@x")
-	e.svc.beforeDisconnectWrite = func() { e.connect(t, "b@x") }
-	if err := e.svc.Disconnect(ctx); err != nil {
-		t.Fatalf("Disconnect: %v", err)
+	e.svc.SetBeforeDisconnectWrite(func() { e.connect(t, "b@x") })
+	if err := e.svc.Disconnect(ctx); !errors.Is(err, ErrConnectedMeanwhile) {
+		t.Fatalf("Disconnect = %v, want ErrConnectedMeanwhile", err)
 	}
 	if st := e.svc.Status(); st.State != StateConnected {
 		t.Fatalf("Status = %+v, want the new connection kept", st)
@@ -735,12 +835,12 @@ func TestDisconnectSkipsAConnectThatLanded(t *testing.T) {
 		t.Fatalf("the new token was revoked: %v", err)
 	}
 	// An expiry meanwhile is not a new connection: Disconnect goes on.
-	e.svc.beforeDisconnectWrite = func() {
+	e.svc.SetBeforeDisconnectWrite(func() {
 		e.svc.mu.RLock()
 		gen := e.svc.gen
 		e.svc.mu.RUnlock()
 		e.svc.markExpired(ctx, gen)
-	}
+	})
 	if err := e.svc.Disconnect(ctx); err != nil {
 		t.Fatalf("Disconnect: %v", err)
 	}

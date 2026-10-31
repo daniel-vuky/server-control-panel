@@ -50,6 +50,9 @@ var (
 	ErrBadName = errors.New("drive: a folder name is 1 to 100 characters, with no /")
 	// ErrBusy is returned while a connection test runs.
 	ErrBusy = errors.New("drive: a connection test is already running")
+	// ErrConnectedMeanwhile is Disconnect's answer when a connect landed after
+	// it was called: that connection is kept and nothing was disconnected.
+	ErrConnectedMeanwhile = errors.New("drive: Google Drive was connected again meanwhile")
 )
 
 const (
@@ -76,8 +79,8 @@ type Service struct {
 
 	writeMu sync.Mutex
 	testing atomic.Bool
-	// beforeDisconnectWrite, when set (tests), runs in Disconnect before it
-	// takes writeMu.
+	// beforeDisconnectWrite, when set (tests, SetBeforeDisconnectWrite), runs
+	// in Disconnect before it takes writeMu.
 	beforeDisconnectWrite func()
 
 	mu       sync.RWMutex
@@ -258,10 +261,12 @@ func (s *Service) FinishConnect(ctx context.Context, actor, state, code, errPara
 	inner := s.client.Session(refresh)
 	email, err := inner.Account(ctx)
 	if err != nil {
+		s.dropToken(ctx, refresh)
 		return connectFailed(ctx, returnTo, err)
 	}
 	sealed, err := secret.Seal(s.key, refresh)
 	if err != nil {
+		s.dropToken(ctx, refresh)
 		return "", err
 	}
 
@@ -269,6 +274,7 @@ func (s *Service) FinishConnect(ctx context.Context, actor, state, code, errPara
 	old, had, err := s.st.Drive(ctx)
 	if err != nil {
 		s.writeMu.Unlock()
+		s.dropToken(ctx, refresh)
 		return "", err
 	}
 	row := store.DriveRow{
@@ -280,6 +286,7 @@ func (s *Service) FinishConnect(ctx context.Context, actor, state, code, errPara
 	}
 	if err := s.st.SaveDrive(ctx, row); err != nil {
 		s.writeMu.Unlock()
+		s.dropToken(ctx, refresh)
 		return "", err
 	}
 	s.mu.Lock()
@@ -293,7 +300,9 @@ func (s *Service) FinishConnect(ctx context.Context, actor, state, code, errPara
 }
 
 // connectFailed turns a Drive failure into drive=error&code=<code>; the caller's
-// cancellation stays an error.
+// cancellation stays an error. The failure is logged: a *Error holds only its
+// code and a sanitised word (never a token, the authorization code or a
+// response body), and any other error is logged by its code alone.
 func connectFailed(ctx context.Context, returnTo string, err error) (string, error) {
 	code := CodeOf(err)
 	if code == "" {
@@ -301,8 +310,26 @@ func connectFailed(ctx context.Context, returnTo string, err error) (string, err
 			return "", ctx.Err()
 		}
 		code = CodeUnreachable
+		slog.Default().Warn("drive: connect failed", "code", code)
+	} else {
+		slog.Default().Warn("drive: connect failed", "code", code, "err", err)
 	}
 	return withDrive(returnTo, "error", code), nil
+}
+
+// dropTokenWait bounds the revoke of a refresh token FinishConnect could not
+// keep.
+const dropTokenWait = 15 * time.Second
+
+// dropToken revokes a fresh refresh token that was not stored (the account
+// read, the seal or the store write failed), best effort, so it does not stay
+// valid at Google with no row to revoke it from. It outlives the caller.
+func (s *Service) dropToken(ctx context.Context, refresh string) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dropTokenWait)
+	defer cancel()
+	if err := s.client.Session(refresh).Revoke(rctx); err != nil {
+		slog.Default().Warn("drive: revoking an unstored token failed", "code", CodeOf(err))
+	}
 }
 
 // session returns the cached session (opening the sealed token on first use)
@@ -490,12 +517,18 @@ func (s *Service) Test(ctx context.Context) error {
 	return sess.Delete(dctx, id)
 }
 
+// SetBeforeDisconnectWrite makes Disconnect run fn after it reads the
+// generation and before it takes the write lock. Tests only: it lets another
+// package's test land a connect meanwhile. Call it before any Disconnect.
+func (s *Service) SetBeforeDisconnectWrite(fn func()) { s.beforeDisconnectWrite = fn }
+
 // Disconnect deletes the connection, then revokes its token at Google (best
 // effort; a failure is logged with its code only). The read and the delete run
 // under writeMu, so a connect that lands during the revoke is kept. A connect
 // that landed after Disconnect was called (the generation changed and the state
 // is connected) is not this disconnect's to undo: it is left as it is, and
-// nothing is deleted or revoked. The caller records the activity.
+// nothing is deleted or revoked, and Disconnect answers ErrConnectedMeanwhile.
+// The caller records the activity.
 func (s *Service) Disconnect(ctx context.Context) error {
 	if s.reason != "" {
 		return ErrNotConfigured
@@ -513,7 +546,7 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	s.mu.RUnlock()
 	if connectedMeanwhile {
 		s.writeMu.Unlock()
-		return nil
+		return ErrConnectedMeanwhile
 	}
 	row, ok, err := s.st.Drive(ctx)
 	if err != nil {

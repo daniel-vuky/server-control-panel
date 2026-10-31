@@ -187,8 +187,19 @@ func TestDriveCallbackDeclined(t *testing.T) {
 	if rec.Header().Get("Location") != "/settings?drive=error&code=no_access" {
 		t.Errorf("error = Location %q", rec.Header().Get("Location"))
 	}
+	// no_access at connect time is Google refusing the app, not a folder.
 	if rows := activityOf(t, d, store.ActDriveConnect); len(rows) != 1 || rows[0].Result != store.ResultFailed ||
-		rows[0].Reason != drive.Words(drive.CodeNoAccess) {
+		rows[0].Reason != "Google refused the connection. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and the redirect URI (docs/google-drive.md)." {
+		t.Errorf("failed connect activity = %+v", rows)
+	}
+
+	// Another code keeps its words.
+	state = startConnect(t, h, "/settings")
+	rec = callback(h, url.Values{"state": {state}, "code": {"fake-other"}})
+	if rec.Header().Get("Location") != "/settings?drive=error&code=token_expired" {
+		t.Errorf("bad code = Location %q", rec.Header().Get("Location"))
+	}
+	if rows := activityOf(t, d, store.ActDriveConnect); len(rows) != 2 || rows[0].Reason != drive.Words(drive.CodeTokenExpired) {
 		t.Errorf("failed connect activity = %+v", rows)
 	}
 }
@@ -404,6 +415,28 @@ func TestDriveDisconnect(t *testing.T) {
 	rec = doJSON(NewRouter(d), http.MethodPost, "/api/drive/disconnect", "")
 	if rec.Code != http.StatusConflict || decode[DriveError](t, rec).Error != "not_configured" {
 		t.Errorf("disconnect not configured = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A connect that lands while Disconnect waits is kept: 409 busy with words
+// that say nothing was disconnected, recorded as refused.
+func TestDriveDisconnectConnectedMeanwhile(t *testing.T) {
+	d := newTestDeps(t)
+	h := NewRouter(d)
+	connectDrive(t, h, true)
+	d.Drive.SetBeforeDisconnectWrite(func() { connectDrive(t, h, false) })
+
+	rec := doJSON(h, http.MethodPost, "/api/drive/disconnect", "")
+	want := DriveError{Error: "busy", Message: "Google Drive was connected again meanwhile; nothing was disconnected."}
+	if rec.Code != http.StatusConflict || decode[DriveError](t, rec) != want {
+		t.Fatalf("disconnect = %d %s", rec.Code, rec.Body.String())
+	}
+	if st := driveStatus(t, h); st.State != "connected" {
+		t.Errorf("status = %+v, want the new connection kept", st)
+	}
+	rows := activityOf(t, d, store.ActDriveDisconnect)
+	if len(rows) != 1 || rows[0].Result != store.ResultRefused || rows[0].Reason != want.Message {
+		t.Errorf("drive.disconnect activity = %+v", rows)
 	}
 }
 

@@ -278,6 +278,25 @@ describe('Google Drive card', () => {
     expect(posts(stub, '/api/drive/disconnect')).toHaveLength(1)
   })
 
+  it('a connect that landed meanwhile shows the server words, not "Disconnected"', async () => {
+    route({
+      'GET /api/drive/folders': () => json(200, folders),
+      'POST /api/drive/disconnect': () =>
+        json(409, {
+          error: 'busy',
+          message: 'Google Drive was connected again meanwhile; nothing was disconnected.',
+        }),
+    })
+    renderCard(status())
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Google Drive was connected again meanwhile; nothing was disconnected.',
+    )
+    expect(screen.queryByTestId('toast-success')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
+  })
+
   it('a failed folder list shows the Drive words, the code and Retry', async () => {
     let n = 0
     route({

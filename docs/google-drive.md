@@ -98,6 +98,7 @@ If `PANEL_SECRET_KEY` changes, the saved token cannot be read and the card shows
 | --- | --- |
 | Settings says "Google Drive is not set up on this server" and names a variable | Set the named variable in `panel.env` and run `docker compose up -d` (step 5). |
 | Google shows `redirect_uri_mismatch` | The redirect URI in step 4 differs from `<PANEL_PUBLIC_URL>/api/drive/callback`. Fix one of them. |
+| "Google refused the connection. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and the redirect URI" after you allow access | Google turned down the code exchange, most often for a wrong client secret, a client id from another project or a redirect URI it does not list. Check the three values against step 4 and step 5; the panel's log has a `drive: connect failed` line with the code. |
 | Google says the app is blocked or not verified | The app is still in Testing and your account is not a test user, or the scope is wrong. Publish the app (step 3) and check that only `drive.file` is added. |
 | "This link has expired. Go back to Settings and connect again." | The connect link is valid for 10 minutes and works once. Start again from Settings. |
 | Test connection says the folder is missing | The folder was deleted or is in the Drive trash. Choose or create a folder. |

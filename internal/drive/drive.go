@@ -58,6 +58,17 @@ func CodeOf(err error) string {
 	return ""
 }
 
+// ConnectWords gives the words of a code a failed connect answered (the
+// callback's drive=error&code=<code>). There no_access means Google refused the
+// app itself (a wrong client id or secret, or a redirect URI it does not know),
+// not a folder; the other codes keep their Words.
+func ConnectWords(code string) string {
+	if code == CodeNoAccess {
+		return "Google refused the connection. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and the redirect URI (docs/google-drive.md)."
+	}
+	return Words(code)
+}
+
 // Words gives the words the UI shows for a code (spec §2), or "" for another
 // code.
 func Words(code string) string {

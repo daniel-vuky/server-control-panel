@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router'
-import { driveWords } from '../api/drive'
+import { connectWords } from '../api/drive'
 import type { DriveStatus } from '../api/types.gen'
 import { useToast } from '../components/Toast'
 
@@ -31,7 +31,7 @@ export function useDriveReturn(drive: DriveStatus | null) {
     } else if (outcome === 'declined') {
       toast.error('Google Drive was not connected.')
     } else if (outcome === 'error') {
-      const words = driveWords(code, '')
+      const words = connectWords(code)
       toast.error(
         'Google Drive was not connected.',
         [words, code && `(${code})`].filter(Boolean).join(' '),

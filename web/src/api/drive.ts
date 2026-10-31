@@ -34,6 +34,19 @@ export function driveWords(code: string, fallback = 'Something went wrong.'): st
   return WORDS[code] ?? fallback
 }
 
+/**
+ * connectWords gives the words of the code a failed connect came back with
+ * (?drive=error&code=…). There no_access is Google refusing the app itself (a
+ * wrong client id or secret, or an unknown redirect URI), not a folder; the
+ * other codes keep their words. internal/drive's ConnectWords says the same.
+ */
+export function connectWords(code: string): string {
+  if (code === 'no_access') {
+    return 'Google refused the connection. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and the redirect URI (docs/google-drive.md).'
+  }
+  return driveWords(code, '')
+}
+
 /** DriveIssue is a Drive refusal: the code (when there is one) and its words. */
 export type DriveIssue = { code: string; message: string }
 

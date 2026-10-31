@@ -20,6 +20,7 @@ const (
 	msgLinkExpired        = "This link has expired. Go back to Settings and connect again."
 	msgCallbackFailed     = "The panel could not complete this request. Go back to Settings and connect again."
 	msgBadFolderName      = "A folder name is 1 to 100 characters, with no /."
+	msgConnectedMeanwhile = "Google Drive was connected again meanwhile; nothing was disconnected."
 )
 
 // The codes of a DriveError that are not Drive's own.
@@ -144,7 +145,7 @@ func (s *server) recordConnect(r *http.Request, to string) {
 		}
 		s.record(r, store.Activity{Action: store.ActDriveConnect, Target: target}, store.ResultOK, "")
 	case "error":
-		words := drive.Words(q.Get("code"))
+		words := drive.ConnectWords(q.Get("code"))
 		if q.Get("code") == codeNotConfigured {
 			words = msgDriveNotConfigured
 		}
@@ -222,16 +223,23 @@ func (s *server) driveTest(w http.ResponseWriter, r *http.Request) {
 
 // driveDisconnect is POST /api/drive/disconnect: it revokes the token (best
 // effort), forgets the connection, records drive.disconnect and answers the
-// new status.
+// new status. A connect that landed meanwhile is kept: 409 busy, recorded as
+// refused.
 func (s *server) driveDisconnect(w http.ResponseWriter, r *http.Request) {
 	before := s.Drive.Status()
-	if err := s.Drive.Disconnect(context.WithoutCancel(r.Context())); err != nil {
-		s.driveFailed(w, r, err)
-		return
-	}
 	target := before.Email
 	if target == "" {
 		target = driveTarget
+	}
+	err := s.Drive.Disconnect(context.WithoutCancel(r.Context()))
+	if errors.Is(err, drive.ErrConnectedMeanwhile) {
+		s.record(r, store.Activity{Action: store.ActDriveDisconnect, Target: target}, store.ResultRefused, msgConnectedMeanwhile)
+		writeJSON(w, http.StatusConflict, DriveError{Error: codeBusy, Message: msgConnectedMeanwhile})
+		return
+	}
+	if err != nil {
+		s.driveFailed(w, r, err)
+		return
 	}
 	s.record(r, store.Activity{Action: store.ActDriveDisconnect, Target: target}, store.ResultOK, "")
 	writeJSON(w, http.StatusOK, toDriveStatus(s.Drive.Status()))

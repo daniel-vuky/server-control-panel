@@ -67,6 +67,15 @@ describe('coming back from Google', () => {
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/settings\?x=1$/))
   })
 
+  it('?drive=error with no_access words Google refusing the connection, not a folder', async () => {
+    renderAt('/settings?drive=error&code=no_access', notConnected)
+    const toast = await screen.findByRole('alert')
+    expect(toast).toHaveTextContent(
+      'Google refused the connection. Check GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and the redirect URI (docs/google-drive.md).',
+    )
+    expect(toast).not.toHaveTextContent('access to this folder')
+  })
+
   it('works on a project page, keeping its own query', async () => {
     renderAt('/projects/3/database?backup=postgresql:db:shop&drive=connected', connected)
     expect(await screen.findByTestId('toast-success')).toHaveTextContent(
