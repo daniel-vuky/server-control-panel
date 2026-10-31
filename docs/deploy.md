@@ -112,7 +112,7 @@ Without the three optional values the panel runs as before and Google Drive show
 
 ## 4b. Server metrics: disks and cloudflared
 
-The Server page reads the host's CPU, memory, network and disks. The compose project mounts the host's `/proc` and its root (`/`) into the panel, both read-only: `/proc` for the counters, the root only to ask each disk for its used and total space. The panel never opens a file under it. A disk mounted after the panel started appears after the panel's next restart, which every release does.
+The Server page reads the host's CPU, memory, network and disks. The compose project mounts the host's `/proc` and its root (`/`) into the panel, both read-only: `/proc` for the counters, the root only to ask each disk for its used and total space. The panel never opens a file under it. A disk mounted after the panel started appears after the panel's next restart, which every release does. On a host whose `/proc` is mounted with `hidepid`, the panel cannot see other users' processes, so cloudflared may read "Not running" and a project's network "—".
 
 **An install from before this feature** has a `compose.yaml` without the root mount. The updater does not refresh `compose.yaml`, so re-run the install command (section 4) once. Until then the System info card shows one row, `/ (panel data)`, for the disk that holds the panel's data, with "Re-run install.sh to list every disk."
 

@@ -890,9 +890,11 @@ export interface ProjectSeries {
  * for the untracked panel row). CPUPercent is a share of the whole server
  * (Docker's % divided by the core count); NetBps is in + out. A value is null
  * when unknown (Docker down, no recent sample, no usable network delta) and 0
- * for a project with nothing running. DiskBytes is its named volumes plus its
- * folder, read hourly (null before the first read); DiskPartial means it is a
- * lower bound; DiskAt is when it was read.
+ * for a project with nothing running; the panel's own row has no NetBps in
+ * production, since the panel runs with host networking (by design, D7a).
+ * DiskBytes is its named volumes plus its folder, read hourly (null before
+ * the first read); DiskPartial means it is a lower bound; DiskAt is when it
+ * was read.
  */
 export interface UsageRow {
   projectId: number | null;
