@@ -39,11 +39,16 @@ const backupSettings = () =>
     timeZone: { name: 'UTC', offset: '+00:00' },
   })
 
-/** serve answers GET /api/workspaces in order, the last repeating; the defaults card gets its settings. */
+/** The Metrics history card's load, answered the same in every test here. */
+const METRICS_SETTINGS = '/api/metrics-settings'
+const metricsSettings = () => json(200, { retentionDays: 7 })
+
+/** serve answers GET /api/workspaces in order, the last repeating; the defaults and metrics cards get their settings. */
 function serve(...answers: Array<[number, unknown]>) {
   let n = 0
   const fetchStub = vi.fn(async (url: string) => {
     if (url === BACKUP_SETTINGS) return backupSettings()
+    if (url === METRICS_SETTINGS) return metricsSettings()
     const [status, body] = answers[Math.min(n++, answers.length - 1)]
     return new Response(JSON.stringify(body), { status })
   })
@@ -60,6 +65,7 @@ function route(table: Record<string, Handler | Handler[]>) {
     const key = `${init?.method ?? 'GET'} ${url}`
     const h = table[key]
     if (h === undefined && key === `GET ${BACKUP_SETTINGS}`) return backupSettings()
+    if (h === undefined && key === `GET ${METRICS_SETTINGS}`) return metricsSettings()
     if (h === undefined) return json(404, { error: `unrouted ${key}` })
     if (!Array.isArray(h)) return h(init)
     const n = used[key] ?? 0

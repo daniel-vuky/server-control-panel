@@ -1,7 +1,13 @@
 import { screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeEventSource } from '../../test/fakeEventSource'
-import { makeContainer, makeProject, pushState, renderProject } from '../../test/projects'
+import {
+  leaveChartsUnanswered,
+  makeContainer,
+  makeProject,
+  pushState,
+  renderProject,
+} from '../../test/projects'
 
 const MB = 1024 * 1024
 
@@ -38,6 +44,7 @@ const broken = makeProject({ status: 'error', actions: ['start', 'restart'], con
 beforeEach(() => {
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
+  leaveChartsUnanswered()
 })
 
 afterEach(() => {

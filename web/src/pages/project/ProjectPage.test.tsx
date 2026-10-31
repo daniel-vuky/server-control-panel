@@ -5,12 +5,15 @@ import { projectRoute } from '../../app/App'
 import { formatLastScan } from '../../lib/time'
 import { FakeEventSource } from '../../test/fakeEventSource'
 import {
+  isChartRead,
+  leaveChartsUnanswered,
   makeBackup,
   makeContainer,
   makeDatabase,
   makeProject,
   pushState,
   renderProject,
+  unanswered,
 } from '../../test/projects'
 import { renderApp } from '../../test/renderApp'
 import { useProjectOutlet } from './projectContext'
@@ -31,8 +34,9 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 
 /** serve answers each POST with next(); everything else is the setup's 401. */
 function serve(next: () => Promise<Response> | Response) {
-  const stub = vi.fn(async (_url: string, init?: RequestInit) => {
+  const stub = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') return next()
+    if (isChartRead(url)) return unanswered(init)
     return json(401, { error: 'unauthorized' })
   })
   vi.stubGlobal('fetch', stub)
@@ -61,6 +65,7 @@ function Where() {
 beforeEach(() => {
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
+  leaveChartsUnanswered()
 })
 
 afterEach(() => {

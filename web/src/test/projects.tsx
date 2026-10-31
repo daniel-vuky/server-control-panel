@@ -1,5 +1,6 @@
 import { act } from '@testing-library/react'
 import { useLocation } from 'react-router'
+import { vi } from 'vitest'
 import type {
   Backup,
   BackupBatch,
@@ -108,6 +109,39 @@ export function makeContainer(service: string, overrides: Partial<Container> = {
     health: '',
     ...overrides,
   }
+}
+
+/**
+ * isChartRead says a fetch is one of the Overview charts' reads (the project's
+ * series and the server zone), which tests of other parts of the page leave
+ * unanswered with `unanswered`.
+ */
+export const isChartRead = (url: string) =>
+  /^\/api\/projects\/\d+\/metrics\?/.test(url) || url === '/api/backup-settings'
+
+/** unanswered is a fetch that never settles, or rejects as aborted when its signal aborts. */
+export function unanswered(init?: RequestInit): Promise<Response> {
+  return new Promise((_, reject) => {
+    init?.signal?.addEventListener('abort', () =>
+      reject(new DOMException('The operation was aborted.', 'AbortError')),
+    )
+  })
+}
+
+/**
+ * leaveChartsUnanswered stubs fetch as the setup does (401), except the
+ * Overview charts' reads, which never settle: for tests of other parts of
+ * the project page.
+ */
+export function leaveChartsUnanswered() {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) =>
+      isChartRead(url)
+        ? unanswered(init)
+        : new Response('{"error":"unauthorized"}', { status: 401 }),
+    ),
+  )
 }
 
 /** Where shows the path it is mounted on, so a test can see where the page navigated. */
