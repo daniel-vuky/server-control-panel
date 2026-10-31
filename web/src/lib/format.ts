@@ -96,3 +96,42 @@ export function niceMax(v: number, bytes = false): number {
   const nice = (NICE.find((n) => n >= f) ?? 10) * p
   return bytes && nice >= 1024 ? unit * 1024 : nice * unit
 }
+
+const SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+
+/** sizeWord is a number of a unit: one decimal under 100 (a whole number drops its ".0"), else none. */
+function sizeWord(v: number): string {
+  const r = Math.round(v * 10) / 10
+  return r < 100 ? String(r) : String(Math.round(v))
+}
+
+/**
+ * formatUsedOfTotal words a used / total pair in one unit, the one the total
+ * reaches ("5.2 / 8" with unit "GB"): one decimal under 100 of that unit, a
+ * whole number from there.
+ */
+export function formatUsedOfTotal(used: number, total: number): { value: string; unit: string } {
+  let i = 0
+  let size = 1
+  while (i < SIZE_UNITS.length - 1 && total / size >= 1024) {
+    size *= 1024
+    i++
+  }
+  return { value: `${sizeWord(used / size)} / ${sizeWord(total / size)}`, unit: SIZE_UNITS[i] }
+}
+
+/**
+ * formatSince is how long a server has been up since boot (an RFC 3339 time):
+ * "23 days" with "6 h", "5 h" with "12 min", "12 min" with no second part.
+ * An empty or invalid time is "—".
+ */
+export function formatSince(boot: string, now: Date = new Date()): { value: string; sub: string } {
+  const at = Date.parse(boot)
+  if (boot === '' || Number.isNaN(at)) return { value: '—', sub: '' }
+  const minutes = Math.max(0, Math.floor((now.getTime() - at) / 60_000))
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+  if (days >= 1) return { value: `${days} ${days === 1 ? 'day' : 'days'}`, sub: `${hours % 24} h` }
+  if (hours >= 1) return { value: `${hours} h`, sub: `${minutes % 60} min` }
+  return { value: `${minutes} min`, sub: '' }
+}
