@@ -48,6 +48,12 @@ func TestHintTable(t *testing.T) {
 			"Check POSTGRES_PASSWORD (and POSTGRES_USER) in the db service's environment."},
 		{"database and does not exist on different lines", "postgresql", "pg_dump: error: the database cluster is starting up\npg_dump: error: relation \"x\" does not exist", nil, ""},
 		{"another type's words do not match", "postgresql", `Access denied for user 'root'@'x' (using password: YES)`, nil, ""},
+		{"previous dump pg", "postgresql", "a previous dump is still running", []string{".env DATABASE_URL"},
+			"A previous backup of this database is still finishing inside the container; try again in a few minutes."},
+		{"previous dump mysql", "mysql", "a previous dump is still running\n", nil,
+			"A previous backup of this database is still finishing inside the container; try again in a few minutes."},
+		{"previous dump mongo", "mongodb", "a previous dump is still running", nil,
+			"A previous backup of this database is still finishing inside the container; try again in a few minutes."},
 		{"unknown error", "postgresql", `pg_dump: error: query failed: server closed the connection unexpectedly`, nil, ""},
 		{"a warning is not the error", "mysql", "mysqldump: [Warning] sh: mysqldump: not found\nmysqldump: Error 2013: Lost connection", nil, ""},
 	}

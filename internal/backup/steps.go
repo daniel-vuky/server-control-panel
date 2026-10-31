@@ -345,9 +345,22 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 		m.progress(j, iDump, p.tool+" · "+formatDuration(m.now().Sub(start))+" · "+formatBytes(raw.n.Load())+" read")
 	})
 	defer stop() // stops the ticker even when RunTo panics
+	// A dump that did not exit by itself may still run inside the container
+	// (ADR 0011); a panic in RunTo leaves it so too.
+	inRunTo := true
+	defer func() {
+		if inRunTo {
+			m.stopDump(ctx, j)
+		}
+	}()
 	stderr, err := m.r.RunTo(ctx, runner.StackCompose, p.dump, p.values, p.secrets, raw)
+	inRunTo = false
 	stop()
 	elapsed := m.now().Sub(start)
+	stopped := false
+	if !exitedByItself(err) {
+		stopped = m.stopDump(ctx, j)
+	}
 	// The dump has exited; the compressor's last flush and the file's close
 	// belong to Compress.
 	var cerr error
@@ -363,7 +376,7 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 		return false
 	}
 	if err != nil {
-		msg, hint := m.dumpError(j, err, stderr)
+		msg, hint := m.dumpError(j, err, stderr, stopped)
 		m.fail(j, iDump, msg, hint)
 		return false
 	}
@@ -387,10 +400,52 @@ func (m *Manager) dump(ctx context.Context, j *job, tmp string) bool {
 // newGzip is the compressor: gzip at level 1.
 func newGzip(w io.Writer) (io.WriteCloser, error) { return gzip.NewWriterLevel(w, gzip.BestSpeed) }
 
+// exitedByItself reports whether RunTo's error means the dump ended inside the
+// container: it exited, with any status. A stall, the ceiling, a failed write,
+// a cancel or a docker client that did not run kill only the client.
+func exitedByItself(err error) bool {
+	var exit *runner.ExitError
+	return err == nil || errors.As(err, &exit)
+}
+
+// stopCall is the stop action for the plan's dump: db.dump.stop, or its
+// override variant, with the dump's compose values but not its database name.
+func stopCall(p plan) (runner.Action, runner.Values) {
+	v := runner.Values{}
+	for k, val := range p.values {
+		if k != "dbname" {
+			v[k] = val
+		}
+	}
+	if _, ok := v["override"]; ok {
+		return runner.DBDumpStopOverride, v
+	}
+	return runner.DBDumpStop, v
+}
+
+// stopDump stops the job's dump inside its container, for a dump that ended
+// without exiting by itself: killing the docker client leaves it running there
+// (ADR 0011). It is best effort, on a context the job's cancellation does not
+// end, bounded by stopWait, so Close waits for it at most that long. It
+// reports whether the stop ran; a failure is logged.
+func (m *Manager) stopDump(ctx context.Context, j *job) bool {
+	p := j.plan
+	a, v := stopCall(p)
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.stopWait)
+	defer cancel()
+	if _, err := m.r.Run(sctx, runner.StackCompose, a, v, p.secrets); err != nil {
+		m.log.Warn("backup: could not stop the dump inside its container", "backup", j.b.ID,
+			"service", p.service, "err", runner.Mask(err.Error(), p.secrets))
+		return false
+	}
+	return true
+}
+
 // dumpError words a failed dump. The exit code is the verdict: stderr is read
 // only here, after a failure (a mysqldump that exits 0 may still print an
-// Error line). Stderr is masked again with the project's secrets.
-func (m *Manager) dumpError(j *job, err error, stderr []byte) (msg, hint string) {
+// Error line). Stderr is masked again with the project's secrets. stopped says
+// that a dump which did not exit by itself was stopped inside its container.
+func (m *Manager) dumpError(j *job, err error, stderr []byte, stopped bool) (msg, hint string) {
 	p := j.plan
 	var (
 		stall   *runner.StallError
@@ -400,8 +455,14 @@ func (m *Manager) dumpError(j *job, err error, stderr []byte) (msg, hint string)
 	)
 	switch {
 	case errors.As(err, &stall):
+		if stopped {
+			return "The dump stopped sending data for " + formatSpan(stall.After) + " and was stopped.", ""
+		}
 		return "The dump stopped sending data for " + formatSpan(stall.After) + ". It may still be running inside " + p.service + ".", ""
 	case errors.As(err, &timeout):
+		if stopped {
+			return "The dump ran for " + formatSpan(timeout.After) + " and was stopped.", ""
+		}
 		return "The dump ran for " + formatSpan(timeout.After) + " and was stopped. It may still be running inside " + p.service + ".", ""
 	case errors.As(err, &pathErr):
 		return "Could not write the temporary file: " + pathErr.Err.Error(), ""

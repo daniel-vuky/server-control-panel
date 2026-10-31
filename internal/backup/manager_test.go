@@ -63,6 +63,8 @@ type fakeRunner struct {
 	sizeHook func(ctx context.Context, c call)
 	// dump, when set, replaces the default dump.
 	dump func(ctx context.Context, c call, w io.Writer) ([]byte, error)
+	// stop, when set, answers the dump stop action (nil: it succeeds).
+	stop func(ctx context.Context, c call) error
 }
 
 func (r *fakeRunner) record(a runner.Action, v runner.Values, secrets []string) call {
@@ -79,6 +81,15 @@ func (r *fakeRunner) record(a runner.Action, v runner.Values, secrets []string) 
 
 func (r *fakeRunner) Run(ctx context.Context, _ runner.Stack, a runner.Action, v runner.Values, secrets []string) (runner.Result, error) {
 	c := r.record(a, v, secrets)
+	if isStopAction(a) {
+		r.mu.Lock()
+		stop := r.stop
+		r.mu.Unlock()
+		if stop != nil {
+			return runner.Result{}, stop(ctx, c)
+		}
+		return runner.Result{}, nil
+	}
 	r.mu.Lock()
 	hook, out, err := r.sizeHook, r.sizeOut, r.sizeErr
 	r.mu.Unlock()
@@ -122,7 +133,31 @@ func (r *fakeRunner) callsOf(pred func(runner.Action) bool) []call {
 	return out
 }
 
-func isDumpAction(a runner.Action) bool { return strings.Contains(string(a), ".dump") }
+func isDumpAction(a runner.Action) bool {
+	return strings.Contains(string(a), ".dump") && !isStopAction(a)
+}
+
+func isStopAction(a runner.Action) bool {
+	return a == runner.DBDumpStop || a == runner.DBDumpStopOverride
+}
+
+// lockedBuffer is a log sink the worker writes while the test reads.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
 
 // fakeHub is the container list.
 type fakeHub struct {
@@ -603,18 +638,23 @@ func TestMariaDBWording(t *testing.T) {
 }
 
 func TestDumpFailureWords(t *testing.T) {
+	stopFailed := errors.New("docker db.dump.stop: Cannot connect to the Docker daemon")
 	cases := []struct {
-		name string
-		err  error
-		want string
+		name    string
+		err     error
+		stopErr error
+		want    string
 	}{
-		{"stall", &runner.StallError{After: 5 * time.Minute}, "The dump stopped sending data for 5 minutes. It may still be running inside db."},
-		{"ceiling", &runner.TimeoutError{After: 6 * time.Hour}, "The dump ran for 6 hours and was stopped. It may still be running inside db."},
-		{"exit without stderr", &runner.ExitError{Code: 3}, "pg_dump exited with status 3."},
+		{"stall", &runner.StallError{After: 5 * time.Minute}, nil, "The dump stopped sending data for 5 minutes and was stopped."},
+		{"stall, stop failed", &runner.StallError{After: 5 * time.Minute}, stopFailed, "The dump stopped sending data for 5 minutes. It may still be running inside db."},
+		{"ceiling", &runner.TimeoutError{After: 6 * time.Hour}, nil, "The dump ran for 6 hours and was stopped."},
+		{"ceiling, stop failed", &runner.TimeoutError{After: 6 * time.Hour}, stopFailed, "The dump ran for 6 hours and was stopped. It may still be running inside db."},
+		{"exit without stderr", &runner.ExitError{Code: 3}, nil, "pg_dump exited with status 3."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
+			e.r.stop = func(context.Context, call) error { return tc.stopErr }
 			e.r.dump = func(context.Context, call, io.Writer) ([]byte, error) { return nil, tc.err }
 			b := e.waitDone(t, e.enqueue(t, keyPG))
 			if b.State != "failed" || b.FailedStep != "dump" || b.Error != tc.want || b.Hint != "" {
@@ -622,6 +662,91 @@ func TestDumpFailureWords(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A dump that did not exit by itself (stall, ceiling, a failed write, a docker
+// client that did not run) is stopped inside its container, once, with the
+// dump's compose values and secrets but no database name. A dump that exited,
+// with any status, is not.
+func TestDumpStoppedUnlessItExited(t *testing.T) {
+	writeErr := fmt.Errorf("docker db.pg.dump: write output: %w", &os.PathError{Op: "write", Path: "/data/tmp/backup-1.gz", Err: errors.New("no space left on device")})
+	cases := []struct {
+		name string
+		err  error
+		stop bool
+	}{
+		{"ok", nil, false},
+		{"exit", &runner.ExitError{Code: 1, Stderr: "a previous dump is still running"}, false},
+		{"stall", &runner.StallError{After: 5 * time.Minute}, true},
+		{"ceiling", &runner.TimeoutError{After: 6 * time.Hour}, true},
+		{"write", writeErr, true},
+		{"client", errors.New("docker db.pg.dump: fork/exec /usr/bin/docker: no such file or directory"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.r.dump = func(context.Context, call, io.Writer) ([]byte, error) { return nil, tc.err }
+			b := e.waitDone(t, e.enqueue(t, keyPG))
+			stops := e.r.callsOf(isStopAction)
+			if !tc.stop {
+				if len(stops) != 0 {
+					t.Fatalf("stop calls = %+v, want none", stops)
+				}
+				return
+			}
+			if len(stops) != 1 || stops[0].a != runner.DBDumpStop {
+				t.Fatalf("stop calls = %+v, want one %s", stops, runner.DBDumpStop)
+			}
+			dump := e.r.callsOf(isDumpAction)[0]
+			want := runner.Values{"dir": dump.v["dir"], "file": dump.v["file"], "service": "db"}
+			if fmt.Sprint(stops[0].v) != fmt.Sprint(want) {
+				t.Errorf("stop values = %v, want %v", stops[0].v, want)
+			}
+			if fmt.Sprint(stops[0].secrets) != fmt.Sprint(dump.secrets) || len(dump.secrets) == 0 {
+				t.Errorf("stop secrets = %q, dump secrets %q", stops[0].secrets, dump.secrets)
+			}
+			if b.State != "failed" || b.FailedStep != "dump" {
+				t.Errorf("row = %s at %s", b.State, b.FailedStep)
+			}
+		})
+	}
+}
+
+func TestStopCall(t *testing.T) {
+	base := runner.Values{"dir": "/w/shop", "file": "/w/shop/compose.yaml", "service": "db", "dbname": "shop"}
+	a, v := stopCall(plan{values: base})
+	if a != runner.DBDumpStop || fmt.Sprint(v) != fmt.Sprint(runner.Values{"dir": "/w/shop", "file": "/w/shop/compose.yaml", "service": "db"}) {
+		t.Errorf("plain: %s %v", a, v)
+	}
+	if _, ok := base["dbname"]; !ok {
+		t.Error("stopCall changed the plan's values")
+	}
+	over := runner.Values{"dir": "/w/shop", "file": "/w/shop/compose.yaml", "override": "/w/shop/o.yaml", "service": "db"}
+	if a, v := stopCall(plan{values: over}); a != runner.DBDumpStopOverride || len(v) != 4 {
+		t.Errorf("override: %s %v", a, v)
+	}
+}
+
+// A failed stop is logged, masked, and the backup still ends.
+func TestDumpStopFailureLogged(t *testing.T) {
+	e := newEnv(t)
+	var logs lockedBuffer
+	e.m.log = slog.New(slog.NewTextHandler(&logs, nil))
+	e.r.stop = func(context.Context, call) error {
+		return errors.New("docker db.dump.stop: " + devPass + " refused")
+	}
+	e.r.dump = func(context.Context, call, io.Writer) ([]byte, error) {
+		return nil, &runner.StallError{After: 5 * time.Minute}
+	}
+	b := e.waitDone(t, e.enqueue(t, keyPG))
+	if b.State != "failed" {
+		t.Fatalf("state = %s", b.State)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "could not stop the dump") {
+		t.Errorf("log = %q", out)
+	}
+	assertNoSecret(t, "log", out)
 }
 
 func TestDumpWriteErrorFailsDump(t *testing.T) {
@@ -1406,6 +1531,15 @@ func TestCloseInterruptsRunningAndQueued(t *testing.T) {
 		<-ctx.Done()
 		return nil, fmt.Errorf("docker db.pg.dump: %w", ctx.Err())
 	}
+	var stopCtxErr error
+	var stopLeft time.Duration
+	e.r.stop = func(ctx context.Context, _ call) error {
+		stopCtxErr = ctx.Err()
+		if d, ok := ctx.Deadline(); ok {
+			stopLeft = time.Until(d)
+		}
+		return nil
+	}
 	running := e.enqueue(t, keyPG)
 	queued := e.enqueue(t, keyMongo)
 	e.m.Start(context.Background())
@@ -1415,6 +1549,14 @@ func TestCloseInterruptsRunningAndQueued(t *testing.T) {
 	defer cancel()
 	if err := e.m.Wait(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// The cancelled dump was stopped inside its container, on a context the
+	// cancellation did not end, bounded by 15 s.
+	if stops := e.r.callsOf(isStopAction); len(stops) != 1 || stops[0].v["service"] != "db" {
+		t.Errorf("stop calls = %+v", stops)
+	}
+	if stopCtxErr != nil || stopLeft <= 0 || stopLeft > 15*time.Second {
+		t.Errorf("stop context: err %v, %v left", stopCtxErr, stopLeft)
 	}
 	for _, id := range []int64{running, queued} {
 		b, _ := e.st.GetBackup(context.Background(), id)
@@ -1443,6 +1585,36 @@ func TestCloseInterruptsRunningAndQueued(t *testing.T) {
 	}
 	if _, err := e.m.Enqueue(context.Background(), e.shop, keyPG, actor); !errors.Is(err, ErrClosed) {
 		t.Errorf("Enqueue after Close: %v", err)
+	}
+}
+
+// A stop that hangs does not hold the worker past its bound.
+func TestDumpStopIsBounded(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	e.m.stopWait = 100 * time.Millisecond
+	e.r.stop = func(ctx context.Context, _ call) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	e.r.dump = func(ctx context.Context, _ call, _ io.Writer) ([]byte, error) {
+		<-ctx.Done()
+		return nil, fmt.Errorf("docker db.pg.dump: %w", ctx.Err())
+	}
+	id := e.enqueue(t, keyPG)
+	e.m.Start(context.Background())
+	waitFor(t, "the dump", func() bool { return len(e.r.callsOf(isDumpAction)) == 1 })
+	began := time.Now()
+	e.m.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := e.m.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("Close and Wait took %v", took)
+	}
+	if b, _ := e.st.GetBackup(context.Background(), id); b.State != "interrupted" {
+		t.Errorf("state = %s", b.State)
 	}
 }
 
@@ -1490,6 +1662,10 @@ func TestWorkerPanicRecovered(t *testing.T) {
 	}
 	if b2 := e.waitDone(t, second); b2.State != "ok" {
 		t.Errorf("the next backup = %s %s, want ok", b2.State, b2.Error)
+	}
+	// The panicked dump was stopped inside its container; the good one was not.
+	if stops := e.r.callsOf(isStopAction); len(stops) != 1 || stops[0].v["service"] != "db" {
+		t.Errorf("stop calls = %+v", stops)
 	}
 	if left := tempFiles(t, e.dataDir); len(left) != 0 {
 		t.Errorf("temp files left: %v", left)

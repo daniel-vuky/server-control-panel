@@ -58,6 +58,10 @@ func cut(s string, n int) string {
 	return s[:n]
 }
 
+// previousDump is the fixed stderr line of a dump script that refuses to start
+// while the previous dump in that container still runs (runner's dumpGuard).
+const previousDump = "a previous dump is still running"
+
 // pgRoleMissing is PostgreSQL's `role "…" does not exist`.
 var pgRoleMissing = regexp.MustCompile(`role ".*" does not exist`)
 
@@ -141,6 +145,11 @@ func Hint(dbType, image, dbName, service, stderr string, sources []string) strin
 			}
 		}
 		return false
+	}
+	if has(previousDump) {
+		// The dump script's own refusal: an orphaned dump still holds the pid
+		// file inside the container. Not about credentials, so no sources.
+		return "A previous backup of this database is still finishing inside the container; try again in a few minutes."
 	}
 	family := mysqlFamily(image)
 	hint := ""

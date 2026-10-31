@@ -109,6 +109,9 @@ const (
 	publishEvery = 500 * time.Millisecond
 	// storeWait bounds the worker's store writes, which outlive a cancel.
 	storeWait = 5 * time.Second
+	// stopWait bounds the stop of a dump the panel gave up on, which outlives
+	// a cancel too; it is the stop action's own read timeout.
+	stopWait = 15 * time.Second
 )
 
 // ErrClosed is returned by Enqueue and Retry after Close.
@@ -188,6 +191,7 @@ type Manager struct {
 	// Tests replace these.
 	freeSpace    func(dir string) (int64, error)
 	publishEvery time.Duration
+	stopWait     time.Duration
 	compressor   func(w io.Writer) (io.WriteCloser, error)
 	minFree      atomic.Int64
 
@@ -216,7 +220,7 @@ func New(st *store.Store, r Runner, d *drive.Service, cs Containers, dataDir str
 	}
 	return &Manager{
 		st: st, r: r, d: d, cs: cs, dataDir: dataDir, now: now, log: log,
-		freeSpace: freeSpace, publishEvery: publishEvery, compressor: newGzip,
+		freeSpace: freeSpace, publishEvery: publishEvery, stopWait: stopWait, compressor: newGzip,
 		jobs: map[int64]*job{}, reserved: map[dbRef]*reservation{},
 		wake: make(chan struct{}, 1),
 	}
