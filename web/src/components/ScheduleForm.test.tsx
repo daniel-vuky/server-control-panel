@@ -83,7 +83,11 @@ describe('ScheduleForm layout="grid"', () => {
 
   it('keeps the Gzip switch under the fields', () => {
     render(<Host layout="grid" />)
-    expect(screen.getByRole('switch', { name: 'Gzip compression' })).toBeChecked()
+    const gzip = screen.getByRole('switch', { name: 'Gzip compression' })
+    expect(gzip).toBeChecked()
+    const grid = screen.getByLabelText('Run time').closest('.grid') as HTMLElement
+    expect(grid.compareDocumentPosition(gzip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(grid).not.toContainElement(gzip)
   })
 })
 

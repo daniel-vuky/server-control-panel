@@ -164,7 +164,7 @@ function Connect({ expired }: { expired: boolean }) {
   return (
     <div className="flex flex-col gap-3 px-[18px] py-4">
       {expired && (
-        <div className="flex flex-col gap-1.5 rounded-lg border border-warning-strong bg-warning-bg px-4 py-3 text-warning-soft">
+        <div className="flex flex-col gap-1.5 rounded-lg border border-warning-border bg-warning-bg px-4 py-3 text-warning-soft">
           <p role="alert" className="m-0 flex items-center gap-3 text-[13px]">
             <TriangleAlert
               aria-hidden="true"
@@ -174,7 +174,7 @@ function Connect({ expired }: { expired: boolean }) {
             />
             The Google Drive token has expired. Backups will fail until you reconnect.
           </p>
-          <p className="m-0 text-[12px] text-warning-text">{TESTING_NOTE}</p>
+          <p className="m-0 text-[12px]">{TESTING_NOTE}</p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-3">
