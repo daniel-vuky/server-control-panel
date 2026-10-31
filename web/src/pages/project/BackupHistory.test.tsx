@@ -188,6 +188,62 @@ describe('backup history', () => {
     expect(within(rows[0]).queryByRole('link')).toBeNull()
   })
 
+  it('says Schedule for a scheduled backup', async () => {
+    serve(
+      get(HISTORY, () => json(200, { backups: [ok(2, { startedBy: 'schedule' })], more: false })),
+    )
+    open([shopDb])
+    const [row] = bodyRows(await history())
+    expect(within(row).getAllByRole('cell')[4]).toHaveTextContent(/^Schedule$/)
+  })
+
+  it('shows a copy removed by retention without Download or Open in Drive', async () => {
+    const pruned = ok(2, { prunedAt: '2026-10-30T02:01:00Z' })
+    serve(get(HISTORY, () => json(200, { backups: [ok(3), pruned], more: false })))
+    open([
+      makeDatabase({
+        name: 'shop',
+        backup: allowed,
+        schedule: {
+          frequency: 'daily',
+          time: '02:00',
+          weekday: 0,
+          keep: 14,
+          compress: true,
+          nextRunAt: null,
+        },
+      }),
+    ])
+    const [kept, removed] = bodyRows(await history())
+    const file = within(removed).getAllByRole('cell').at(-1) as HTMLElement
+    expect(file).toHaveTextContent('Removed (kept 14 newest)')
+    expect(within(removed).queryByRole('link')).toBeNull()
+    expect(within(removed).getAllByRole('cell')[3]).toHaveTextContent('Succeeded')
+    expect(within(kept).getByRole('link', { name: 'Download' })).toBeInTheDocument()
+  })
+
+  it('says when a succeeded backup could not remove old copies', async () => {
+    const leftover = ok(2, {
+      steps: steps(
+        ['done', 'done', 'done', 'failed'],
+        [
+          '',
+          '',
+          '',
+          'Could not remove 1 old copy: Google Drive is not reachable. It is retried after the next backup.',
+        ],
+      ),
+    })
+    serve(get(HISTORY, () => json(200, { backups: [leftover], more: false })))
+    open([shopDb])
+    const [row] = bodyRows(await history())
+    expect(within(row).getAllByRole('cell')[3]).toHaveTextContent(
+      'Succeeded · old copies not removed',
+    )
+    // The copy itself is on Drive.
+    expect(within(row).getByRole('link', { name: 'Download' })).toBeInTheDocument()
+  })
+
   it('keeps the actions column whole when the content is narrow', async () => {
     // jsdom has no layout: this pins the classes that keep the File column from
     // being clipped at about 800 px (the table no longer needs 880 px; Time and

@@ -1,30 +1,28 @@
-import { CalendarClock, Database as DatabaseIcon, Folder } from 'lucide-react'
+import { Database as DatabaseIcon, Folder } from 'lucide-react'
 import { Fragment, useId } from 'react'
 import type { Backup, Database, Project } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import { BackupSteps } from '../../components/BackupProgress'
-import IssueLinks from '../../components/IssueLinks'
 import { databasePlace, databaseType } from '../../lib/databases'
 import type { BackupFlow } from '../../lib/useBackup'
 import BackUpButton from './BackUpButton'
-import BackupHistory from './BackupHistory'
+import BackupHistory, { useBackupHistory } from './BackupHistory'
+import BackupSchedule from './BackupSchedule'
 import { useProjectOutlet } from './projectContext'
-
-/** SCHEDULE_ISSUES are the issues that bring backup schedules. */
-const SCHEDULE_ISSUES = [53]
 
 const card = 'flex flex-col gap-3.5 rounded-[10px] border border-border bg-surface p-[18px]'
 
 /**
  * ProjectDatabase is the Database & Backup tab (design 02): the detected
- * databases, each with Back up now and its running backup, the schedule
- * (an empty state until the next backup flow) and the backup history.
+ * databases, each with Back up now and its running backup, the backup
+ * schedule per database and the backup history. The history is read here,
+ * since the schedule card shows its copies on Drive.
  */
 export default function ProjectDatabase() {
   const { project, raw, backup } = useProjectOutlet()
   const { backups, drive } = useLive()
   const dbId = useId()
-  const scheduleId = useId()
+  const history = useBackupHistory(raw.id, backup.refusals)
   const folder = drive?.state === 'connected' ? drive.folder : null
 
   return (
@@ -64,28 +62,10 @@ export default function ProjectDatabase() {
           )}
         </section>
 
-        <section aria-labelledby={scheduleId} className={card}>
-          <h2 id={scheduleId} className="m-0 text-[15px] font-semibold">
-            Backup schedule
-          </h2>
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border-strong px-4 py-6 text-center">
-            <CalendarClock
-              aria-hidden="true"
-              size={26}
-              strokeWidth={1.4}
-              className="text-[#4a515c]"
-            />
-            <p className="m-0 text-[13px] text-text-2">
-              Schedules arrive with the next backup flow.
-            </p>
-            <p className="m-0 text-[13px] text-muted">
-              Coming in <IssueLinks issues={SCHEDULE_ISSUES} />
-            </p>
-          </div>
-        </section>
+        <BackupSchedule stored={history.stored} />
       </div>
 
-      <BackupHistory project={raw} flow={backup} />
+      <BackupHistory project={raw} flow={backup} history={history} />
     </div>
   )
 }

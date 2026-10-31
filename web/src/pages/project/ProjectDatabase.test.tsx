@@ -1,6 +1,6 @@
 import { fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BackupStep, DriveStatus } from '../../api/types.gen'
+import type { BackupStep, DatabaseSchedule, DriveStatus } from '../../api/types.gen'
 import { FakeEventSource } from '../../test/fakeEventSource'
 import {
   makeBackup,
@@ -168,13 +168,22 @@ describe('database and backup tab', () => {
     expect(within(dialog).getByTestId('backup-pill')).toHaveTextContent('Running')
   })
 
-  it('keeps the schedule as an empty state', () => {
+  it('has the Backup schedule card, with no empty state left', () => {
+    serve({ [`GET ${HISTORY}`]: () => json(200, { backups: [], more: false, stored: {} }) })
     renderProject('/projects/1/database')
-    pushState([makeProject()])
-    const schedule = screen.getByRole('region', { name: 'Backup schedule' })
-    expect(schedule).toHaveTextContent('Schedules arrive with the next backup flow.')
-    expect(within(schedule).queryByRole('button')).toBeNull()
-    expect(within(schedule).queryByRole('textbox')).toBeNull()
+    const schedule: DatabaseSchedule = {
+      frequency: 'daily',
+      time: '02:00',
+      weekday: 0,
+      keep: 14,
+      compress: true,
+      nextRunAt: null,
+    }
+    pushState([makeProject({ databases: [makeDatabase({ backup: allowed, schedule })] })])
+    const card = screen.getByRole('region', { name: 'Backup schedule' })
+    expect(within(card).getByRole('radiogroup', { name: 'Frequency' })).toBeInTheDocument()
+    expect(card).not.toHaveTextContent('Schedules arrive with the next backup flow.')
+    expect(card).not.toHaveTextContent(/Coming in/)
   })
 })
 
