@@ -25,6 +25,12 @@ func TestNameIsPlaceholder(t *testing.T) {
 	if NameIsPlaceholder(d, "db") {
 		t.Error("a name equal to the location only is not a placeholder")
 	}
+	// A name the service sets explicitly is never a placeholder, even when it
+	// equals the service (MYSQL_DATABASE: db on service db).
+	d = Database{Type: "mysql", Name: "db", NameExplicit: true, LocationKind: "container", Location: "db"}
+	if NameIsPlaceholder(d, "db") {
+		t.Error("an explicit name equal to the service is a placeholder")
+	}
 }
 
 func ctr(svc, name, state string) Container {
@@ -86,6 +92,10 @@ func TestBackupReason(t *testing.T) {
 	mongo := func(name string) Database {
 		return Database{Type: "mongodb", Name: name, LocationKind: "container", Location: "db"}
 	}
+	explicit := func(d Database) Database {
+		d.NameExplicit = true
+		return d
+	}
 
 	tests := []struct {
 		name        string
@@ -112,6 +122,8 @@ func TestBackupReason(t *testing.T) {
 
 		{"mysql placeholder name", my("db"), svcs, running, true, "db", "no_db_name"},
 		{"mongo placeholder name", mongo("db"), svcs, running, true, "db", "no_db_name"},
+		{"mysql explicit name equal to the service", explicit(my("db")), svcs, running, true, "db", ""},
+		{"mongo explicit name equal to the service", explicit(mongo("db")), svcs, running, true, "db", ""},
 		{"postgres placeholder name dumps the default", pg("db"), svcs, running, true, "db", ""},
 		{"postgres placeholder name, stopped", pg("db"), svcs, stopped, true, "db", "db_not_running"},
 		{"name with a leading dash", pg("-x"), svcs, running, true, "db", "no_db_name"},

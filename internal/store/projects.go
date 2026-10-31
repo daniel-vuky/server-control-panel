@@ -186,7 +186,7 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 	_ = rows.Close()
 
 	drows, err := tx.QueryContext(ctx,
-		`SELECT d.project_id, d.type, d.name, d.location_kind, d.location, d.sources
+		`SELECT d.project_id, d.type, d.name, d.name_explicit, d.location_kind, d.location, d.sources
 		 FROM databases d JOIN projects p ON p.id = d.project_id WHERE p.state = 'tracked' AND (? = 0 OR p.id = ?) ORDER BY d.id`, only, only)
 	if err != nil {
 		return nil, fmt.Errorf("store: list databases: %w", err)
@@ -198,7 +198,7 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 			d       project.Database
 			sources string
 		)
-		if err := drows.Scan(&pid, &d.Type, &d.Name, &d.LocationKind, &d.Location, &sources); err != nil {
+		if err := drows.Scan(&pid, &d.Type, &d.Name, &d.NameExplicit, &d.LocationKind, &d.Location, &sources); err != nil {
 			return nil, fmt.Errorf("store: list databases: %w", err)
 		}
 		if err := json.Unmarshal([]byte(sources), &d.Sources); err != nil {

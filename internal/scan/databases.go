@@ -94,7 +94,7 @@ func DetectDatabases(cfg ComposeConfig, dotenv map[string]string) []project.Data
 	// Compose database services come first; they are the merge targets.
 	var records, svcRecords []*project.Database
 	svcRecord := map[string]*project.Database{} // service name -> its record
-	explicit := map[*project.Database]bool{}    // the service names its database in its own environment
+	explicit := map[*project.Database]bool{}    // the name came from a variable or URL, not the service-name placeholder
 	for _, s := range services {
 		t, ok := imageTypes[ImageBase(s.Image)]
 		if !ok {
@@ -161,18 +161,21 @@ func DetectDatabases(cfg ComposeConfig, dotenv map[string]string) []project.Data
 			same.Sources = append(same.Sources, f.source)
 			continue
 		}
-		records = append(records, &project.Database{
+		rec := &project.Database{
 			Type:         f.dbType,
 			Name:         f.name,
 			LocationKind: f.kind,
 			Location:     f.loc,
 			Sources:      []string{f.source},
-		})
+		}
+		explicit[rec] = f.name != ""
+		records = append(records, rec)
 	}
 
 	out := make([]project.Database, 0, len(records))
 	for _, rec := range records {
 		rec.Sources = sortedUnique(rec.Sources)
+		rec.NameExplicit = explicit[rec]
 		out = append(out, *rec)
 	}
 	sort.SliceStable(out, func(i, j int) bool {

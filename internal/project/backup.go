@@ -43,9 +43,12 @@ func ResolveService(location string, cs []Container, composeProject string, serv
 }
 
 // NameIsPlaceholder reports whether the database's name is only the service
-// name detection falls back to, so the real database name is not known.
+// name detection falls back to, so the real database name is not known. A name
+// a variable set (MYSQL_DATABASE: db on service db) is never a placeholder;
+// rows stored before NameExplicit was kept read as placeholders until the next
+// rescan.
 func NameIsPlaceholder(d Database, service string) bool {
-	return d.Name == service
+	return !d.NameExplicit && d.Name == service
 }
 
 // BackupReason is the one rule for whether a database can be backed up now,

@@ -6,10 +6,11 @@ package project
 // Database is a database a project uses. Only names are kept, never values:
 // Sources lists the variables or services it was found in.
 type Database struct {
-	Type         string   `json:"type"`         // postgresql | mysql | mongodb | sqlite
-	Name         string   `json:"name"`         // database name, or the service name
-	LocationKind string   `json:"locationKind"` // container | host | external | file | unknown
-	Location     string   `json:"location"`     // service or container name, host name or file path
+	Type         string   `json:"type"`                   // postgresql | mysql | mongodb | sqlite
+	Name         string   `json:"name"`                   // database name, or the service name
+	NameExplicit bool     `json:"nameExplicit,omitempty"` // Name came from a variable or URL, not the service-name placeholder
+	LocationKind string   `json:"locationKind"`           // container | host | external | file | unknown
+	Location     string   `json:"location"`               // service or container name, host name or file path
 	Sources      []string `json:"sources"`
 }
 

@@ -41,8 +41,8 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open on a missing directory: %v", err)
 	}
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 5 {
-		t.Fatalf("schema_migrations has %d rows, want 5", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 6 {
+		t.Fatalf("schema_migrations has %d rows, want 6", n)
 	}
 	var applied string
 	if err := s.db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&applied); err != nil {
@@ -60,8 +60,8 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 5 {
-		t.Fatalf("after reopen schema_migrations has %d rows, want 5", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 6 {
+		t.Fatalf("after reopen schema_migrations has %d rows, want 6", n)
 	}
 	for _, table := range []string{"workspaces", "projects", "databases", "jobs", "activity"} {
 		if n := count(t, s.db, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table); n != 1 {

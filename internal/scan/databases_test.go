@@ -22,6 +22,12 @@ func db(t, name, kind, loc string, sources ...string) project.Database {
 	return project.Database{Type: t, Name: name, LocationKind: kind, Location: loc, Sources: sources}
 }
 
+// named marks d's name as set by a variable, not the service-name placeholder.
+func named(d project.Database) project.Database {
+	d.NameExplicit = true
+	return d
+}
+
 func TestDetectDatabases(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -376,16 +382,19 @@ func TestDetectKeepsURLPathAsName(t *testing.T) {
 	}{
 		{"postgres url in .env", cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"DATABASE_URL": "postgres://u:p@db/myapp"},
-			db("postgresql", "myapp", "container", "db", ".env DATABASE_URL", "service db")},
+			named(db("postgresql", "myapp", "container", "db", ".env DATABASE_URL", "service db"))},
 		{"mysql url in a service", cfgOf(svc("db", "mysql:8", nil), svc("web", "app", map[string]string{"DATABASE_URL": "mysql://u:p@db:3306/shop?x=1"})),
 			nil,
-			db("mysql", "shop", "container", "db", "service db", "service web DATABASE_URL")},
+			named(db("mysql", "shop", "container", "db", "service db", "service web DATABASE_URL"))},
 		{"mongo url", cfgOf(svc("db", "mongo:7", nil)),
 			map[string]string{"MONGO_URI": "mongodb://u:p@db:27017/appdata"},
-			db("mongodb", "appdata", "container", "db", ".env MONGO_URI", "service db")},
+			named(db("mongodb", "appdata", "container", "db", ".env MONGO_URI", "service db"))},
 		{"url by container_name keeps the location", cfgOf(ComposeService{Name: "db", Image: "postgres:16", ContainerName: "shop-db"}),
 			map[string]string{"DATABASE_URL": "postgres://u:p@shop-db/myapp"},
-			db("postgresql", "myapp", "container", "shop-db", ".env DATABASE_URL", "service db")},
+			named(db("postgresql", "myapp", "container", "shop-db", ".env DATABASE_URL", "service db"))},
+		{"url naming the service's own name is explicit", cfgOf(svc("db", "mysql:8", nil)),
+			map[string]string{"DATABASE_URL": "mysql://u:p@db/db"},
+			named(db("mysql", "db", "container", "db", ".env DATABASE_URL", "service db"))},
 		{"url without a path keeps the placeholder", cfgOf(svc("db", "postgres:16", nil)),
 			map[string]string{"DATABASE_URL": "postgres://u:p@db:5432"},
 			db("postgresql", "db", "container", "db", ".env DATABASE_URL", "service db")},
@@ -408,17 +417,45 @@ func TestDetectExplicitNameWins(t *testing.T) {
 		want project.Database
 	}{
 		{"POSTGRES_DB", svc("db", "postgres:16", map[string]string{"POSTGRES_DB": "shop"}),
-			"postgres://u:p@db/other", db("postgresql", "shop", "container", "db", ".env DATABASE_URL", "service db", "service db POSTGRES_DB")},
+			"postgres://u:p@db/other", named(db("postgresql", "shop", "container", "db", ".env DATABASE_URL", "service db", "service db POSTGRES_DB"))},
 		{"MYSQL_DATABASE", svc("db", "mysql:8", map[string]string{"MYSQL_DATABASE": "shop"}),
-			"mysql://u:p@db/other", db("mysql", "shop", "container", "db", ".env DATABASE_URL", "service db", "service db MYSQL_DATABASE")},
+			"mysql://u:p@db/other", named(db("mysql", "shop", "container", "db", ".env DATABASE_URL", "service db", "service db MYSQL_DATABASE"))},
 		{"MARIADB_DATABASE", svc("db", "mariadb:11", map[string]string{"MARIADB_DATABASE": "shop"}),
-			"mariadb://u:p@db/other", db("mysql", "shop", "container", "db", ".env DATABASE_URL", "service db")},
+			"mariadb://u:p@db/other", named(db("mysql", "shop", "container", "db", ".env DATABASE_URL", "service db"))},
 		{"MONGO_INITDB_DATABASE", svc("db", "mongo:7", map[string]string{"MONGO_INITDB_DATABASE": "shop"}),
-			"mongodb://u:p@db/other", db("mongodb", "shop", "container", "db", ".env DATABASE_URL", "service db")},
+			"mongodb://u:p@db/other", named(db("mongodb", "shop", "container", "db", ".env DATABASE_URL", "service db"))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := DetectDatabases(cfgOf(tt.svc), map[string]string{"DATABASE_URL": tt.url})
+			if !reflect.DeepEqual(got, []project.Database{tt.want}) {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A service that names its database after itself (service db, MYSQL_DATABASE:
+// db) gives an explicit name, so the backup rule does not take it for the
+// placeholder.
+func TestDetectExplicitNameEqualToService(t *testing.T) {
+	tests := []struct {
+		name string
+		svc  ComposeService
+		want project.Database
+	}{
+		{"MYSQL_DATABASE", svc("db", "mysql:9", map[string]string{"MYSQL_DATABASE": "db"}),
+			named(db("mysql", "db", "container", "db", "service db", "service db MYSQL_DATABASE"))},
+		{"MARIADB_DATABASE", svc("db", "mariadb:11", map[string]string{"MARIADB_DATABASE": "db"}),
+			named(db("mysql", "db", "container", "db", "service db"))},
+		{"MONGO_INITDB_DATABASE", svc("db", "mongo:7", map[string]string{"MONGO_INITDB_DATABASE": "db"}),
+			named(db("mongodb", "db", "container", "db", "service db"))},
+		{"no variable keeps the placeholder", svc("db", "mysql:9", nil),
+			db("mysql", "db", "container", "db", "service db")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectDatabases(cfgOf(tt.svc), nil)
 			if !reflect.DeepEqual(got, []project.Database{tt.want}) {
 				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
