@@ -91,6 +91,53 @@ normalize_google_value() {
   printf '%s\n' "$v"
 }
 
+# normalize_timezone <raw>: prints an IANA time zone name (Asia/Ho_Chi_Minh,
+# UTC, Etc/UTC), or returns 1 with a message on stderr. One leading ":" (the
+# POSIX form) is dropped. Only the characters of zone names are accepted, so
+# the value is safe in an env file; the panel itself refuses a name it does not
+# know at startup (internal/config).
+normalize_timezone() {
+  local z
+  z=$(trim_space "${1-}")
+  z=${z#:}
+  if [[ ! "$z" =~ ^[A-Za-z0-9][A-Za-z0-9_+./-]*$ || "$z" == *..* ]]; then
+    echo "time zone '${1-}' must be an IANA name such as Asia/Ho_Chi_Minh or UTC" >&2
+    return 1
+  fi
+  printf '%s\n' "$z"
+}
+
+# detect_timezone: prints the host's time zone, trying `timedatectl show -p
+# Timezone --value`, then $SCP_ETC_DIR/timezone, then the $SCP_ETC_DIR/localtime
+# link (its target without the .../zoneinfo/ prefix), and falling back to UTC.
+# An answer that is not a usable name is skipped. SCP_ETC_DIR (default /etc) is
+# a test-only override.
+detect_timezone() {
+  local etc=${SCP_ETC_DIR:-/etc} z="" link=""
+  if command -v timedatectl >/dev/null 2>&1; then
+    z=$(timedatectl show -p Timezone --value 2>/dev/null) || z=""
+    if z=$(normalize_timezone "$z" 2>/dev/null); then
+      printf '%s\n' "$z"
+      return 0
+    fi
+  fi
+  if [[ -r "$etc/timezone" ]]; then
+    IFS= read -r z <"$etc/timezone" || true
+    if z=$(normalize_timezone "$z" 2>/dev/null); then
+      printf '%s\n' "$z"
+      return 0
+    fi
+  fi
+  if [[ -L "$etc/localtime" ]]; then
+    link=$(readlink "$etc/localtime") || link=""
+    if [[ "$link" == */zoneinfo/* ]] && z=$(normalize_timezone "${link#*/zoneinfo/}" 2>/dev/null); then
+      printf '%s\n' "$z"
+      return 0
+    fi
+  fi
+  printf '%s\n' UTC
+}
+
 # gen_secret_key: prints 32 random bytes as 64 hex characters.
 gen_secret_key() {
   local k
@@ -394,11 +441,21 @@ normalize_roots_answer() {
   printf '%s\n' "$out"
 }
 
+# choose_timezone: sets TZ_ANSWER to the server time zone: TZ from the
+# environment, else a line typed at the prompt that offers the detected zone as
+# the default (an empty line, or no terminal, takes it).
+choose_timezone() {
+  local def
+  def=$(detect_timezone)
+  answer_optional TZ "Server time zone for backup schedules [$def]: " normalize_timezone
+  TZ_ANSWER=${ANSWER:-$def}
+}
+
 # write_panel_env: asks for (or reads from the environment) the Cloudflare
 # values and workspace roots, then the optional public URL and Google values,
 # generates the secret key and writes panel.env, mode 0600.
 write_panel_env() {
-  local team aud roots key url gid gsecret
+  local team aud roots key url gid gsecret tz
   answer CF_ACCESS_TEAM_DOMAIN "Cloudflare Access team domain (myteam.cloudflareaccess.com): " normalize_team_domain
   team=$ANSWER
   answer CF_ACCESS_AUD "Cloudflare Access application AUD tag: " normalize_aud
@@ -415,6 +472,8 @@ write_panel_env() {
   if [[ -n "$gid" && -z "$gsecret" ]] || [[ -z "$gid" && -n "$gsecret" ]]; then
     die "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together: give both or neither"
   fi
+  choose_timezone
+  tz=$TZ_ANSWER
   key=$(gen_secret_key)
   write_file "$SCP_DIR/panel.env" 0600 "# Settings for the server control panel, read by the panel container.
 # install.sh writes this file once and never overwrites it: edit it here,
@@ -433,6 +492,9 @@ PANEL_SECRET_KEY=$key
 PANEL_PUBLIC_URL=$url
 GOOGLE_CLIENT_ID=$gid
 GOOGLE_CLIENT_SECRET=$gsecret
+# The server time zone (an IANA name such as Asia/Ho_Chi_Minh). Backup schedules
+# run and are shown in it. Change it here, then run docker compose up -d.
+TZ=$tz
 "
 }
 
@@ -448,6 +510,23 @@ ensure_secret_key() {
   fi
   printf 'PANEL_SECRET_KEY=%s\n' "$key" >>"$f"
   echo "Added PANEL_SECRET_KEY to $f"
+}
+
+# ensure_timezone: appends TZ to an existing panel.env that has no TZ= line.
+# An owner's own TZ= line, even an empty one, stays. Nothing else in the file
+# changes.
+ensure_timezone() {
+  local f="$SCP_DIR/panel.env"
+  if grep -Eq '^[[:space:]]*TZ[[:space:]]*=' "$f"; then
+    return 0
+  fi
+  choose_timezone
+  # A last line without a newline needs one first, or TZ would join it.
+  if [[ -s "$f" && -n "$(tail -c 1 "$f")" ]]; then
+    printf '\n' >>"$f"
+  fi
+  printf 'TZ=%s\n' "$TZ_ANSWER" >>"$f"
+  echo "Added TZ to $f"
 }
 
 # env_file_value <file> <key>: prints the last value of KEY=value in an env
@@ -605,6 +684,7 @@ main() {
   else
     echo "Keeping $SCP_DIR/panel.env"
     ensure_secret_key
+    ensure_timezone
   fi
 
   # 6: the workspace roots, as panel.env names them now.

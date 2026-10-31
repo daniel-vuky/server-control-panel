@@ -15,12 +15,18 @@ T=$(mktemp -d -p /srv) || exit 1
 test_cleanup() { rm -rf "$T"; }
 mkdir -p "$T/bin" "$T/ws1" "$T/ws2" "$T/ws3"
 install -m 0755 "$here/fake-docker" "$T/bin/docker"
+install -m 0755 "$here/fake-timedatectl" "$T/bin/timedatectl"
 export PATH="$T/bin:$PATH"
 
 # fresh_case: forget every fake-docker setting, pick a new install directory
 # that does not exist yet, and set the answers in the environment.
 fresh_case() {
-  unset "${!FAKE_DOCKER_@}" SCP_HEALTH_TIMEOUT PANEL_PUBLIC_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+  unset "${!FAKE_DOCKER_@}" "${!FAKE_TIMEDATECTL_@}" SCP_HEALTH_TIMEOUT PANEL_PUBLIC_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET TZ
+  # The zone sources the install reads: timedatectl (faked, prints nothing
+  # unless a case sets FAKE_TIMEDATECTL_OUT) and a private /etc.
+  rm -rf "${T:?}/etc"
+  mkdir -p "$T/etc"
+  export SCP_ETC_DIR="$T/etc"
   export FAKE_DOCKER_LOG="$T/docker.log"
   SCP_DIR="$(mktemp -d -p "$T")/scp"
   export SCP_DIR SCP_SOURCE="$here/.." SUDO_UID=1000 SUDO_GID=1000 DOCKER_GID=998 SCP_TTY=/nonexistent
@@ -289,6 +295,130 @@ assert_eq 1 "$(count_key "$D/panel.env")" "append key, no final newline: one key
 printf 'CF_ACCESS_TEAM_DOMAIN=myteam.cloudflareaccess.com\nCF_ACCESS_AUD=abc123\nWORKSPACE_ROOTS=%s\nPANEL_SECRET_KEY=\n' "$T/ws1" >"$D/panel.env"
 run_install --no-start
 assert_eq yes "$([[ "$(key_of "$D/panel.env" | tail -n 1)" =~ $hex64 ]] && echo yes || echo no)" "empty key: a real key is appended after it"
+
+# --- server time zone (TZ)
+# tz_of <panel.env>: the TZ value(s), one per line.
+tz_of() { sed -n 's/^TZ=//p' "$1"; }
+# count_tz <panel.env>: how many TZ= lines the file has.
+count_tz() { grep -c '^TZ=' "$1" || true; }
+
+# Detection order: timedatectl, then etc/timezone, then the etc/localtime link, then UTC.
+fresh_case
+run_install --no-start
+assert_eq 0 "$RC" "tz none: exit 0"
+assert_eq UTC "$(tz_of "$SCP_DIR/panel.env")" "tz none: nothing detected gives UTC"
+assert_eq 1 "$(count_tz "$SCP_DIR/panel.env")" "tz none: one TZ line"
+assert_file_mode 600 "$SCP_DIR/panel.env"
+
+fresh_case
+export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh
+printf 'Europe/Paris\n' >"$T/etc/timezone"
+ln -s /usr/share/zoneinfo/America/New_York "$T/etc/localtime"
+run_install --no-start
+assert_eq 0 "$RC" "tz timedatectl: exit 0"
+assert_eq Asia/Ho_Chi_Minh "$(tz_of "$SCP_DIR/panel.env")" "tz timedatectl: wins over the files"
+
+fresh_case
+printf 'Europe/Paris\n' >"$T/etc/timezone"
+ln -s /usr/share/zoneinfo/America/New_York "$T/etc/localtime"
+run_install --no-start
+assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz etc/timezone: wins over the localtime link"
+
+fresh_case
+ln -s /usr/share/zoneinfo/America/New_York "$T/etc/localtime"
+run_install --no-start
+assert_eq America/New_York "$(tz_of "$SCP_DIR/panel.env")" "tz localtime link: the zoneinfo prefix is stripped"
+
+fresh_case
+ln -s ../usr/share/zoneinfo/posix/Europe/Berlin "$T/etc/localtime"
+run_install --no-start
+assert_eq posix/Europe/Berlin "$(tz_of "$SCP_DIR/panel.env")" "tz localtime link: a relative target is stripped too"
+
+fresh_case
+ln -s /somewhere/else "$T/etc/localtime"
+run_install --no-start
+assert_eq UTC "$(tz_of "$SCP_DIR/panel.env")" "tz localtime link: a target outside zoneinfo is UTC"
+
+# A failing timedatectl or an unusable answer falls through to the next source.
+fresh_case
+export FAKE_TIMEDATECTL_OUT=n/a FAKE_TIMEDATECTL_RC=1
+printf 'Europe/Paris\n' >"$T/etc/timezone"
+run_install --no-start
+assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz timedatectl fails: falls back to etc/timezone"
+fresh_case
+export FAKE_TIMEDATECTL_OUT='bad zone;rm'
+run_install --no-start
+assert_eq UTC "$(tz_of "$SCP_DIR/panel.env")" "tz timedatectl unusable: UTC"
+
+# TZ in the environment is the answer; a bad one dies and writes nothing.
+fresh_case
+export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh TZ=':Europe/Paris'
+run_install --no-start
+assert_eq 0 "$RC" "tz env: exit 0"
+assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz env: used, leading colon dropped"
+fresh_case
+export TZ='Mars Base'
+run_install --no-start
+assert_nonzero "$RC" "tz env invalid: dies"
+assert_contains "$ERR" "TZ" "tz env invalid: names the variable"
+assert_eq no "$([[ -e "$SCP_DIR/panel.env" ]] && echo yes || echo no)" "tz env invalid: no panel.env written"
+
+# Interactive: the detected zone is the default, a typed one replaces it, a bad one is asked again.
+fresh_case
+unset CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD WORKSPACE_ROOTS
+export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh
+printf '%s\n' myteam.cloudflareaccess.com abc123 "$T/ws1" '' '' '' '' >"$T/tty"
+export SCP_TTY="$T/tty"
+run_install --no-start
+assert_eq 0 "$RC" "tz prompt default: exit 0"
+assert_eq Asia/Ho_Chi_Minh "$(tz_of "$SCP_DIR/panel.env")" "tz prompt default: Enter takes the detected zone"
+assert_contains "$ERR" "Asia/Ho_Chi_Minh" "tz prompt default: the prompt shows the detected zone"
+fresh_case
+unset CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD WORKSPACE_ROOTS
+export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh
+printf '%s\n' myteam.cloudflareaccess.com abc123 "$T/ws1" '' '' '' 'not a zone' Europe/Paris >"$T/tty"
+export SCP_TTY="$T/tty"
+run_install --no-start
+assert_eq 0 "$RC" "tz prompt typed: exit 0"
+assert_eq Europe/Paris "$(tz_of "$SCP_DIR/panel.env")" "tz prompt typed: asked again after a bad answer"
+assert_contains "$ERR" "not a zone" "tz prompt typed: a bad zone is reported"
+
+# Re-runs: a panel.env without TZ gets exactly one line; one with TZ is kept.
+fresh_case
+export FAKE_TIMEDATECTL_OUT=Asia/Ho_Chi_Minh
+run_install --no-start
+D=$SCP_DIR
+grep -v '^TZ=' "$D/panel.env" >"$T/edit" && cat "$T/edit" >"$D/panel.env"
+cp "$D/panel.env" "$T/panel.env.notz"
+unset CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD WORKSPACE_ROOTS
+export FAKE_TIMEDATECTL_OUT=Europe/Paris
+run_install --no-start
+assert_eq 0 "$RC" "append tz: exit 0"
+assert_eq 1 "$(count_tz "$D/panel.env")" "append tz: exactly one TZ line"
+assert_eq Europe/Paris "$(tz_of "$D/panel.env")" "append tz: the detected zone"
+assert_eq "$(wc -l <"$T/panel.env.notz" | tr -d ' ')" "$(($(wc -l <"$D/panel.env") - 1))" "append tz: one line added"
+assert_eq same "$(same_file "$T/panel.env.notz" <(head -n -1 "$D/panel.env"))" "append tz: the rest of the file is untouched"
+assert_file_mode 600 "$D/panel.env"
+assert_eq 1000:1000 "$(stat -c %u:%g "$D/panel.env")" "append tz: owner kept"
+assert_contains "$OUT" "Added TZ to $D/panel.env" "append tz: says so"
+cp "$D/panel.env" "$T/panel.env.tz"
+export FAKE_TIMEDATECTL_OUT=Asia/Tokyo
+run_install --no-start
+assert_eq same "$(same_file "$T/panel.env.tz" "$D/panel.env")" "keep tz: a re-run with TZ leaves panel.env byte for byte"
+assert_lacks "$OUT" "Added TZ" "keep tz: says nothing"
+# A file whose last line has no newline: TZ goes on its own line.
+printf 'CF_ACCESS_TEAM_DOMAIN=myteam.cloudflareaccess.com\nCF_ACCESS_AUD=abc123\nPANEL_SECRET_KEY=%s\nWORKSPACE_ROOTS=%s' \
+  "$(printf '0%.0s' {1..64})" "$T/ws1" >"$D/panel.env"
+run_install --no-start
+assert_eq 0 "$RC" "append tz, no final newline: exit 0"
+assert_line "$D/panel.env" "WORKSPACE_ROOTS=$T/ws1" "append tz, no final newline: the last line is intact"
+assert_eq Asia/Tokyo "$(tz_of "$D/panel.env")" "append tz, no final newline: TZ on its own line"
+# An owner's own TZ=, even an empty one, is theirs and stays.
+printf 'CF_ACCESS_TEAM_DOMAIN=myteam.cloudflareaccess.com\nCF_ACCESS_AUD=abc123\nPANEL_SECRET_KEY=%s\nWORKSPACE_ROOTS=%s\nTZ=\n' \
+  "$(printf '0%.0s' {1..64})" "$T/ws1" >"$D/panel.env"
+cp "$D/panel.env" "$T/panel.env.emptytz"
+run_install --no-start
+assert_eq same "$(same_file "$T/panel.env.emptytz" "$D/panel.env")" "empty tz: an explicit empty TZ= is left alone"
 
 # --- compose version
 for v in 5.6.1 v2.20.0 2.20.0-desktop.1; do

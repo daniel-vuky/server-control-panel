@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+	_ "time/tzdata" // the runtime image has no zoneinfo: every TZ must work from the binary
 )
 
 // DefaultAddr is the address the panel binds when PANEL_ADDR is not set.
@@ -47,6 +49,9 @@ type Config struct {
 	// DevBackupMinFree is PANEL_DEV_BACKUP_MIN_FREE in bytes, read only in a dev
 	// build (0 otherwise). It forces the "not enough space" refusal.
 	DevBackupMinFree int64
+	// Zone is the server time zone (TZ). It is never nil: UTC when TZ is empty.
+	// Backup schedules and their displayed times use it.
+	Zone *time.Location
 }
 
 // Load reads configuration through getenv (usually os.Getenv). It refuses any
@@ -88,6 +93,10 @@ func Load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	zone, err := parseZone(getenv("TZ"))
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		Addr:               addr,
 		AccessTeamDomain:   getenv("CF_ACCESS_TEAM_DOMAIN"),
@@ -99,7 +108,22 @@ func Load(getenv func(string) string) (Config, error) {
 		GoogleClientID:     clientID,
 		GoogleClientSecret: clientSecret,
 		DevBackupMinFree:   minFree,
+		Zone:               zone,
 	}, nil
+}
+
+// parseZone reads a TZ value: empty is UTC, one leading ":" (the POSIX form)
+// is dropped, and a name time.LoadLocation refuses is an error naming TZ.
+func parseZone(value string) (*time.Location, error) {
+	name := strings.TrimPrefix(strings.TrimSpace(value), ":")
+	if name == "" {
+		return time.UTC, nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("TZ %q: not a time zone the panel knows (use an IANA name such as Asia/Ho_Chi_Minh or UTC)", value)
+	}
+	return loc, nil
 }
 
 // parseRoots splits a WORKSPACE_ROOTS value, trims and cleans each entry and

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# A stand-in for `timedatectl` in the install tests. Tests install it as
+# `timedatectl` on PATH. Only `show -p Timezone --value` is supported; it prints
+# $FAKE_TIMEDATECTL_OUT (nothing when unset, with a newline otherwise) and exits
+# with $FAKE_TIMEDATECTL_RC (default 0).
+[[ "$*" == "show -p Timezone --value" ]] || exit 2
+if [[ -n "${FAKE_TIMEDATECTL_OUT:-}" ]]; then
+  printf '%s\n' "$FAKE_TIMEDATECTL_OUT"
+fi
+exit "${FAKE_TIMEDATECTL_RC:-0}"

@@ -57,6 +57,9 @@ func run(log *slog.Logger) int {
 		log.Error("invalid configuration", "error", err)
 		return 1
 	}
+	// Before anything reads the clock: dates in logs and backup file names use
+	// the server zone.
+	time.Local = cfg.Zone
 
 	verifier, err := auth.DefaultVerifier(cfg)
 	if err != nil {

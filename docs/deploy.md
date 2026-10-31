@@ -17,7 +17,7 @@ The files live in `/opt/server-control-panel`:
 
 | File | What it is | On a re-run of the install command |
 | --- | --- | --- |
-| `panel.env` | Your Cloudflare values, workspace roots, the secret key and the optional Google Drive values (mode 0600) | Never overwritten (a missing `PANEL_SECRET_KEY` is appended) |
+| `panel.env` | Your Cloudflare values, workspace roots, the secret key, the time zone and the optional Google Drive values (mode 0600) | Never overwritten (a missing `PANEL_SECRET_KEY` or `TZ` is appended) |
 | `.env` | `PANEL_TAG` and `UPDATE_INTERVAL` | Never overwritten (but the uninstall removes it, see section 8) |
 | `data/` | The panel's own data | Kept |
 | `compose.yaml` | The compose project | Refreshed |
@@ -99,6 +99,14 @@ The install adds these to `panel.env`:
 Keep `PANEL_SECRET_KEY` with the server's other secrets. It is stored outside `data/` on purpose, so a copy of the panel's database alone cannot decrypt the Drive token. If the key is lost or changed, nothing else breaks: you only connect Google Drive again from Settings.
 
 An older `panel.env` that has no `PANEL_SECRET_KEY` gets one line appended on the next run of the install command; the rest of the file is not touched.
+
+### The time zone (`TZ`)
+
+`TZ` is the server's time zone, an IANA name such as `Asia/Ho_Chi_Minh` or `UTC`. Backup schedules run at their time in this zone, and every schedule time and next run in the panel is shown in it, with the zone named. Unset means UTC. The panel refuses to start with a `TZ` it does not know.
+
+The install detects the host's zone (`timedatectl`, then `/etc/timezone`, then the `/etc/localtime` link, else `UTC`), offers it as the default when it asks, and writes it as `TZ=` in `panel.env`. Run it with `TZ=<zone>` in the environment to name another one without being asked. An older `panel.env` with no `TZ` line gets one appended on the next run of the install command; a `TZ` line you set yourself is never changed.
+
+To change it later, edit `TZ` in `panel.env` and run `cd /opt/server-control-panel && docker compose up -d`. The panel restarts to read it; a schedule keeps its time of day and runs at that time in the new zone.
 
 Without the three optional values the panel runs as before and Google Drive shows as not set up. To set Drive up, follow [Connect Google Drive](google-drive.md), put the values in `panel.env` and run `cd /opt/server-control-panel && docker compose up -d`.
 
