@@ -306,6 +306,8 @@ func (m *Manager) finish(j *job) {
 		m.running = nil
 	}
 	m.mu.Unlock()
+	// Off the active list, so no batch can join it any more.
+	m.ended(j)
 	m.fire()
 }
 
