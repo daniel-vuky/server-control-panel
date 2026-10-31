@@ -542,3 +542,53 @@ func TestBackupSummary(t *testing.T) {
 		t.Errorf("empty summary = %+v", empty)
 	}
 }
+
+func TestLatestBackups(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	if _, _, err := s.AddWorkspace(ctx, NewWorkspace{Name: "apps", Path: "/srv/apps", Depth: 2, LastScanAt: scanTime}, []NewProject{
+		{Path: "/srv/apps/a", ComposeProject: "a", DisplayName: "Alpha", Tracked: true},
+		{Path: "/srv/apps/b", ComposeProject: "b", DisplayName: "Bravo", Tracked: true},
+		{Path: "/srv/apps/c", ComposeProject: "c", DisplayName: "Charlie", Tracked: false},
+		{Path: "/srv/apps/d", ComposeProject: "d", DisplayName: "Delta", Tracked: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]int64{}
+	for _, n := range []string{"a", "b", "c", "d"} {
+		var id int64
+		if err := s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, "/srv/apps/"+n).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids[n] = id
+	}
+	day := func(d int) time.Time { return time.Date(2026, 10, d, 9, 0, 0, 0, time.UTC) }
+
+	rowAt(t, s, ids["a"], "k", "ok", "f1", 1, day(1))
+	rowAt(t, s, ids["d"], "k", "queued", "", 0, day(2)) // placeholders so ids line up
+	a3 := rowAt(t, s, ids["a"], "k", "failed", "", 0, day(3))
+	b4 := rowAt(t, s, ids["b"], "k", "refused", "", 0, day(4))
+	rowAt(t, s, ids["a"], "k", "running", "", 0, day(5))
+	rowAt(t, s, ids["c"], "k", "ok", "f2", 1, day(6)) // ignored project
+	// Alpha has a finished_at later than created_at; Bravo has none.
+	fin := day(3).Add(time.Minute)
+	mustExec(t, s.db, `UPDATE backups SET finished_at = ? WHERE id = ?`, formatTime(fin), a3)
+	mustExec(t, s.db, `UPDATE projects SET display_name = 'Alpha renamed' WHERE id = ?`, ids["a"])
+
+	got, err := s.LatestBackups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []LatestBackup{
+		{ID: b4, ProjectID: ids["b"], ProjectName: "Bravo", Database: "shop", State: "refused", At: day(4)},
+		{ID: a3, ProjectID: ids["a"], ProjectName: "Alpha renamed", Database: "shop", State: "failed", At: fin},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LatestBackups = %+v, want %+v", got, want)
+	}
+
+	empty, err := open(t).LatestBackups(ctx)
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("empty store = %#v, %v", empty, err)
+	}
+}
