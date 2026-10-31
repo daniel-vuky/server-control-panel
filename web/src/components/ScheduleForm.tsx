@@ -10,7 +10,19 @@ import {
 import FieldMessage from './FieldMessage'
 
 const INPUT =
-  'box-border h-9 rounded-[7px] border bg-field px-2.5 font-mono text-[13px] text-text [color-scheme:dark] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
+  'box-border rounded-[7px] border bg-field px-2.5 font-mono text-[13px] text-text [color-scheme:dark] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
+
+/** The grid layout's controls fill their column at design 07's 38 px. */
+const FILL = 'h-[38px] w-full min-w-0'
+
+/** design 07's three equal columns that wrap under 200 px. */
+const GRID = 'grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))] gap-3.5'
+
+/** GRID_FREQUENCIES is the Schedule select's order (design 07): Daily, Weekly, Off. */
+const GRID_FREQUENCIES = [
+  ...FREQUENCIES.filter((f) => f.value !== 'off'),
+  ...FREQUENCIES.filter((f) => f.value === 'off'),
+]
 
 /** scheduleFieldId is the id of a field's control in a ScheduleForm with this prefix. */
 export const scheduleFieldId = (prefix: string, f: ScheduleField) => `${prefix}-${f}`
@@ -25,6 +37,12 @@ type Props = {
   /** The server zone the run time is read in; null while unknown. */
   zone: TimeZone | null
   disabled?: boolean
+  /**
+   * segmented (the default) is design 02's radiogroup above wrapping fields;
+   * grid is design 07's: Schedule select, Run time and Copies to keep as three
+   * equal fields, with Day and the Gzip row under them.
+   */
+  layout?: 'segmented' | 'grid'
   /** fieldRef receives each field's focusable control, so a host can focus the one a 422 names. */
   fieldRef?(f: ScheduleField, el: HTMLElement | null): void
 }
@@ -32,9 +50,9 @@ type Props = {
 /**
  * ScheduleForm is the schedule's fields, shared by Settings → Backup defaults
  * and a database's Backup schedule (designs 02 and 07, no encryption): the
- * Frequency radiogroup, Day for Weekly (Monday first), Run time in the
- * server zone, Copies to keep and Gzip compression. The host owns the draft,
- * the Save button and the errors.
+ * Frequency radiogroup (a Schedule select in the grid layout), Day for Weekly
+ * (Monday first), Run time in the server zone, Copies to keep and Gzip
+ * compression. The host owns the draft, the Save button and the errors.
  */
 export default function ScheduleForm({
   idPrefix: p,
@@ -43,8 +61,10 @@ export default function ScheduleForm({
   errors,
   zone,
   disabled = false,
+  layout = 'segmented',
   fieldRef,
 }: Props) {
+  const grid = layout === 'grid'
   const id = (f: ScheduleField) => scheduleFieldId(p, f)
   const errorId = (f: ScheduleField) => `${id(f)}-error`
   const describe = (f: ScheduleField, notes: string[] = []) => {
@@ -57,65 +77,97 @@ export default function ScheduleForm({
   const zoneNote = `${p}-zone`
   const compressNote = `${p}-compress-note`
 
-  return (
-    <div className="flex flex-col gap-3.5">
-      <div className="flex flex-col gap-1.5">
-        <div
-          role="radiogroup"
-          aria-label="Frequency"
-          aria-describedby={describe('frequency')}
-          className="flex w-fit rounded-lg border border-border-strong bg-field p-[3px]"
-        >
-          {FREQUENCIES.map((f) => {
-            const checked = value.frequency === f.value
-            return (
-              <label
-                key={f.value}
-                className={`flex h-[30px] cursor-pointer items-center rounded-md px-3.5 text-[13px] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-accent ${
-                  checked ? 'bg-selected text-white' : 'text-muted'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name={id('frequency')}
-                  value={f.value}
-                  checked={checked}
-                  disabled={disabled}
-                  aria-invalid={errors.frequency ? true : undefined}
-                  ref={checked ? (el) => fieldRef?.('frequency', el) : undefined}
-                  onChange={() => onChange({ frequency: f.value })}
-                  className="sr-only"
-                />
-                {f.label}
-              </label>
-            )
-          })}
-        </div>
-        {error('frequency')}
-      </div>
+  const dayField = (
+    <Field
+      id={id('weekday')}
+      label="Day"
+      error={error('weekday')}
+      grid={grid}
+      className={grid ? 'col-start-1' : undefined}
+    >
+      <select
+        id={id('weekday')}
+        value={String(value.weekday)}
+        disabled={disabled}
+        aria-invalid={errors.weekday ? true : undefined}
+        aria-describedby={describe('weekday')}
+        ref={(el) => fieldRef?.('weekday', el)}
+        onChange={(e) => onChange({ weekday: Number(e.target.value) })}
+        className={`${INPUT} ${grid ? FILL : 'h-9 w-[150px]'} font-sans ${border('weekday')}`}
+      >
+        {WEEKDAYS.map((d) => (
+          <option key={d.value} value={d.value}>
+            {d.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  )
 
-      <div className="flex flex-wrap gap-3">
-        {value.frequency === 'weekly' && (
-          <Field id={id('weekday')} label="Day" error={error('weekday')}>
-            <select
-              id={id('weekday')}
-              value={String(value.weekday)}
-              disabled={disabled}
-              aria-invalid={errors.weekday ? true : undefined}
-              aria-describedby={describe('weekday')}
-              ref={(el) => fieldRef?.('weekday', el)}
-              onChange={(e) => onChange({ weekday: Number(e.target.value) })}
-              className={`${INPUT} w-[150px] font-sans ${border('weekday')}`}
-            >
-              {WEEKDAYS.map((d) => (
-                <option key={d.value} value={d.value}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-        <Field id={id('time')} label="Run time" error={error('time')}>
+  const frequencySelect = (
+    <Field id={id('frequency')} label="Schedule" error={error('frequency')} grid={grid}>
+      <select
+        id={id('frequency')}
+        value={value.frequency}
+        disabled={disabled}
+        aria-invalid={errors.frequency ? true : undefined}
+        aria-describedby={describe('frequency')}
+        ref={(el) => fieldRef?.('frequency', el)}
+        onChange={(e) => onChange({ frequency: e.target.value as ScheduleDraft['frequency'] })}
+        className={`${INPUT} ${FILL} font-sans ${border('frequency')}`}
+      >
+        {GRID_FREQUENCIES.map((f) => (
+          <option key={f.value} value={f.value}>
+            {f.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  )
+
+  return (
+    <div className={`flex flex-col ${grid ? 'gap-4' : 'gap-3.5'}`}>
+      {!grid && (
+        <div className="flex flex-col gap-1.5">
+          <div
+            role="radiogroup"
+            aria-label="Frequency"
+            aria-describedby={describe('frequency')}
+            className="flex w-fit rounded-lg border border-border-strong bg-field p-[3px]"
+          >
+            {FREQUENCIES.map((f) => {
+              const checked = value.frequency === f.value
+              return (
+                <label
+                  key={f.value}
+                  className={`flex h-[30px] cursor-pointer items-center rounded-md px-3.5 text-[13px] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-accent ${
+                    checked ? 'bg-selected text-white' : 'text-muted'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name={id('frequency')}
+                    value={f.value}
+                    checked={checked}
+                    disabled={disabled}
+                    aria-invalid={errors.frequency ? true : undefined}
+                    ref={checked ? (el) => fieldRef?.('frequency', el) : undefined}
+                    onChange={() => onChange({ frequency: f.value })}
+                    className="sr-only"
+                  />
+                  {f.label}
+                </label>
+              )
+            })}
+          </div>
+          {error('frequency')}
+        </div>
+      )}
+
+      <div className={grid ? GRID : 'flex flex-wrap gap-3'}>
+        {grid && frequencySelect}
+        {!grid && value.frequency === 'weekly' && dayField}
+        <Field id={id('time')} label="Run time" error={error('time')} grid={grid}>
           <input
             id={id('time')}
             type="time"
@@ -125,7 +177,7 @@ export default function ScheduleForm({
             aria-describedby={describe('time', zone ? [zoneNote] : [])}
             ref={(el) => fieldRef?.('time', el)}
             onChange={(e) => onChange({ time: e.target.value })}
-            className={`${INPUT} w-[130px] ${border('time')}`}
+            className={`${INPUT} ${grid ? FILL : 'h-9 w-[130px]'} ${border('time')}`}
           />
           {zone && (
             <span id={zoneNote} className="text-[12px] text-muted">
@@ -133,7 +185,7 @@ export default function ScheduleForm({
             </span>
           )}
         </Field>
-        <Field id={id('keep')} label="Copies to keep" error={error('keep')}>
+        <Field id={id('keep')} label="Copies to keep" error={error('keep')} grid={grid}>
           <input
             id={id('keep')}
             type="number"
@@ -147,12 +199,14 @@ export default function ScheduleForm({
             aria-describedby={describe('keep')}
             ref={(el) => fieldRef?.('keep', el)}
             onChange={(e) => onChange({ keep: e.target.value })}
-            className={`${INPUT} w-[110px] ${border('keep')}`}
+            className={`${INPUT} ${grid ? FILL : 'h-9 w-[110px]'} ${border('keep')}`}
           />
         </Field>
+        {/* Under the three fields: column 1 of the next grid row. */}
+        {grid && value.frequency === 'weekly' && dayField}
       </div>
 
-      <div className="flex items-center gap-4 border-t border-divider pt-3">
+      <div className={`flex items-center gap-4 border-t border-divider ${grid ? 'py-3' : 'pt-3'}`}>
         <div className="flex flex-1 flex-col gap-[3px]">
           <label htmlFor={id('compress')} className="font-medium">
             Gzip compression
@@ -197,15 +251,19 @@ function Field({
   id,
   label,
   error,
+  grid = false,
+  className = '',
   children,
 }: {
   id: string
   label: string
   error: ReactNode
+  grid?: boolean
+  className?: string
   children: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className={`flex flex-col gap-1.5 ${grid ? 'min-w-0' : ''} ${className}`.trim()}>
       <label htmlFor={id} className="text-[12.5px] text-muted">
         {label}
       </label>

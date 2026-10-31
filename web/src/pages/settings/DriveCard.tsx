@@ -1,4 +1,4 @@
-import { Check, CircleAlert } from 'lucide-react'
+import { Check, CircleAlert, TriangleAlert } from 'lucide-react'
 import { type FormEvent, useEffect, useId, useState } from 'react'
 import {
   connectDrive,
@@ -134,7 +134,7 @@ function NotConfigured({ status }: { status: DriveStatus }) {
         href={DOCS_URL}
         target="_blank"
         rel="noreferrer"
-        className="w-fit text-accent underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="w-fit text-text-2 underline hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         How to set up Google Drive
       </a>
@@ -164,12 +164,17 @@ function Connect({ expired }: { expired: boolean }) {
   return (
     <div className="flex flex-col gap-3 px-[18px] py-4">
       {expired && (
-        <div className="flex flex-col gap-1">
-          <p role="alert" className="m-0 flex items-center gap-[7px] text-[13px] text-danger">
-            <CircleAlert aria-hidden="true" size={15} strokeWidth={2} className="flex-none" />
+        <div className="flex flex-col gap-1.5 rounded-lg border border-warning-strong bg-warning-bg px-4 py-3 text-warning-soft">
+          <p role="alert" className="m-0 flex items-center gap-3 text-[13px]">
+            <TriangleAlert
+              aria-hidden="true"
+              size={18}
+              strokeWidth={2}
+              className="flex-none text-warning"
+            />
             The Google Drive token has expired. Backups will fail until you reconnect.
           </p>
-          <p className="m-0 text-[12px] text-muted">{TESTING_NOTE}</p>
+          <p className="m-0 text-[12px] text-warning-text">{TESTING_NOTE}</p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-3">

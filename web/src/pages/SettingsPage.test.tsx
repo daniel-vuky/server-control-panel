@@ -133,6 +133,13 @@ describe('SettingsPage', () => {
       'href',
       '/onboarding',
     )
+    // Design 07: surface-2 fill, a decorative 14 px plus, 7 px gap; rows wrap 12 px apart.
+    const add = within(card).getByRole('link', { name: 'Add workspace' })
+    expect(add).toHaveClass('bg-surface-2', 'gap-[7px]')
+    const plus = add.querySelector('svg')
+    expect(plus).toHaveAttribute('aria-hidden', 'true')
+    expect(plus).toHaveAttribute('width', '14')
+    expect(within(card).getByText('/srv/solo').closest('li')).toHaveClass('gap-x-5', 'gap-y-3')
     for (const path of ['/home/deploy/projects', '/srv/solo']) {
       expect(within(card).getByRole('button', { name: `Rescan ${path}` })).toBeInTheDocument()
       expect(within(card).getByRole('button', { name: `Remove ${path}` })).toBeInTheDocument()

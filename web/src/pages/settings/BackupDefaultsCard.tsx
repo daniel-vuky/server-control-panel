@@ -113,7 +113,7 @@ function DefaultsForm({ settings }: { settings: BackupSettings }) {
 
   return (
     <form noValidate onSubmit={onSubmit}>
-      <div className="px-[18px] pt-4 pb-1">
+      <div className="px-[18px] pt-4 pb-2">
         <ScheduleForm
           idPrefix={prefix}
           value={draft}
@@ -121,6 +121,7 @@ function DefaultsForm({ settings }: { settings: BackupSettings }) {
           errors={errors}
           zone={settings.timeZone}
           disabled={saving}
+          layout="grid"
           fieldRef={(f, el) => {
             refs.current[f] = el
           }}
