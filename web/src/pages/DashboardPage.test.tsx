@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project, Workspace } from '../api/types.gen'
+import { LatestBackupsProvider } from '../app/latestBackups'
 import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
 import { makeBackup, makeDatabase } from '../test/projects'
@@ -71,27 +72,47 @@ const workspaces: Workspace[] = [
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
 
+type Handler = () => Response | Promise<Response>
+
+/** DEFAULTS answers the reads every Dashboard makes besides its projects. */
+const DEFAULTS: Record<string, Handler> = {
+  'GET /api/workspaces': () => json(200, workspaces),
+  'GET /api/server': () => json(200, makeServerInfo()),
+  'GET /api/server/metrics?range=1h': () => json(200, makeSeries({ range: '1h' })),
+  'GET /api/backups/latest': () => json(200, { latest: null, projects: [] }),
+}
+
 /**
- * serve stubs fetch by URL. GET /api/projects answers one entry per call, the
- * last one repeating; the other reads (workspaces, server, server metrics,
- * latest backups) answer by path, so none of them can take a queued projects
- * answer.
+ * route stubs fetch by "METHOD path" (a "POST *" handler takes every POST
+ * the test did not name); the Dashboard's other reads fall back to DEFAULTS
+ * and anything else is a 404.
+ */
+function route(handlers: Record<string, Handler>) {
+  const stub = vi.fn(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    const h =
+      handlers[`${method} ${url}`] ??
+      (method === 'POST' ? handlers['POST *'] : undefined) ??
+      DEFAULTS[`${method} ${url}`]
+    return h ? h() : json(404, { error: `unrouted ${method} ${url}` })
+  })
+  vi.stubGlobal('fetch', stub)
+  return stub
+}
+
+/**
+ * serve answers GET /api/projects one entry per call, the last one
+ * repeating; the other reads answer by path, so none of them can take a
+ * queued projects answer.
  */
 function serve(...answers: Array<[number, unknown]>) {
   let n = 0
-  const fetchStub = vi.fn(async (url: string) => {
-    if (url === '/api/workspaces') return json(200, workspaces)
-    if (url === '/api/server') return json(200, makeServerInfo())
-    if (url.startsWith('/api/server/metrics')) return json(200, makeSeries({ range: '1h' }))
-    if (url === '/api/backups/latest') return json(200, { projects: [] })
-    if (url === '/api/projects') {
+  return route({
+    'GET /api/projects': () => {
       const [status, body] = answers[Math.min(n++, answers.length - 1)]
       return json(status, body)
-    }
-    return json(404, { error: `unrouted ${url}` })
+    },
   })
-  vi.stubGlobal('fetch', fetchStub)
-  return fetchStub
 }
 
 /** gets lists the calls of one GET path. */
@@ -99,6 +120,11 @@ const gets = (stub: ReturnType<typeof vi.fn>, path: string) =>
   stub.mock.calls.filter(
     (c) => c[0] === path && (c[1] as RequestInit | undefined)?.method !== 'POST',
   )
+
+/** card is a project's card in the card view, found by its name. */
+const card = (name: string) => screen.getByRole('article', { name })
+const findCard = (name: string) => screen.findByRole('article', { name })
+const queryCard = (name: string) => screen.queryByRole('article', { name })
 
 /** Where shows the route it is mounted on, so a test can see where the page navigated. */
 function Where() {
@@ -111,16 +137,27 @@ function Where() {
   )
 }
 
-const renderPage = () =>
-  renderApp('/', {
+const renderPage = (entry = '/', page = <DashboardPage />) =>
+  renderApp(entry, {
     routes: [
-      { path: '/', element: <DashboardPage /> },
+      { path: '/', element: page },
       { path: '*', element: <Where /> },
     ],
   })
 
+/** emit sends one live state on the page's /api/events source. */
+function emit(state: unknown) {
+  act(() => {
+    const es = FakeEventSource.latest('/api/events')
+    if (!es) throw new Error('no event source')
+    if (es.readyState === FakeEventSource.CONNECTING) es.open()
+    es.emit('state', state)
+  })
+}
+
 beforeEach(() => {
   sessionStorage.clear()
+  localStorage.clear()
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
 })
@@ -131,98 +168,132 @@ afterEach(() => {
 })
 
 describe('DashboardPage', () => {
-  it('shows the heading and a loading state before the answer', () => {
+  it('shows the heading and skeletons before the answer: six tiles, a bar and six cards', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => new Promise(() => {})),
     )
-    renderPage()
+    const { container } = renderPage()
     expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Loading projects')
+    expect(screen.getByRole('status')).toHaveTextContent('Loading projects…')
+    expect(container.querySelectorAll('[data-skeleton-tile]')).toHaveLength(6)
+    expect(container.querySelectorAll('[data-skeleton-bar]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-skeleton-card]')).toHaveLength(6)
+    expect(container.querySelectorAll('[data-skeleton-row]')).toHaveLength(0)
   })
 
-  it('lists each tracked project with name, path, status and databases', async () => {
+  it('shows three row skeletons in the table view', () => {
+    localStorage.setItem('dashboard.view', 'table')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    )
+    const { container } = renderPage()
+    expect(screen.getByRole('status')).toHaveTextContent('Loading projects…')
+    expect(container.querySelectorAll('[data-skeleton-row]')).toHaveLength(3)
+    expect(container.querySelectorAll('[data-skeleton-card]')).toHaveLength(0)
+  })
+
+  it('composes the server summary, the quick counts, the filters and a card per project', async () => {
     const fetchStub = serve([200, projects])
     renderPage()
 
-    const shop = await screen.findByRole('row', { name: /shop/ })
+    const shop = await findCard('shop')
     expect(gets(fetchStub, '/api/projects')).toHaveLength(1)
-    expect(within(shop).getByText('shop')).toBeInTheDocument()
-    expect(within(shop).getByText('/srv/work/shop')).toBeInTheDocument()
     expect(within(shop).getByText('Running')).toBeInTheDocument()
-    expect(within(shop).getByText('PostgreSQL · container db')).toBeInTheDocument()
-    expect(within(shop).getByText('SQLite · file')).toBeInTheDocument()
     expect(within(shop).queryByText('Monitor only')).toBeNull()
 
-    const panel = screen.getByRole('row', { name: /panel/ })
+    const panel = card('panel')
     expect(within(panel).getByText('Monitor only')).toBeInTheDocument()
-    expect(within(panel).getByText('/srv/work/panel')).toBeInTheDocument()
     expect(within(panel).getByText('Partial')).toBeInTheDocument()
-    expect(within(panel).getByText('None detected')).toBeInTheDocument()
 
-    expect(screen.getAllByRole('columnheader').map((h) => h.textContent?.trim())).toEqual([
-      'Display name',
-      'Path',
-      'Status',
-      'CPU',
-      'RAM',
-      'Database',
-      'Start / Stop',
-    ])
+    expect(await screen.findByRole('article', { name: 'CPU' })).toBeInTheDocument()
+    const counts = screen.getByRole('region', { name: 'Quick counts' })
+    expect(counts).toHaveTextContent('1 running')
+    expect(counts).toHaveTextContent('1 partial')
+    expect(screen.getByRole('group', { name: 'Filter by status' })).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Search projects by name' })).toBeInTheDocument()
+    expect(screen.queryByRole('table')).toBeNull()
   })
 
   it('links the name to the detail page', async () => {
     serve([200, projects])
     renderPage()
-    const shop = await screen.findByRole('row', { name: /shop/ })
+    const shop = await findCard('shop')
     expect(within(shop).getByRole('link', { name: 'shop' })).toHaveAttribute('href', '/projects/1')
-    expect(
-      within(screen.getByRole('row', { name: /panel/ })).getByRole('link', { name: 'panel' }),
-    ).toHaveAttribute('href', '/projects/2')
+    expect(within(card('panel')).getByRole('link', { name: 'panel' })).toHaveAttribute(
+      'href',
+      '/projects/2',
+    )
   })
 
-  it('shows CPU and RAM with bars, and dashes with no bar when null', async () => {
-    const live: Project[] = [
-      { ...projects[0], cpuPercent: 12.4, memBytes: 640 * 1024 * 1024 },
-      projects[1],
-    ]
-    serve([200, live])
-    renderPage()
-    const shop = await screen.findByRole('row', { name: /shop/ })
-    expect(within(shop).getByText('12%')).toBeInTheDocument()
-    expect(within(shop).getByText('640 MB')).toBeInTheDocument()
-    expect(within(shop).getByTestId('cpu-bar')).toHaveStyle({ width: '12.4%' })
-    // 640 MB of the 4 GB range is 15.625 %.
-    expect(within(shop).getByTestId('ram-bar')).toHaveStyle({ width: '15.625%' })
-
-    const panel = screen.getByRole('row', { name: /panel/ })
-    expect(within(panel).getAllByText('—')).toHaveLength(2)
-    expect(within(panel).queryByTestId('cpu-bar')).toBeNull()
-    expect(within(panel).queryByTestId('ram-bar')).toBeNull()
-  })
-
-  it('updates CPU and RAM from a live state without remounting the row', async () => {
+  it('updates CPU and RAM from a live state without remounting the card', async () => {
     serve([200, projects])
     renderPage()
-    const shop = await screen.findByRole('row', { name: /shop/ })
+    const shop = await findCard('shop')
     expect(within(shop).queryByText('12%')).toBeNull()
-    act(() => {
-      const es = FakeEventSource.latest('/api/events')
-      if (!es) throw new Error('no event source')
-      es.open()
-      es.emit('state', {
-        dockerUp: true,
-        projects: [{ ...projects[0], cpuPercent: 12, memBytes: 640 * 1024 * 1024 }, projects[1]],
-      })
+    emit({
+      dockerUp: true,
+      projects: [{ ...projects[0], cpuPercent: 12, memBytes: 640 * 1024 * 1024 }, projects[1]],
     })
-    expect(screen.getByRole('row', { name: /shop/ })).toBe(shop)
+    expect(card('shop')).toBe(shop)
     expect(within(shop).getByText('12%')).toBeInTheDocument()
+    expect(within(shop).getByText('640 MB')).toBeInTheDocument()
+  })
+
+  it('changes the counts with a live state, with no reload', async () => {
+    const fetchStub = serve([200, projects])
+    renderPage()
+    await findCard('shop')
+    const counts = screen.getByRole('region', { name: 'Quick counts' })
+    expect(counts).toHaveTextContent('1 running')
+    expect(counts).toHaveTextContent('0 stopped')
+
+    emit({
+      dockerUp: true,
+      projects: [{ ...projects[0], status: 'stopped', actions: ['start'] }, projects[1]],
+    })
+    expect(counts).toHaveTextContent('0 running')
+    expect(counts).toHaveTextContent('1 stopped')
+    expect(gets(fetchStub, '/api/projects')).toHaveLength(1)
+  })
+
+  it('shows each project its own last backup from the latest backups', async () => {
+    route({
+      'GET /api/projects': () => json(200, projects),
+      'GET /api/backups/latest': () => {
+        const b = {
+          id: 9,
+          projectId: 1,
+          projectName: 'shop',
+          database: 'shop',
+          state: 'failed',
+          at: '2026-10-31T02:00:00Z',
+        }
+        return json(200, { latest: b, projects: [b] })
+      },
+    })
+    renderPage(
+      '/',
+      <LatestBackupsProvider>
+        <DashboardPage />
+      </LatestBackupsProvider>,
+    )
+    await findCard('shop')
+    // Before the read answers there is nothing to say.
+    expect(within(card('shop')).getByTestId('last-backup')).toHaveTextContent('—')
+    emit({ dockerUp: true, projects })
+    await waitFor(() =>
+      expect(within(card('shop')).getByTestId('last-backup')).toHaveTextContent('· failed'),
+    )
+    expect(within(card('panel')).getByTestId('last-backup')).toHaveTextContent('No backups yet')
+    expect(screen.getByRole('region', { name: 'Quick counts' })).toHaveTextContent('Latest backup:')
   })
 
   it('shows docker compose down in the stop dialog for a down template', async () => {
     serve([200, [{ ...projects[0], stopTemplate: 'down' }]])
     renderPage()
-    const shop = await screen.findByRole('row', { name: /shop/ })
+    const shop = await findCard('shop')
     fireEvent.click(within(shop).getByRole('switch', { name: 'Stop shop' }))
     expect(screen.getByRole('dialog')).toHaveTextContent('$ docker compose down · timeout 60s')
   })
@@ -233,25 +304,29 @@ describe('DashboardPage', () => {
     vi.stubGlobal('scrollTo', scrollTo)
     Object.defineProperty(window, 'scrollY', { value: 340, configurable: true })
     const first = renderPage()
-    await screen.findByRole('row', { name: /shop/ })
+    await findCard('shop')
     first.unmount()
     expect(sessionStorage.getItem('dashboard.scrollY')).toBe('340')
 
     renderPage()
-    await screen.findByRole('row', { name: /shop/ })
+    await findCard('shop')
     expect(scrollTo).toHaveBeenCalledWith(0, 340)
     Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
   })
 
-  it('shows the empty state with an Add workspace link to onboarding', async () => {
+  it('shows the empty state with an Add workspace link to onboarding, and no filter bar', async () => {
     serve([200, []])
     renderPage()
     expect(await screen.findByText('No projects yet')).toBeInTheDocument()
     expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.queryByRole('article', { name: 'shop' })).toBeNull()
     expect(screen.getByRole('link', { name: 'Add workspace' })).toHaveAttribute(
       'href',
       '/onboarding',
     )
+    expect(screen.queryByRole('group', { name: 'Filter by status' })).toBeNull()
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(screen.queryByText('No projects match these filters.')).toBeNull()
   })
 
   it('shows an error with a retry that loads again', async () => {
@@ -263,7 +338,7 @@ describe('DashboardPage', () => {
     expect(alert).toHaveTextContent('docker is down')
 
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
-    expect(await screen.findByText('/srv/work/shop')).toBeInTheDocument()
+    expect(await findCard('shop')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(gets(fetchStub, '/api/projects')).toHaveLength(2)
   })
@@ -282,6 +357,180 @@ describe('DashboardPage', () => {
     serve([200, { email: 'someone@example.com' }])
     renderPage()
     expect(await screen.findByRole('alert')).toHaveTextContent('Unexpected response')
+  })
+
+  describe('table view', () => {
+    const row = (name: RegExp) => screen.getByRole('row', { name })
+
+    it('shows the same projects with their controls, in the table columns', async () => {
+      serve([200, [{ ...projects[0], publicDomain: 'shop.vn' }, projects[1]]])
+      renderPage('/?view=table')
+      const shop = await screen.findByRole('row', { name: /shop/ })
+      expect(screen.queryByRole('article', { name: 'shop' })).toBeNull()
+      expect(screen.getAllByRole('columnheader').map((h) => h.textContent?.trim())).toEqual([
+        'Project',
+        'Status',
+        'Domain',
+        'CPU',
+        'RAM',
+        'Uptime',
+        'Last backup',
+        'Start / Stop',
+      ])
+      expect(within(shop).getByRole('link', { name: 'shop' })).toHaveAttribute(
+        'href',
+        '/projects/1',
+      )
+      expect(within(shop).getByRole('link', { name: 'shop.vn' })).toHaveAttribute(
+        'href',
+        'https://shop.vn',
+      )
+      expect(within(shop).getByText('Running')).toBeInTheDocument()
+      expect(within(shop).getByText('Compose')).toBeInTheDocument()
+      expect(within(shop).getByRole('switch', { name: 'Stop shop' })).toBeEnabled()
+      expect(
+        within(shop).getByRole('button', { name: 'More actions for shop' }),
+      ).toBeInTheDocument()
+      expect(within(row(/panel/)).getByText('Monitor only')).toBeInTheDocument()
+      expect(within(row(/panel/)).getByText('No public domain')).toBeInTheDocument()
+    })
+
+    it('runs a stop from a row, through the same confirm', async () => {
+      const stub = route({
+        'GET /api/projects': () => json(200, projects),
+        'POST /api/projects/1/stop': () =>
+          json(200, { outcome: 'ok', status: 'stopped', actions: ['start'], message: '' }),
+      })
+      renderPage('/?view=table')
+      await screen.findByRole('row', { name: /shop/ })
+      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+      expect(await screen.findByTestId('toast-success')).toHaveTextContent('Stopped shop')
+      expect(stub.mock.calls.some((c) => c[0] === '/api/projects/1/stop')).toBe(true)
+      expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument()
+    })
+  })
+
+  describe('filters and views in the URL', () => {
+    const search = () => screen.getByRole('searchbox', { name: 'Search projects by name' })
+    const pressed = (name: string) =>
+      within(screen.getByRole('group', { name: 'Filter by status' }))
+        .getByRole('button', { name: new RegExp(`^${name}`) })
+        .getAttribute('aria-pressed')
+
+    it('reads status and search from the URL and shows only the matching cards', async () => {
+      serve([200, projects])
+      renderPage('/?status=partial&q=PAN')
+      await findCard('panel')
+      expect(queryCard('shop')).toBeNull()
+      expect(pressed('Partial')).toBe('true')
+      expect(search()).toHaveValue('PAN')
+    })
+
+    it('writes a chip to the URL, and the search replacing the entry', async () => {
+      serve([200, projects])
+      const { router } = renderPage()
+      await findCard('shop')
+
+      fireEvent.click(screen.getByRole('button', { name: /^Running/ }))
+      expect(router.state.location.search).toBe('?status=running')
+      expect(router.state.historyAction).toBe('PUSH')
+      expect(queryCard('panel')).toBeNull()
+
+      fireEvent.change(search(), { target: { value: 'sh' } })
+      expect(router.state.location.search).toBe('?status=running&q=sh')
+      expect(router.state.historyAction).toBe('REPLACE')
+      expect(card('shop')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /^All/ }))
+      fireEvent.change(search(), { target: { value: '' } })
+      expect(router.state.location.search).toBe('')
+      expect(card('panel')).toBeInTheDocument()
+    })
+
+    it('keeps status and search when switching to Table and back, and remembers the view', async () => {
+      serve([200, projects])
+      const { router } = renderPage('/?status=running&q=sh')
+      await findCard('shop')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Table' }))
+      const params = () => new URLSearchParams(router.state.location.search)
+      expect(params().get('view')).toBe('table')
+      expect(params().get('status')).toBe('running')
+      expect(params().get('q')).toBe('sh')
+      expect(localStorage.getItem('dashboard.view')).toBe('table')
+      expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+      expect(screen.queryByRole('row', { name: /panel/ })).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cards' }))
+      expect(params().get('view')).toBe('cards')
+      expect(params().get('status')).toBe('running')
+      expect(params().get('q')).toBe('sh')
+      expect(localStorage.getItem('dashboard.view')).toBe('cards')
+      expect(card('shop')).toBeInTheDocument()
+    })
+
+    it('opens the remembered view when the URL names none', async () => {
+      localStorage.setItem('dashboard.view', 'table')
+      serve([200, projects])
+      renderPage()
+      expect(await screen.findByRole('row', { name: /shop/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Table' })).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('lets the URL view win over the remembered one', async () => {
+      localStorage.setItem('dashboard.view', 'table')
+      serve([200, projects])
+      renderPage('/?view=cards')
+      expect(await findCard('shop')).toBeInTheDocument()
+      expect(screen.queryByRole('table')).toBeNull()
+    })
+
+    it('says nothing matches, and Clear filters resets status and search but not the view', async () => {
+      serve([200, projects])
+      const { router } = renderPage('/?status=error&q=zzz&view=table')
+      expect(await screen.findByText('No projects match these filters.')).toBeInTheDocument()
+      expect(screen.queryByRole('table')).toBeNull()
+      // The bar stays, so the filters can be changed.
+      expect(search()).toHaveValue('zzz')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+      expect(router.state.location.search).toBe('?view=table')
+      expect(screen.queryByText('No projects match these filters.')).toBeNull()
+      expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+      expect(screen.getByRole('row', { name: /panel/ })).toBeInTheDocument()
+      expect(search()).toHaveValue('')
+    })
+
+    it('counts every row under the chips whatever is filtered', async () => {
+      serve([200, projects])
+      renderPage('/?q=shop')
+      await findCard('shop')
+      expect(screen.getByRole('button', { name: /^All/ })).toHaveTextContent('All2')
+      expect(screen.getByRole('button', { name: /^Partial/ })).toHaveTextContent('Partial1')
+    })
+
+    it('keeps an in-flight card under its chip until it settles', async () => {
+      let release: (r: Response) => void = () => {}
+      route({
+        'GET /api/projects': () => json(200, projects),
+        'POST /api/projects/1/stop': () => new Promise<Response>((res) => (release = res)),
+      })
+      renderPage('/?status=running')
+      await findCard('shop')
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
+
+      // The overlay's Stopping… row is still one of the rows the filter sees.
+      expect(within(card('shop')).getByText('Stopping…')).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Quick counts' })).toHaveTextContent('0 running')
+
+      await act(async () =>
+        release(json(200, { outcome: 'ok', status: 'stopped', actions: ['start'], message: '' })),
+      )
+      await waitFor(() => expect(queryCard('shop')).toBeNull())
+      expect(screen.getByText('No projects match these filters.')).toBeInTheDocument()
+    })
   })
 
   describe('lifecycle controls', () => {
@@ -307,27 +556,20 @@ describe('DashboardPage', () => {
 
     /** serveActions answers GET /api/projects with the list and each POST with next(). */
     function serveActions(next: () => Promise<Response> | Response, rows: Project[] = list) {
-      const fetchStub = vi.fn(async (url: string, init?: RequestInit) => {
-        if (init?.method === 'POST') return next()
-        if (url === '/api/workspaces') return json(200, workspaces)
-        return new Response(JSON.stringify(rows), { status: 200 })
-      })
-      vi.stubGlobal('fetch', fetchStub)
-      return fetchStub
+      return route({ 'GET /api/projects': () => json(200, rows), 'POST *': next })
     }
     const posts = (stub: ReturnType<typeof vi.fn>) =>
       stub.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'POST')
     const ok = (status: string, outcome = 'ok', message = '', actions: string[] = []) =>
       new Response(JSON.stringify({ outcome, status, actions, message }), { status: 200 })
-    const row = (name: RegExp) => screen.getByRole('row', { name })
 
     it('confirms a stop, cancel sends nothing, confirm posts and shows Stopping then the toast', async () => {
       let release: (r: Response) => void = () => {}
       const stub = serveActions(() => new Promise<Response>((res) => (release = res)))
       renderPage()
-      await screen.findByRole('row', { name: /shop/ })
+      await findCard('shop')
 
-      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
       const dialog = screen.getByRole('dialog')
       expect(within(dialog).getByRole('heading')).toHaveTextContent('Stop shop?')
       expect(dialog).toHaveTextContent(
@@ -339,7 +581,7 @@ describe('DashboardPage', () => {
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(posts(stub)).toHaveLength(0)
 
-      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
       expect(screen.queryByRole('dialog')).toBeNull()
 
@@ -348,20 +590,20 @@ describe('DashboardPage', () => {
       expect(url).toBe('/api/projects/1/stop')
       expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' })
 
-      expect(within(row(/shop/)).getByText('Stopping…')).toBeInTheDocument()
-      expect(within(row(/shop/)).getByRole('switch')).toBeDisabled()
+      expect(within(card('shop')).getByText('Stopping…')).toBeInTheDocument()
+      expect(within(card('shop')).getByRole('switch')).toBeDisabled()
 
       await act(async () => release(ok('stopped')))
       expect(await screen.findByTestId('toast-success')).toHaveTextContent('Stopped shop')
-      expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument()
+      expect(within(card('shop')).getByText('Stopped')).toBeInTheDocument()
     })
 
     it('starts a stopped row at once, with no dialog', async () => {
       const stub = serveActions(() => ok('running'))
       renderPage()
-      await screen.findByRole('row', { name: /blog/ })
+      await findCard('blog')
 
-      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      fireEvent.click(within(card('blog')).getByRole('switch', { name: 'Start blog' }))
       expect(screen.queryByRole('dialog')).toBeNull()
       await waitFor(() => expect(posts(stub)).toHaveLength(1))
       expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/3/start')
@@ -371,17 +613,17 @@ describe('DashboardPage', () => {
     it('restarts an error row at once and asks first for a running row', async () => {
       const stub = serveActions(() => ok('running'))
       renderPage()
-      await screen.findByRole('row', { name: /broken/ })
+      await findCard('broken')
 
       fireEvent.click(
-        within(row(/broken/)).getByRole('button', { name: 'More actions for broken' }),
+        within(card('broken')).getByRole('button', { name: 'More actions for broken' }),
       )
       fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
       expect(screen.queryByRole('dialog')).toBeNull()
       await waitFor(() => expect(posts(stub)).toHaveLength(1))
       expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/4/restart')
 
-      fireEvent.click(within(row(/shop/)).getByRole('button', { name: 'More actions for shop' }))
+      fireEvent.click(within(card('shop')).getByRole('button', { name: 'More actions for shop' }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
       const dialog = screen.getByRole('dialog')
       expect(within(dialog).getByRole('heading')).toHaveTextContent('Restart shop?')
@@ -407,10 +649,10 @@ describe('DashboardPage', () => {
       }
       const stub = serveActions(() => ok('running'), [partialShop])
       renderPage()
-      await screen.findByRole('row', { name: /notes/ })
-      expect(within(row(/notes/)).getByText('Partial')).toBeInTheDocument()
+      await findCard('notes')
+      expect(within(card('notes')).getByText('Partial')).toBeInTheDocument()
 
-      fireEvent.click(within(row(/notes/)).getByRole('button', { name: 'More actions for notes' }))
+      fireEvent.click(within(card('notes')).getByRole('button', { name: 'More actions for notes' }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Restart' }))
       const dialog = screen.getByRole('dialog')
       expect(within(dialog).getByRole('heading')).toHaveTextContent('Restart notes?')
@@ -423,14 +665,14 @@ describe('DashboardPage', () => {
     it('shows a failed result as an alert toast that stays', async () => {
       serveActions(() => ok('running', 'failed', 'port 80 is in use'))
       renderPage()
-      await screen.findByRole('row', { name: /shop/ })
-      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      await findCard('shop')
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
 
       const alert = await screen.findByRole('alert')
       expect(alert).toHaveTextContent("Couldn't stop shop")
       expect(alert).toHaveTextContent('port 80 is in use')
-      expect(within(row(/shop/)).getByText('Running')).toBeInTheDocument()
+      expect(within(card('shop')).getByText('Running')).toBeInTheDocument()
 
       await act(async () => {
         await new Promise((r) => setTimeout(r, 50))
@@ -441,9 +683,9 @@ describe('DashboardPage', () => {
     it('keeps an error toast past 10 seconds', async () => {
       serveActions(() => ok('running', 'timed_out', 'timed out after 60s'))
       renderPage()
-      await screen.findByRole('row', { name: /shop/ })
+      await findCard('shop')
       vi.useFakeTimers({ shouldAdvanceTime: true })
-      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
       await screen.findByRole('alert')
       await act(async () => {
@@ -465,32 +707,29 @@ describe('DashboardPage', () => {
           ),
       )
       renderPage()
-      await screen.findByRole('row', { name: /blog/ })
-      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      await findCard('blog')
+      fireEvent.click(within(card('blog')).getByRole('switch', { name: 'Start blog' }))
       const alert = await screen.findByRole('alert')
       expect(alert).toHaveTextContent("Couldn't start blog")
       expect(alert).toHaveTextContent('shop is busy with another command')
       // The row goes back to what the server last said.
-      expect(within(row(/blog/)).getByText('Stopped')).toBeInTheDocument()
+      expect(within(card('blog')).getByText('Stopped')).toBeInTheDocument()
     })
 
     it('shows a network failure as an error toast', async () => {
-      const stub = vi.fn(async (url: string, init?: RequestInit) => {
-        if (init?.method === 'POST') throw new TypeError('Failed to fetch')
-        if (url === '/api/workspaces') return json(200, workspaces)
-        return new Response(JSON.stringify(list), { status: 200 })
+      serveActions(() => {
+        throw new TypeError('Failed to fetch')
       })
-      vi.stubGlobal('fetch', stub)
       renderPage()
-      await screen.findByRole('row', { name: /blog/ })
-      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      await findCard('blog')
+      fireEvent.click(within(card('blog')).getByRole('switch', { name: 'Start blog' }))
       expect(await screen.findByRole('alert')).toHaveTextContent('Failed to fetch')
     })
 
     it('follows a state event: stopping updates the row and locks the controls', async () => {
       serveActions(() => ok('stopped'))
       renderPage()
-      await screen.findByRole('row', { name: /shop/ })
+      await findCard('shop')
 
       act(() => {
         FakeEventSource.instances[0].emit('state', {
@@ -498,7 +737,7 @@ describe('DashboardPage', () => {
           projects: [{ ...projects[0], status: 'stopping', actions: [] }, projects[1]],
         })
       })
-      const shop = row(/shop/)
+      const shop = card('shop')
       expect(within(shop).getByText('Stopping…')).toBeInTheDocument()
       expect(within(shop).getByRole('switch')).toBeDisabled()
       fireEvent.click(within(shop).getByRole('button', { name: 'More actions for shop' }))
@@ -510,8 +749,8 @@ describe('DashboardPage', () => {
     it('locks the controls of the panel itself with the reason Monitor only', async () => {
       serveActions(() => ok('running'))
       renderPage()
-      await screen.findByRole('row', { name: /panel/ })
-      const panel = row(/panel/)
+      await findCard('panel')
+      const panel = card('panel')
       const sw = within(panel).getByRole('switch')
       expect(sw).toBeDisabled()
       expect(sw).toHaveAttribute('title', 'Monitor only')
@@ -526,14 +765,14 @@ describe('DashboardPage', () => {
     it('gives Docker down as the reason when the hub says so', async () => {
       serveActions(() => ok('running'))
       renderPage()
-      await screen.findByRole('row', { name: /shop/ })
+      await findCard('shop')
       act(() => {
         FakeEventSource.instances[0].emit('state', {
           dockerUp: false,
           projects: [{ ...projects[0], status: 'unknown', actions: [] }],
         })
       })
-      expect(within(row(/shop/)).getByRole('switch')).toHaveAttribute(
+      expect(within(card('shop')).getByRole('switch')).toHaveAttribute(
         'title',
         'Docker is not responding',
       )
@@ -542,33 +781,33 @@ describe('DashboardPage', () => {
     it('drops the pending status on the next state event, or after 5 seconds', async () => {
       serveActions(() => ok('stopped'))
       renderPage()
-      await screen.findByRole('row', { name: /shop/ })
+      await findCard('shop')
 
       // Next state event.
-      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
-      expect(await within(row(/shop/)).findByText('Stopped')).toBeInTheDocument()
+      expect(await within(card('shop')).findByText('Stopped')).toBeInTheDocument()
       act(() => {
         FakeEventSource.instances[0].emit('state', {
           dockerUp: true,
           projects: [{ ...projects[0], status: 'partial', actions: ['start', 'stop', 'restart'] }],
         })
       })
-      expect(within(row(/shop/)).getByText('Partial')).toBeInTheDocument()
+      expect(within(card('shop')).getByText('Partial')).toBeInTheDocument()
 
       // After 5 s with no event, the row falls back to the list it has.
       vi.useFakeTimers({ shouldAdvanceTime: true })
-      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
-      await waitFor(() => expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument())
+      await waitFor(() => expect(within(card('shop')).getByText('Stopped')).toBeInTheDocument())
       await act(async () => {
         vi.advanceTimersByTime(4900)
       })
-      expect(within(row(/shop/)).getByText('Stopped')).toBeInTheDocument()
+      expect(within(card('shop')).getByText('Stopped')).toBeInTheDocument()
       await act(async () => {
         vi.advanceTimersByTime(200)
       })
-      expect(within(row(/shop/)).getByText('Partial')).toBeInTheDocument()
+      expect(within(card('shop')).getByText('Partial')).toBeInTheDocument()
     })
 
     it('does nothing harmful when the answer arrives after the page is gone', async () => {
@@ -576,9 +815,9 @@ describe('DashboardPage', () => {
       serveActions(() => new Promise<Response>((res) => (release = res)))
       const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const { unmount } = renderPage()
-      await screen.findByRole('row', { name: /blog/ })
+      await findCard('blog')
       vi.useFakeTimers({ shouldAdvanceTime: true })
-      fireEvent.click(within(row(/blog/)).getByRole('switch', { name: 'Start blog' }))
+      fireEvent.click(within(card('blog')).getByRole('switch', { name: 'Start blog' }))
       unmount()
       const before = vi.getTimerCount()
       // A failed result shows an error toast, which holds no timer, so any
@@ -593,23 +832,22 @@ describe('DashboardPage', () => {
       let release: (r: Response) => void = () => {}
       serveActions(() => new Promise<Response>((res) => (release = res)))
       renderPage()
-      await screen.findByRole('row', { name: /shop/ })
-      fireEvent.click(within(row(/shop/)).getByRole('switch', { name: 'Stop shop' }))
+      await findCard('shop')
+      fireEvent.click(within(card('shop')).getByRole('switch', { name: 'Stop shop' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
-      fireEvent.click(within(row(/shop/)).getByRole('button', { name: 'More actions for shop' }))
+      fireEvent.click(within(card('shop')).getByRole('button', { name: 'More actions for shop' }))
       for (const name of ['Start', 'Restart']) {
         expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'true')
       }
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
 
       await act(async () => release(ok('stopped', 'ok', '', ['start'])))
-      const sw = within(row(/shop/)).getByRole('switch', { name: 'Start shop' })
+      const sw = within(card('shop')).getByRole('switch', { name: 'Start shop' })
       expect(sw).toBeEnabled()
       expect(sw).not.toHaveAttribute('title')
     })
   })
   describe('workspaces, rescan and stop tracking', () => {
-    type Handler = () => Response | Promise<Response>
     /** gone is a Not found project: its folder disappeared. */
     const gone: Project = {
       ...projects[0],
@@ -621,21 +859,11 @@ describe('DashboardPage', () => {
       databases: [],
       missingSince: '2026-10-30T09:42:00Z',
     }
-    /** route answers by "METHOD path"; anything else is a 404. */
-    function route(handlers: Record<string, Handler>) {
-      const stub = vi.fn(async (url: string, init?: RequestInit) => {
-        const h = handlers[`${init?.method ?? 'GET'} ${url}`]
-        return h ? h() : json(404, { error: 'not found' })
-      })
-      vi.stubGlobal('fetch', stub)
-      return stub
-    }
     const posts = (stub: ReturnType<typeof vi.fn>, url?: string) =>
       stub.mock.calls.filter(
         (c) => (c[1] as RequestInit | undefined)?.method === 'POST' && (!url || c[0] === url),
       )
     const header = () => screen.getByRole('heading', { level: 1 }).parentElement as HTMLElement
-    const row = (name: RegExp) => screen.getByRole('row', { name })
     const where = () => screen.getByTestId('where').firstChild?.textContent
 
     describe('first screen', () => {
@@ -655,7 +883,7 @@ describe('DashboardPage', () => {
           'GET /api/projects': () => json(200, projects),
         })
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
+        await findCard('shop')
         expect(screen.queryByTestId('where')).toBeNull()
         expect(gets(stub, '/api/workspaces')).toHaveLength(1)
       })
@@ -666,7 +894,7 @@ describe('DashboardPage', () => {
           'GET /api/projects': () => json(200, projects),
         })
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
+        await findCard('shop')
         expect(screen.queryByTestId('where')).toBeNull()
         expect(screen.queryByRole('alert')).toBeNull()
         expect(screen.queryByRole('button', { name: 'Rescan' })).toBeNull()
@@ -679,7 +907,7 @@ describe('DashboardPage', () => {
           'GET /api/projects': () => json(200, projects),
         })
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
+        await findCard('shop')
         expect(header()).toHaveTextContent('Tracked projects and their status')
         expect(screen.queryByRole('button', { name: 'Rescan' })).toBeNull()
       })
@@ -786,14 +1014,14 @@ describe('DashboardPage', () => {
       })
     })
 
-    describe('a Not found row', () => {
+    describe('a Not found card', () => {
       it('says since when, and locks the switch', async () => {
         route({
           'GET /api/workspaces': () => json(200, workspaces),
           'GET /api/projects': () => json(200, [projects[0], gone]),
         })
         renderPage()
-        const r = await screen.findByRole('row', { name: /old-api/ })
+        const r = await findCard('old-api')
         expect(within(r).getByText('Not found')).toBeInTheDocument()
         expect(
           within(r).getByText(
@@ -804,7 +1032,7 @@ describe('DashboardPage', () => {
         expect(sw).toBeDisabled()
         expect(sw).toHaveAttribute('title', 'Not allowed while Not found')
         // A found row carries no sentence.
-        expect(within(row(/shop/)).queryByText(/Folder missing/)).toBeNull()
+        expect(within(card('shop')).queryByText(/Folder missing/)).toBeNull()
       })
     })
 
@@ -819,18 +1047,18 @@ describe('DashboardPage', () => {
           'POST /api/projects/1/untrack': untrack,
           'POST /api/projects/6/untrack': untrack,
         })
-      const openMenu = (name: RegExp, label: string) => {
+      const openMenu = (name: string) => {
         fireEvent.click(
-          within(row(name)).getByRole('button', { name: `More actions for ${label}` }),
+          within(card(name)).getByRole('button', { name: `More actions for ${name}` }),
         )
       }
 
       it('asks first, cancel sends nothing, confirm posts JSON, toasts and hides the row', async () => {
         const stub = setup()
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
+        await findCard('shop')
 
-        openMenu(/shop/, 'shop')
+        openMenu('shop')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
         const dialog = screen.getByRole('dialog')
         expect(within(dialog).getByRole('heading')).toHaveTextContent('Stop tracking shop?')
@@ -842,7 +1070,7 @@ describe('DashboardPage', () => {
         expect(screen.queryByRole('dialog')).toBeNull()
         expect(posts(stub)).toHaveLength(0)
 
-        openMenu(/shop/, 'shop')
+        openMenu('shop')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
         const confirm = within(screen.getByRole('dialog')).getByRole('button', {
           name: 'Stop tracking',
@@ -857,39 +1085,39 @@ describe('DashboardPage', () => {
         const [url, init] = posts(stub)[0] as [string, RequestInit]
         expect(url).toBe('/api/projects/1/untrack')
         expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' })
-        expect(screen.queryByRole('row', { name: /shop/ })).toBeNull()
-        expect(screen.getByRole('row', { name: /panel/ })).toBeInTheDocument()
+        expect(queryCard('shop')).toBeNull()
+        expect(card('panel')).toBeInTheDocument()
       })
 
       it('keeps the row gone when the next live state arrives without it', async () => {
         setup()
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
-        openMenu(/shop/, 'shop')
+        await findCard('shop')
+        openMenu('shop')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
         fireEvent.click(
           within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
         )
-        await waitFor(() => expect(screen.queryByRole('row', { name: /shop/ })).toBeNull())
+        await waitFor(() => expect(queryCard('shop')).toBeNull())
 
         // The hub's next state is the truth: without the project it stays gone.
         act(() => {
           FakeEventSource.instances[0].emit('state', { dockerUp: true, projects: [projects[1]] })
         })
-        expect(screen.queryByRole('row', { name: /shop/ })).toBeNull()
-        expect(screen.getByRole('row', { name: /panel/ })).toBeInTheDocument()
+        expect(queryCard('shop')).toBeNull()
+        expect(card('panel')).toBeInTheDocument()
       })
 
       it('shows the row again when a live state brings the project back', async () => {
         setup()
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
-        openMenu(/shop/, 'shop')
+        await findCard('shop')
+        openMenu('shop')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
         fireEvent.click(
           within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
         )
-        await waitFor(() => expect(screen.queryByRole('row', { name: /shop/ })).toBeNull())
+        await waitFor(() => expect(queryCard('shop')).toBeNull())
 
         // A re-tracked project keeps its id; the overlay must not hide it for good.
         act(() => {
@@ -898,19 +1126,19 @@ describe('DashboardPage', () => {
             projects: [projects[0], projects[1]],
           })
         })
-        expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+        expect(card('shop')).toBeInTheDocument()
       })
 
       it('keeps the row hidden when a live state still holds the project with no actions', async () => {
         setup()
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
-        openMenu(/shop/, 'shop')
+        await findCard('shop')
+        openMenu('shop')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
         fireEvent.click(
           within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
         )
-        await waitFor(() => expect(screen.queryByRole('row', { name: /shop/ })).toBeNull())
+        await waitFor(() => expect(queryCard('shop')).toBeNull())
 
         // The store write is still out: the hub shows the project held, with no actions.
         act(() => {
@@ -919,7 +1147,7 @@ describe('DashboardPage', () => {
             projects: [{ ...projects[0], actions: [] }, projects[1]],
           })
         })
-        expect(screen.queryByRole('row', { name: /shop/ })).toBeNull()
+        expect(queryCard('shop')).toBeNull()
 
         // Once it is gone from the state, it stays gone; back with actions, it returns.
         act(() => {
@@ -928,16 +1156,16 @@ describe('DashboardPage', () => {
             projects: [projects[0], projects[1]],
           })
         })
-        expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+        expect(card('shop')).toBeInTheDocument()
       })
 
       it('sends one request however often it is confirmed while it is out', async () => {
         let release: (r: Response) => void = () => {}
         const stub = setup(() => new Promise<Response>((res) => (release = res)))
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
+        await findCard('shop')
         for (let i = 0; i < 2; i++) {
-          openMenu(/shop/, 'shop')
+          openMenu('shop')
           fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
           fireEvent.click(
             within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
@@ -953,9 +1181,9 @@ describe('DashboardPage', () => {
       it('confirms Remove from list for a Not found row with its own words', async () => {
         const stub = setup()
         renderPage()
-        await screen.findByRole('row', { name: /old-api/ })
+        await findCard('old-api')
 
-        openMenu(/old-api/, 'old-api')
+        openMenu('old-api')
         const item = screen.getByRole('menuitem', { name: 'Remove from list' })
         expect(item).toHaveClass('text-danger')
         fireEvent.click(item)
@@ -971,14 +1199,14 @@ describe('DashboardPage', () => {
 
         expect(await screen.findByTestId('toast-success')).toHaveTextContent('Removed old-api')
         expect((posts(stub)[0] as [string])[0]).toBe('/api/projects/6/untrack')
-        expect(screen.queryByRole('row', { name: /old-api/ })).toBeNull()
+        expect(queryCard('old-api')).toBeNull()
       })
 
       it('shows the server text of a 409 in an error toast and keeps the row', async () => {
         setup(() => json(409, { error: 'shop is busy with another command', code: 'locked' }))
         renderPage()
-        await screen.findByRole('row', { name: /shop/ })
-        openMenu(/shop/, 'shop')
+        await findCard('shop')
+        openMenu('shop')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Stop tracking' }))
         fireEvent.click(
           within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop tracking' }),
@@ -988,14 +1216,14 @@ describe('DashboardPage', () => {
         expect(alert).toHaveTextContent("Couldn't stop tracking shop")
         expect(alert).toHaveTextContent('shop is busy with another command')
         expect(screen.queryByTestId('toast-success')).toBeNull()
-        expect(screen.getByRole('row', { name: /shop/ })).toBeInTheDocument()
+        expect(card('shop')).toBeInTheDocument()
       })
 
       it('shows no red item for a row whose actions carry neither', async () => {
         setup()
         renderPage()
-        await screen.findByRole('row', { name: /panel/ })
-        openMenu(/panel/, 'panel')
+        await findCard('panel')
+        openMenu('panel')
         expect(screen.queryByRole('menuitem', { name: 'Stop tracking' })).toBeNull()
         expect(screen.queryByRole('menuitem', { name: 'Remove from list' })).toBeNull()
       })
@@ -1018,22 +1246,18 @@ describe('DashboardPage', () => {
     }
 
     function serveBackup() {
-      const stub = vi.fn(async (url: string, init?: RequestInit) => {
-        if (init?.method === 'POST' && url === '/api/projects/1/backups')
-          return json(202, { id: 7 })
-        if (url === '/api/backups/7') return json(200, makeBackup())
-        if (url === '/api/workspaces') return json(200, workspaces)
-        return json(200, [one, none])
+      return route({
+        'GET /api/projects': () => json(200, [one, none]),
+        'POST /api/projects/1/backups': () => json(202, { id: 7 }),
+        'GET /api/backups/7': () => json(200, makeBackup()),
       })
-      vi.stubGlobal('fetch', stub)
-      return stub
     }
 
     it('starts the backup from the menu and opens its progress', async () => {
       const stub = serveBackup()
       renderPage()
-      const row = await screen.findByRole('row', { name: /shop/ })
-      fireEvent.click(within(row).getByRole('button', { name: 'More actions for shop' }))
+      const shop = await findCard('shop')
+      fireEvent.click(within(shop).getByRole('button', { name: 'More actions for shop' }))
       const item = screen.getByRole('menuitem', { name: 'Back up now' })
       expect(item).not.toHaveAttribute('aria-disabled')
       fireEvent.click(item)
@@ -1047,8 +1271,8 @@ describe('DashboardPage', () => {
     it('disables the item with its reason', async () => {
       const stub = serveBackup()
       renderPage()
-      const row = await screen.findByRole('row', { name: /blog/ })
-      fireEvent.click(within(row).getByRole('button', { name: 'More actions for blog' }))
+      const blog = await findCard('blog')
+      fireEvent.click(within(blog).getByRole('button', { name: 'More actions for blog' }))
       const item = screen.getByRole('menuitem', { name: 'Back up now' })
       expect(item).toHaveAttribute('aria-disabled', 'true')
       expect(item).toHaveAttribute('title', 'No databases detected in this project.')

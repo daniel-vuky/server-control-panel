@@ -1,25 +1,37 @@
-import { FolderPlus, RotateCw } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { FolderPlus, RotateCw, SearchX } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router'
 import { listProjects } from '../api/projects'
 import type { Project, Workspace } from '../api/types.gen'
 import { listWorkspaces } from '../api/workspaces'
+import { useLatestBackups } from '../app/latestBackups'
 import { LiveDim, useLive } from '../app/live'
-import ActionMenu from '../components/ActionMenu'
-import DatabaseCell from '../components/DatabaseCell'
+import EmptyState, { EmptyStateButton, EmptyStateLink } from '../components/EmptyState'
 import LoadError from '../components/LoadError'
-import MonitorOnlyTag from '../components/MonitorOnlyTag'
 import PageHeader from '../components/PageHeader'
-import ProjectSwitch from '../components/ProjectSwitch'
-import StatusBadge from '../components/StatusBadge'
+import Skeleton from '../components/Skeleton'
 import { projectRule } from '../lib/backup'
-import { formatCpu, formatMem } from '../lib/format'
-import type { Status } from '../lib/status'
-import { folderMissing, formatLastScan } from '../lib/time'
-import { type BackupFlow, useBackup } from '../lib/useBackup'
+import { formatLastScan } from '../lib/time'
+import { useBackup } from '../lib/useBackup'
 import { useLoad } from '../lib/useLoad'
 import { useProjectActions } from '../lib/useProjectActions'
 import { useRescan } from '../lib/useRescan'
+import {
+  countByStatus,
+  type Filters,
+  filtersOf,
+  matches,
+  readStoredView,
+  storeView,
+  type View,
+} from './dashboard/filters'
+import { lastBackupOf, latestByProject } from './dashboard/lastBackup'
+import type { ProjectItem } from './dashboard/ProjectCard'
+import ProjectCards from './dashboard/ProjectCards'
+import ProjectFilters from './dashboard/ProjectFilters'
+import ProjectRows from './dashboard/ProjectRows'
+import QuickCounts from './dashboard/QuickCounts'
+import ServerSummary from './dashboard/ServerSummary'
 
 const SCROLL_KEY = 'dashboard.scrollY'
 
@@ -55,14 +67,21 @@ function useScrollMemory(ready: boolean) {
   )
 }
 
-/** DashboardPage is /: the tracked projects as a table (cards come with E3-F08). */
+/**
+ * DashboardPage is / (design 01): the server summary, the quick counts and
+ * the tracked projects as cards or a table, filtered by the URL query
+ * (`status`, `q`, `view`; with no `view`, the remembered one).
+ */
 export default function DashboardPage() {
   const { load, retry } = useLoad(listProjects)
   const live = useLive()
   const actions = useProjectActions()
   const backup = useBackup()
+  const latest = useLatestBackups()
   const navigate = useNavigate()
   const workspaces = useLoad(listWorkspaces).load
+  const [params, setParams] = useSearchParams()
+  const filters = filtersOf(params, params.has('view') ? null : readStoredView())
 
   // No workspace is the first screen: setup. A failed load shows the Dashboard
   // as it is, so there is no redirect loop.
@@ -77,30 +96,93 @@ export default function DashboardPage() {
 
   useScrollMemory(rows !== undefined && rows.length > 0)
 
+  const byProject = useMemo(() => latestByProject(latest.data), [latest.data])
+  const driveState = live.drive?.state
+
+  /**
+   * change writes the filters to the URL: All and an empty search leave the
+   * query, typing replaces the entry, and a chosen view is remembered.
+   */
+  const change = (next: Partial<Filters>) => {
+    if (next.view !== undefined) storeView(next.view)
+    const typing = next.q !== undefined && next.status === undefined && next.view === undefined
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        if (next.status !== undefined) {
+          if (next.status === 'all') p.delete('status')
+          else p.set('status', next.status)
+        }
+        if (next.q !== undefined) {
+          if (next.q === '') p.delete('q')
+          else p.set('q', next.q)
+        }
+        if (next.view !== undefined) p.set('view', next.view)
+        return p
+      },
+      { replace: typing },
+    )
+  }
+
+  const clear = () =>
+    setParams((prev) => {
+      const p = new URLSearchParams(prev)
+      p.delete('status')
+      p.delete('q')
+      return p
+    })
+
+  const item = (p: Project): ProjectItem => {
+    const rule = projectRule(p, driveState)
+    const pending = backup.pendingProjectId === p.id
+    return {
+      project: p,
+      latest: lastBackupOf(byProject, p.id),
+      dockerDown,
+      onStart: () => actions.start(p),
+      onStop: () => actions.stop(p),
+      onRestart: () => actions.restart(p),
+      onUntrack: () => actions.leave(p),
+      backup: {
+        enabled: rule.enabled && !pending,
+        reason: pending ? 'A backup is starting' : rule.reason,
+        onRun: () => backup.start(p),
+      },
+    }
+  }
+
+  const shown = rows?.filter((p) => matches(p, filters))
+  const counts = rows === undefined ? null : countByStatus(rows)
+
   return (
     <section className="flex flex-col gap-[18px]">
       <Header workspaces={workspaces.state === 'ok' ? workspaces.data : null} />
 
       <LiveDim className="flex flex-col gap-[18px]">
-        {rows === undefined && load.state === 'loading' && <Loading />}
+        <ServerSummary />
+        {rows === undefined && load.state === 'loading' && <Loading view={filters.view} />}
         {rows === undefined && load.state === 'error' && (
           <LoadError title="Could not load projects." message={load.message} onRetry={retry} />
         )}
-        {rows !== undefined &&
-          (rows.length === 0 ? (
-            <Empty />
-          ) : (
-            <ProjectTable
-              projects={rows}
-              dockerDown={dockerDown}
-              onStart={actions.start}
-              onStop={actions.stop}
-              onRestart={actions.restart}
-              onUntrack={actions.leave}
-              backup={backup}
-              driveState={live.drive?.state}
-            />
-          ))}
+        {rows !== undefined && counts !== null && (
+          <>
+            <QuickCounts counts={counts} latest={latest.data ? latest.data.latest : undefined} />
+            {rows.length === 0 ? (
+              <Empty />
+            ) : (
+              <>
+                <ProjectFilters filters={filters} counts={counts} onChange={change} />
+                {shown === undefined || shown.length === 0 ? (
+                  <NothingMatches onClear={clear} />
+                ) : filters.view === 'table' ? (
+                  <ProjectRows items={shown.map(item)} />
+                ) : (
+                  <ProjectCards items={shown.map(item)} />
+                )}
+              </>
+            )}
+          </>
+        )}
       </LiveDim>
 
       {actions.dialogs}
@@ -168,209 +250,71 @@ function Header({ workspaces }: { workspaces: Workspace[] | null }) {
   )
 }
 
-function Loading() {
+/**
+ * Loading holds the projects' place (D26): the bar, then six card blocks or
+ * three row blocks. The summary tiles have their own skeletons.
+ */
+function Loading({ view }: { view: View }) {
   return (
-    <div role="status" className="flex flex-col gap-2">
+    <div role="status" className="flex flex-col gap-[18px]">
       <span className="sr-only">Loading projects…</span>
-      {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          aria-hidden="true"
-          className="h-12 animate-pulse rounded-lg border border-border bg-surface"
-        />
-      ))}
+      <div
+        data-skeleton-bar=""
+        aria-hidden="true"
+        className="h-9 w-3/5 animate-scp-pulse rounded-lg bg-surface-2"
+      />
+      {view === 'table' ? (
+        <div className="flex flex-col gap-2">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              data-skeleton-row=""
+              aria-hidden="true"
+              className="h-12 animate-scp-pulse rounded-lg border border-border bg-surface"
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] gap-3.5">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div
+              key={i}
+              data-skeleton-card=""
+              aria-hidden="true"
+              className="box-border flex h-[210px] flex-col gap-3.5 rounded-xl border border-border bg-surface p-[18px]"
+            >
+              <Skeleton className="h-3.5 w-2/5" />
+              <Skeleton className="h-[22px] w-[65%]" />
+              <Skeleton className="h-3 w-1/2" />
+              <div className="mt-auto h-8 animate-scp-pulse rounded-md bg-nav-active" />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
+/** Empty is zero tracked projects: design 10's empty state with a way to add a workspace. */
 function Empty() {
   return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
-      <FolderPlus aria-hidden="true" size={28} strokeWidth={1.6} className="text-muted" />
-      <span className="font-semibold">No projects yet</span>
-      <span className="text-[13px] leading-normal text-muted">
-        Add a workspace and the panel will find the compose projects in it.
-      </span>
-      <Link
-        to="/onboarding"
-        className="flex h-9 items-center rounded-[7px] border border-border-strong px-3.5 text-text"
-      >
-        Add workspace
-      </Link>
-    </div>
+    <EmptyState
+      icon={FolderPlus}
+      title="No projects yet"
+      action={<EmptyStateLink to="/onboarding">Add workspace</EmptyStateLink>}
+    >
+      Add a workspace and the panel will find the compose projects in it.
+    </EmptyState>
   )
 }
 
-type TableProps = {
-  projects: Project[]
-  dockerDown: boolean
-  onStart(p: Project): void
-  onStop(p: Project): void
-  onRestart(p: Project): void
-  onUntrack(p: Project): void
-  backup: BackupFlow
-  driveState: string | undefined
-}
-
-/** backupItem is a row's Back up now menu item: the project's rule, held while its start is out. */
-function backupItem(p: Project, backup: BackupFlow, driveState: string | undefined) {
-  const rule = projectRule(p, driveState)
-  const pending = backup.pendingProjectId === p.id
-  return {
-    enabled: rule.enabled && !pending,
-    reason: pending ? 'A backup is starting' : rule.reason,
-    onRun: () => backup.start(p),
-  }
-}
-
-/** RAM_RANGE is the full RAM bar of design 01: 4 GB. */
-const RAM_RANGE = 4 * 1024 * 1024 * 1024
-
-/** Meter is a live value with the thin bar of design 01; with no value there is no bar. */
-function Meter({
-  label,
-  fraction,
-  color,
-  testId,
-}: {
-  label: string
-  fraction: number | null
-  color: string
-  testId: string
-}) {
+/** NothingMatches is D25: projects exist but none passes the filters. */
+function NothingMatches({ onClear }: { onClear(): void }) {
   return (
-    <span className="flex w-[84px] flex-col gap-1.5">
-      <span className="font-mono text-[13px] tabular-nums">{label}</span>
-      {fraction !== null && (
-        <span aria-hidden="true" className="flex h-[3px] rounded-[2px] bg-border">
-          <span
-            data-testid={testId}
-            className="rounded-[2px]"
-            style={{ width: `${Math.min(Math.max(fraction, 0), 1) * 100}%`, background: color }}
-          />
-        </span>
-      )}
-    </span>
-  )
-}
-
-function ProjectTable({
-  projects,
-  dockerDown,
-  onStart,
-  onStop,
-  onRestart,
-  onUntrack,
-  backup,
-  driveState,
-}: TableProps) {
-  return (
-    <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
-      <table className="w-full min-w-[1000px] border-collapse text-left">
-        <thead>
-          <tr className="border-b border-border text-xs tracking-wider text-muted uppercase">
-            <th scope="col" className="px-4 py-2.5 font-normal">
-              Display name
-            </th>
-            <th scope="col" className="px-3 py-2.5 font-normal">
-              Path
-            </th>
-            <th scope="col" className="px-3 py-2.5 font-normal">
-              Status
-            </th>
-            <th scope="col" className="px-3 py-2.5 font-normal">
-              CPU
-            </th>
-            <th scope="col" className="px-3 py-2.5 font-normal">
-              RAM
-            </th>
-            <th scope="col" className="px-3 py-2.5 font-normal">
-              Database
-            </th>
-            <th scope="col" className="py-2.5 pr-4 pl-3 text-right font-normal">
-              Start / Stop
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {projects.map((p) => (
-            <tr key={p.id} className="border-b border-border align-top last:border-b-0">
-              <td className="px-4 py-3">
-                <span className="flex items-center gap-2">
-                  <Link
-                    to={`/projects/${p.id}`}
-                    className="font-mono font-semibold text-text no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  >
-                    {p.displayName}
-                  </Link>
-                  {p.self && <MonitorOnlyTag />}
-                </span>
-              </td>
-              <td className="px-3 py-3">
-                <span
-                  className="block max-w-[360px] truncate pt-0.5 font-mono text-[12.5px] text-muted"
-                  title={p.path}
-                >
-                  {p.path}
-                </span>
-                {p.status === 'notfound' && (
-                  <span className="mt-1 block text-[13px] text-muted">
-                    {folderMissing(p.missingSince)}
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-3">
-                <StatusBadge status={p.status} />
-              </td>
-              <td className="px-3 py-3">
-                <Meter
-                  label={formatCpu(p.cpuPercent)}
-                  fraction={p.cpuPercent === null ? null : p.cpuPercent / 100}
-                  color="#5AA7FF"
-                  testId="cpu-bar"
-                />
-              </td>
-              <td className="px-3 py-3">
-                <Meter
-                  label={formatMem(p.memBytes)}
-                  fraction={p.memBytes === null ? null : p.memBytes / RAM_RANGE}
-                  color="#F0913A"
-                  testId="ram-bar"
-                />
-              </td>
-              <td className="px-3 py-3 text-[13px]">
-                <span className="flex flex-col">
-                  <DatabaseCell databases={p.databases} />
-                </span>
-              </td>
-              <td className="py-2 pr-4 pl-3">
-                <div className="flex items-center justify-end gap-2.5">
-                  <ProjectSwitch
-                    name={p.displayName}
-                    status={p.status as Status}
-                    actions={p.actions}
-                    self={p.self}
-                    dockerDown={dockerDown}
-                    onStart={() => onStart(p)}
-                    onStop={() => onStop(p)}
-                  />
-                  <ActionMenu
-                    name={p.displayName}
-                    actions={p.actions}
-                    status={p.status}
-                    self={p.self}
-                    dockerDown={dockerDown}
-                    onStart={() => onStart(p)}
-                    onRestart={() => onRestart(p)}
-                    onUntrack={() => onUntrack(p)}
-                    backup={backupItem(p, backup, driveState)}
-                  />
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <EmptyState
+      icon={SearchX}
+      title="No projects match these filters."
+      action={<EmptyStateButton onClick={onClear}>Clear filters</EmptyStateButton>}
+    />
   )
 }
