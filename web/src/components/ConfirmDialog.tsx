@@ -56,7 +56,7 @@ export default function ConfirmDialog({
       </h2>
       <p className="m-0 leading-[1.55] text-text-2">{body}</p>
       {command !== undefined && (
-        <p className="m-0 rounded-lg border border-border bg-[#0f1215] px-3 py-2.5 font-mono text-[12.5px] text-muted">
+        <p className="m-0 rounded-lg border border-border bg-field px-3 py-2.5 font-mono text-[12.5px] text-muted">
           {`$ ${command} · timeout 60s`}
         </p>
       )}

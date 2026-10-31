@@ -29,7 +29,7 @@ type Props = {
   currentWidth?: keyof typeof CURRENT_WIDTH
   /** sub is the words after the value; a live number in it brings its own slot. */
   sub?: ReactNode
-  /** series are one or two lines; a legend names them when there are two. */
+  /** series are one or two lines; a legend key names each. */
   series: ChartSeries[]
   /**
    * max is the scale's top when the data and the threshold stay under it (100
@@ -49,8 +49,14 @@ type Props = {
   from: string
   /** zone is the server zone "History begins" is worded in. */
   zone: TimeZone
-  /** height is the drawing's height in pixels: 180 on the Server page, 120 on a project. */
+  /** height is the drawing's height in pixels: 180 on the Server page, 130 on a project. */
   height: number
+  /**
+   * variant is "full" (the Server page: a y scale, the legend in the header)
+   * or "compact" (design 02's project charts: the value on the title's row,
+   * no y scale, gridlines at 25, 50 and 75 %, the legend in the footer).
+   */
+  variant?: 'full' | 'compact'
 }
 
 const WIDTH = 600
@@ -97,10 +103,34 @@ function historyBegins(iso: string, zone: TimeZone): string | null {
   return `History begins ${weekday} ${day} ${month}, ${p.time}`
 }
 
+/** Legend is the key of each series: its line (dashed for the second of a pair) and its name. */
+function Legend({ series, className }: { series: ChartSeries[]; className: string }) {
+  return (
+    <span data-legend="" className={className}>
+      {series.map((s) => (
+        <span key={s.name} className="flex items-center gap-1.5">
+          <svg aria-hidden="true" width="12" height="2" className="block">
+            <line
+              x1="0"
+              y1="1"
+              x2="12"
+              y2="1"
+              stroke={s.color}
+              strokeWidth="2"
+              strokeDasharray={s.dashed ? '3 2' : undefined}
+            />
+          </svg>
+          {s.name}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 /**
  * MetricChart is a hand-drawn line chart of one or two series over a period
  * (designs 05 and 02, no chart library): the title, current value, sub-line
- * and, for two series, a legend; a y scale (top, middle, 0) whose top is max
+ * and a legend; a y scale (top, middle, 0) whose top is max
  * when it covers the data and the threshold, else a nice value above them; the
  * time axis words of the period (in a grid with the scale, so the axis starts
  * where the drawing does); an area under the first series; a dashed threshold
@@ -110,7 +140,10 @@ function historyBegins(iso: string, zone: TimeZone): string | null {
  * so it stays visible. When the kept history begins inside the period it says
  * so; when nothing was sampled and no history is kept from before the period,
  * it says there is no data yet. A period with no sample but older history is
- * just a gap (a project that was stopped).
+ * just a gap (a project that was stopped). The compact variant (design 02)
+ * puts the value on the title's row, drops the y scale, draws gridlines at 25,
+ * 50 and 75 % and moves the legend into the footer between the period's start
+ * and "now"; the notes about history and missing data are the same.
  */
 export default function MetricChart({
   title,
@@ -127,7 +160,9 @@ export default function MetricChart({
   from,
   zone,
   height,
+  variant = 'full',
 }: Props) {
+  const compact = variant === 'compact'
   const info = rangeInfo(range)
   const n = Math.max(0, ...series.map((s) => s.values.length))
   const step = n > 1 ? WIDTH / (n - 1) : WIDTH
@@ -155,37 +190,134 @@ export default function MetricChart({
       ? `${title} chart, ${names[0]} and ${names[1]}, last ${info.label}`
       : `${title} chart, last ${info.label}`
 
+  const currentValue = (
+    <span
+      data-testid="chart-current"
+      className={`inline-block text-right font-mono text-xl font-semibold tabular-nums ${CURRENT_WIDTH[currentWidth]}`}
+    >
+      {current}
+    </span>
+  )
+
+  const gridLine = (y: number, key: string, className = 'stroke-border') => (
+    <line
+      key={key}
+      x1="0"
+      y1={y}
+      x2={WIDTH}
+      y2={y}
+      className={className}
+      vectorEffect="non-scaling-stroke"
+    />
+  )
+
+  const drawing = (
+    <div className="relative min-w-0">
+      <svg
+        role="img"
+        aria-label={label}
+        viewBox={`0 0 ${WIDTH} ${height}`}
+        preserveAspectRatio="none"
+        className="block w-full"
+        style={{ height }}
+      >
+        {compact ? (
+          [0.25, 0.5, 0.75].map((f) => gridLine(height * f, `g${f}`))
+        ) : (
+          <>
+            {gridLine(PAD, 'top')}
+            {gridLine(height / 2, 'mid')}
+            {gridLine(height - PAD, 'bottom', 'stroke-border-strong')}
+          </>
+        )}
+        {threshold !== undefined && (
+          <line
+            data-threshold=""
+            x1="0"
+            y1={fmt(yOf(threshold))}
+            x2={WIDTH}
+            y2={fmt(yOf(threshold))}
+            stroke={THRESHOLD_COLOR}
+            strokeDasharray="6 4"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+        {series.map((s, si) =>
+          runs(s.values).map((run) => {
+            const pts: Point[] =
+              run.length === 1
+                ? [
+                    [Math.max(0, xOf(run[0][0]) - step / 2), yOf(run[0][1])],
+                    [Math.min(WIDTH, xOf(run[0][0]) + step / 2), yOf(run[0][1])],
+                  ]
+                : run.map(([i, v]) => [xOf(i), yOf(v)])
+            const key = `${s.name}-${run[0][0]}`
+            return (
+              <g key={key}>
+                {si === 0 && (
+                  <polygon
+                    data-area=""
+                    points={`${fmt(pts[0][0])},${height} ${pointsOf(pts)} ${fmt(pts[pts.length - 1][0])},${height}`}
+                    fill={s.color}
+                    fillOpacity={series.length === 1 ? 0.12 : 0.06}
+                  />
+                )}
+                <polyline
+                  data-series={s.name}
+                  points={pointsOf(pts)}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth={s.dashed ? 1.4 : 1.6}
+                  strokeDasharray={s.dashed ? '4 3' : undefined}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </g>
+            )
+          }),
+        )}
+      </svg>
+      {begins && (
+        <span className="pointer-events-none absolute top-1.5 left-2 text-[11px] text-muted">
+          {begins}
+        </span>
+      )}
+      {noData && (
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-[13px] text-muted">
+          No data yet. Samples are taken every 30 seconds.
+        </span>
+      )}
+    </div>
+  )
+
+  if (compact) {
+    return (
+      <div className="flex min-w-0 flex-col gap-2.5 rounded-[10px] border border-border bg-surface p-4">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[13px] text-muted">
+            {title}
+            {sub && <span className="text-[12.5px]">{sub}</span>}
+          </span>
+          {currentValue}
+        </div>
+        {drawing}
+        <div className="flex justify-between gap-2 font-mono text-[11.5px] text-muted">
+          <span>{info.start}</span>
+          <Legend series={series} className="flex gap-3" />
+          <span>now</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-w-0 flex-col gap-2.5 rounded-[10px] border border-border bg-surface px-4 pt-4 pb-3">
       <div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
         <span className="text-sm font-semibold">{title}</span>
-        <span
-          data-testid="chart-current"
-          className={`inline-block text-right font-mono text-xl font-semibold tabular-nums ${CURRENT_WIDTH[currentWidth]}`}
-        >
-          {current}
-        </span>
+        {currentValue}
         {sub && <span className="text-[12.5px] text-muted">{sub}</span>}
-        {series.length === 2 && (
-          <span data-legend="" className="ml-auto flex gap-3 text-xs text-muted">
-            {series.map((s) => (
-              <span key={s.name} className="flex items-center gap-1.5">
-                <svg aria-hidden="true" width="12" height="2" className="block">
-                  <line
-                    x1="0"
-                    y1="1"
-                    x2="12"
-                    y2="1"
-                    stroke={s.color}
-                    strokeWidth="2"
-                    strokeDasharray={s.dashed ? '3 2' : undefined}
-                  />
-                </svg>
-                {s.name}
-              </span>
-            ))}
-          </span>
-        )}
+        <Legend series={series} className="ml-auto flex gap-3 text-xs text-muted" />
       </div>
       {/* A two-column grid, so the time axis starts where the drawing does
           however wide the scale labels are. */}
@@ -199,98 +331,7 @@ export default function MetricChart({
           <span>{formatValue(top / 2)}</span>
           <span>0</span>
         </div>
-        <div className="relative min-w-0">
-          <svg
-            role="img"
-            aria-label={label}
-            viewBox={`0 0 ${WIDTH} ${height}`}
-            preserveAspectRatio="none"
-            className="block w-full"
-            style={{ height }}
-          >
-            <line
-              x1="0"
-              y1={PAD}
-              x2={WIDTH}
-              y2={PAD}
-              className="stroke-border"
-              vectorEffect="non-scaling-stroke"
-            />
-            <line
-              x1="0"
-              y1={height / 2}
-              x2={WIDTH}
-              y2={height / 2}
-              className="stroke-border"
-              vectorEffect="non-scaling-stroke"
-            />
-            <line
-              x1="0"
-              y1={height - PAD}
-              x2={WIDTH}
-              y2={height - PAD}
-              className="stroke-border-strong"
-              vectorEffect="non-scaling-stroke"
-            />
-            {threshold !== undefined && (
-              <line
-                data-threshold=""
-                x1="0"
-                y1={fmt(yOf(threshold))}
-                x2={WIDTH}
-                y2={fmt(yOf(threshold))}
-                stroke={THRESHOLD_COLOR}
-                strokeDasharray="6 4"
-                vectorEffect="non-scaling-stroke"
-              />
-            )}
-            {series.map((s, si) =>
-              runs(s.values).map((run) => {
-                const pts: Point[] =
-                  run.length === 1
-                    ? [
-                        [Math.max(0, xOf(run[0][0]) - step / 2), yOf(run[0][1])],
-                        [Math.min(WIDTH, xOf(run[0][0]) + step / 2), yOf(run[0][1])],
-                      ]
-                    : run.map(([i, v]) => [xOf(i), yOf(v)])
-                const key = `${s.name}-${run[0][0]}`
-                return (
-                  <g key={key}>
-                    {si === 0 && (
-                      <polygon
-                        data-area=""
-                        points={`${fmt(pts[0][0])},${height} ${pointsOf(pts)} ${fmt(pts[pts.length - 1][0])},${height}`}
-                        fill={s.color}
-                        fillOpacity={series.length === 1 ? 0.12 : 0.06}
-                      />
-                    )}
-                    <polyline
-                      data-series={s.name}
-                      points={pointsOf(pts)}
-                      fill="none"
-                      stroke={s.color}
-                      strokeWidth={s.dashed ? 1.4 : 1.6}
-                      strokeDasharray={s.dashed ? '4 3' : undefined}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      vectorEffect="non-scaling-stroke"
-                    />
-                  </g>
-                )
-              }),
-            )}
-          </svg>
-          {begins && (
-            <span className="pointer-events-none absolute top-1.5 left-2 text-[11px] text-muted">
-              {begins}
-            </span>
-          )}
-          {noData && (
-            <span className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-[13px] text-muted">
-              No data yet. Samples are taken every 30 seconds.
-            </span>
-          )}
-        </div>
+        {drawing}
         <span aria-hidden="true" />
         <div className="flex justify-between font-mono text-[11px] text-muted">
           <span>{info.start}</span>

@@ -62,7 +62,7 @@ export default function BackupChooser({
             <label
               key={db.key}
               className={`flex items-center gap-3 rounded-lg border p-3 ${
-                checked ? 'border-accent bg-[#0f141b]' : 'border-border-strong'
+                checked ? 'border-accent bg-info-surface' : 'border-border-strong'
               } ${rule.enabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
             >
               <input

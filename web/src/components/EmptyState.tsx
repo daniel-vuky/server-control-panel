@@ -1,6 +1,8 @@
-import type { LucideIcon } from 'lucide-react'
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, ComponentType, ReactNode } from 'react'
 import { Link, type LinkProps } from 'react-router'
+
+/** An icon the card draws: a lucide icon, or a hand-drawn one such as the cloud of CloudUploadIcon (both hide themselves from assistive tech). */
+type IconType = ComponentType<{ size: number; strokeWidth: number; className?: string }>
 
 const secondary =
   'inline-flex h-9 cursor-pointer items-center justify-center rounded-[7px] border border-border-strong bg-surface-2 px-3.5 text-text disabled:cursor-not-allowed disabled:opacity-60'
@@ -12,18 +14,23 @@ export default function EmptyState({
   children,
   action,
   titleAs: Title = 'h2',
+  titleId,
 }: {
-  icon: LucideIcon
-  title: string
+  icon: IconType
+  title: ReactNode
   children?: ReactNode
   action?: ReactNode
   /** The heading level of the title; a page that has no other h1 passes 'h1'. */
   titleAs?: 'h1' | 'h2'
+  /** An id for the title, for a section that names itself by it. */
+  titleId?: string
 }) {
   return (
     <div className="flex min-h-[220px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong p-5 text-center">
-      <Icon aria-hidden="true" size={44} strokeWidth={1.4} className="text-[#4a515c]" />
-      <Title className="m-0 text-sm font-semibold">{title}</Title>
+      <Icon size={44} strokeWidth={1.4} className="text-icon-muted" />
+      <Title id={titleId} className="m-0 text-sm font-semibold">
+        {title}
+      </Title>
       {children ? <p className="m-0 text-[13px] leading-normal text-muted">{children}</p> : null}
       {action}
     </div>
@@ -41,5 +48,5 @@ export function EmptyStateButton({
 
 /** EmptyStateLink is the same button as a router link. */
 export function EmptyStateLink({ className = '', ...rest }: LinkProps) {
-  return <Link className={`${secondary} no-underline ${className}`} {...rest} />
+  return <Link className={`${secondary} ${className}`} {...rest} />
 }

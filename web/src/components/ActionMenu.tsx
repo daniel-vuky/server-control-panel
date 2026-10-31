@@ -27,6 +27,13 @@ type Props = {
 const itemClass =
   'flex h-9 items-center gap-2.5 rounded-md border-0 bg-transparent px-2.5 text-left no-underline hover:bg-menu-hover focus-visible:bg-menu-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent'
 
+/** activateOnSpace makes Space follow a link item, as it presses a button item (a link only answers Enter). */
+const activateOnSpace = (event: React.KeyboardEvent<HTMLElement>) => {
+  if (event.key !== ' ') return
+  event.preventDefault()
+  event.currentTarget.click()
+}
+
 /** icon is design 09's 15 px menu icon. */
 const icon = (Icon: typeof Play) => <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
 
@@ -223,6 +230,7 @@ export default function ActionMenu({
                     to={logsHref}
                     role="menuitem"
                     onClick={() => close(true)}
+                    onKeyDown={activateOnSpace}
                     className={`${itemClass} cursor-pointer text-text`}
                   >
                     {icon(ScrollText)}
@@ -231,15 +239,19 @@ export default function ActionMenu({
                 )
               ) : null}
               {detailsHref !== undefined && (
-                <Link
-                  to={detailsHref}
-                  role="menuitem"
-                  onClick={() => close(true)}
-                  className={`${itemClass} cursor-pointer text-text`}
-                >
-                  {icon(ExternalLink)}
-                  Open details
-                </Link>
+                <>
+                  <hr className="mx-1.5 my-1 h-px border-0 bg-border-strong" />
+                  <Link
+                    to={detailsHref}
+                    role="menuitem"
+                    onClick={() => close(true)}
+                    onKeyDown={activateOnSpace}
+                    className={`${itemClass} cursor-pointer text-text`}
+                  >
+                    {icon(ExternalLink)}
+                    Open details
+                  </Link>
+                </>
               )}
               {danger !== null && (
                 <>

@@ -3,7 +3,7 @@ import { type ContainerTone, containerTone } from '../lib/containers'
 
 const looks: Record<ContainerTone, { text: string; dot: string }> = {
   ok: { text: 'text-success', dot: 'bg-success' },
-  failed: { text: 'text-[#ff8c8f]', dot: 'bg-danger' },
+  failed: { text: 'text-danger-text', dot: 'bg-danger' },
   stopped: { text: 'text-stopped', dot: 'bg-stopped' },
 }
 

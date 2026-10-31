@@ -71,7 +71,7 @@ export default function ServicesCard({
         <div
           key={s.name}
           data-testid={`service-${s.name}`}
-          className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-[#0F1215] p-3"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-field p-3"
         >
           <span aria-hidden="true" className={`size-2 flex-none rounded-full ${DOT[s.tone]}`} />
           <span className="font-medium">{s.name}</span>

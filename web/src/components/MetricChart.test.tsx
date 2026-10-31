@@ -35,7 +35,7 @@ const lines = (c: HTMLElement, name: string) =>
 describe('MetricChart', () => {
   it('shows the title, the current value and the sub-line', () => {
     chart()
-    expect(screen.getByText('CPU')).toBeInTheDocument()
+    expect(screen.getAllByText('CPU')[0]).toHaveClass('font-semibold')
     expect(screen.getByText('34%')).toBeInTheDocument()
     expect(screen.getByText('average of 4 vCPU · threshold 90%')).toBeInTheDocument()
   })
@@ -197,9 +197,74 @@ describe('MetricChart', () => {
     expect(lines(container, 'Write')[0]).toHaveAttribute('stroke', '#F0913A')
   })
 
-  it('has no legend for one series', () => {
+  it('shows the key for one series too', () => {
     const { container } = chart()
-    expect(container.querySelector('[data-legend]')).toBeNull()
+    const legend = container.querySelector('[data-legend]')
+    expect(legend).not.toBeNull()
+    expect(legend).toHaveTextContent('CPU')
+    expect(legend?.querySelector('line')).toHaveAttribute('stroke', '#5AA7FF')
+    expect(legend?.querySelector('line')).not.toHaveAttribute('stroke-dasharray')
+  })
+
+  describe('compact variant (design 02)', () => {
+    const compact = (props: Partial<ComponentProps<typeof MetricChart>> = {}) =>
+      chart({ variant: 'compact', height: 130, range: '1h', ...props })
+
+    it('has no y-scale labels and gridlines at 25, 50 and 75 percent', () => {
+      const { container } = compact({ formatValue: (v) => `scale ${v}` })
+      expect(screen.queryByText(/^scale /)).toBeNull()
+      expect(screen.queryByText('0')).toBeNull()
+      const ys = Array.from(container.querySelectorAll('svg[role="img"] line')).map((l) =>
+        l.getAttribute('y1'),
+      )
+      expect(ys).toEqual(['32.5', '65', '97.5'])
+    })
+
+    it('puts the label and the value on one row, muted and normal weight', () => {
+      compact()
+      const value = screen.getByTestId('chart-current')
+      expect(value).toHaveTextContent('34%')
+      expect(value.parentElement).toHaveClass('justify-between')
+      const label = screen.getAllByText('CPU')[0]
+      expect(label).toHaveClass('text-[13px]', 'text-muted')
+      expect(label).not.toHaveClass('font-semibold')
+    })
+
+    it('shows start, the legend and now in the footer', () => {
+      const { container } = compact({
+        series: [cpu([1, 2]), { name: 'Out', values: [1, 2], color: '#F0913A', dashed: true }],
+      })
+      const legend = container.querySelector('[data-legend]') as HTMLElement
+      const footer = legend.parentElement as HTMLElement
+      expect(footer).toHaveClass('text-[11.5px]', 'justify-between')
+      expect(Array.from(footer.children).map((c) => c.textContent)).toEqual([
+        '−60 min',
+        'CPUOut',
+        'now',
+      ])
+    })
+
+    it('keeps the fixed-width current value', () => {
+      compact({ currentWidth: 5 })
+      expect(screen.getByTestId('chart-current')).toHaveClass('min-w-[5ch]', 'text-right')
+    })
+
+    it('still says there is no data yet', () => {
+      compact({ series: [cpu([null, null])], historyStart: null })
+      expect(
+        screen.getByText('No data yet. Samples are taken every 30 seconds.'),
+      ).toBeInTheDocument()
+    })
+
+    it('still says where the kept history begins', () => {
+      compact({
+        series: [cpu([null, null, 20, 30])],
+        historyStart: '2025-10-28T07:00:00Z',
+        from: '2025-10-27T07:05:00Z',
+        zone: SAIGON,
+      })
+      expect(screen.getByText('History begins Tue 28 Oct, 14:00')).toBeInTheDocument()
+    })
   })
 
   it('says where the kept history begins, in the server zone', () => {

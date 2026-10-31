@@ -75,6 +75,21 @@ describe('ServerPage', () => {
     expect(screen.getByText('Loading the server…')).toBeInTheDocument()
   })
 
+  it("holds the charts' place with skeleton cards while a period loads", async () => {
+    serve({ series: () => new Promise<Response>(() => {}) as unknown as Response })
+    renderPage()
+    const section = await screen.findByRole('region', { name: 'Resource charts' })
+    expect(within(section).getAllByRole('status', { name: 'Loading' })).toHaveLength(4)
+  })
+
+  it("holds the usage table's place with a skeleton card while it loads", async () => {
+    const stub = serve({ usage: () => new Promise<Response>(() => {}) as unknown as Response })
+    renderPage()
+    await screen.findByRole('region', { name: 'Resource charts' })
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+    expect(calls(stub, '/api/server/usage')).toHaveLength(1)
+  })
+
   it('has the header line with hostname, cores, RAM, root disk and the sampling', async () => {
     serve()
     renderPage()

@@ -19,11 +19,29 @@ describe('EmptyState', () => {
     expect(screen.getByText('Try a deeper scan.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Scan again' })).toBeTruthy()
     expect(container.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('svg')).toHaveClass('text-icon-muted')
   })
 
   it('renders the title as a level 1 heading when asked', () => {
     render(<EmptyState icon={Search} title="Page not found" titleAs="h1" />)
     expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeTruthy()
+  })
+
+  it('takes a node as the title and an id for it', () => {
+    render(
+      <EmptyState
+        icon={Search}
+        titleId="t"
+        title={
+          <>
+            No project in <span className="font-mono">/srv</span>.
+          </>
+        }
+      />,
+    )
+    const title = screen.getByRole('heading', { level: 2, name: 'No project in /srv.' })
+    expect(title).toHaveAttribute('id', 't')
+    expect(screen.getByText('/srv')).toHaveClass('font-mono')
   })
 
   it('works without a line or an action', () => {
@@ -43,5 +61,6 @@ describe('EmptyState', () => {
       </MemoryRouter>,
     )
     expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe('/')
+    expect(screen.getByRole('link', { name: 'Back' })).not.toHaveClass('no-underline')
   })
 })

@@ -38,7 +38,7 @@ function Banner() {
   return (
     <div
       role="alert"
-      className="mb-[22px] flex flex-wrap items-center gap-3 rounded-[10px] border border-[#5c4a1e] bg-[#221c0e] px-4 py-3 text-[#f7e2a6]"
+      className="mb-[22px] flex flex-wrap items-center gap-3 rounded-[10px] border border-warning-border bg-warning-bg px-4 py-3 text-warning-soft"
     >
       <TriangleAlert
         aria-hidden="true"
@@ -53,7 +53,7 @@ function Banner() {
         type="button"
         disabled={busy}
         onClick={() => void reconnect()}
-        className="ml-auto flex h-[34px] flex-none cursor-pointer items-center rounded-[7px] border border-[#8a6d1e] bg-transparent px-3.5 font-semibold text-[#f7e2a6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+        className="ml-auto flex h-[34px] flex-none cursor-pointer items-center rounded-[7px] border border-warning-strong bg-transparent px-3.5 font-semibold text-warning-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
       >
         Reconnect Google Drive
       </button>

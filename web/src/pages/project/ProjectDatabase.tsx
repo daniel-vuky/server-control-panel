@@ -87,11 +87,11 @@ function DatabaseItem({ db, project, flow, active }: ItemProps) {
   // A SQLite file has no password; every other kind keeps it out of the panel.
   const hasPassword = db.type !== 'sqlite'
   return (
-    <li className="flex flex-col gap-2.5 rounded-lg border border-border bg-[#0f1215] p-3">
+    <li className="flex flex-col gap-2.5 rounded-lg border border-border bg-field p-3">
       <div className="flex flex-wrap items-center gap-3">
         <span
           aria-hidden="true"
-          className="flex size-9 flex-none items-center justify-center rounded-lg bg-[#172433] text-[#7fb8ff]"
+          className="flex size-9 flex-none items-center justify-center rounded-lg bg-[#172433] text-accent-text"
         >
           <DatabaseIcon size={18} strokeWidth={1.8} />
         </span>
@@ -119,7 +119,7 @@ function DatabaseItem({ db, project, flow, active }: ItemProps) {
         <button
           type="button"
           onClick={() => flow.open(active.id)}
-          className="flex w-full cursor-pointer items-center rounded-md border border-[#22344a] bg-[#0f141b] px-3 py-2 text-left hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="flex w-full cursor-pointer items-center rounded-md border border-info-border bg-info-surface px-3 py-2 text-left hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <BackupSteps backup={active} compact />
         </button>

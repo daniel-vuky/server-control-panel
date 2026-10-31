@@ -1,4 +1,4 @@
-import { Check, CircleAlert } from 'lucide-react'
+import { Check, CircleAlert, TriangleAlert } from 'lucide-react'
 import { type FormEvent, useEffect, useId, useState } from 'react'
 import {
   connectDrive,
@@ -25,9 +25,9 @@ import { usePageRestore } from '../../lib/usePageRestore'
 const buttonBase =
   'flex h-9 cursor-pointer items-center gap-2 rounded-[7px] px-3.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 const neutralButton = `${buttonBase} border border-border-strong bg-surface-2 text-text`
-const dangerButton = `${buttonBase} border border-[#6B262C] bg-transparent text-[#FF8C8F]`
+const dangerButton = `${buttonBase} border border-danger-border bg-transparent text-danger-text`
 const INPUT =
-  'box-border h-[38px] w-full min-w-0 rounded-[7px] border border-border-strong bg-[#0f1215] px-2.5 font-mono text-[13px] text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+  'box-border h-[38px] w-full min-w-0 rounded-[7px] border border-border-strong bg-field px-2.5 font-mono text-[13px] text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 /** The select value of "+ Create new folder…". */
 const CREATE = '__create__'
@@ -134,7 +134,7 @@ function NotConfigured({ status }: { status: DriveStatus }) {
         href={DOCS_URL}
         target="_blank"
         rel="noreferrer"
-        className="w-fit text-accent underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="w-fit text-text-2 underline hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         How to set up Google Drive
       </a>
@@ -164,12 +164,17 @@ function Connect({ expired }: { expired: boolean }) {
   return (
     <div className="flex flex-col gap-3 px-[18px] py-4">
       {expired && (
-        <div className="flex flex-col gap-1">
-          <p role="alert" className="m-0 flex items-center gap-[7px] text-[13px] text-danger">
-            <CircleAlert aria-hidden="true" size={15} strokeWidth={2} className="flex-none" />
+        <div className="flex flex-col gap-1.5 rounded-lg border border-warning-border bg-warning-bg px-4 py-3 text-warning-soft">
+          <p role="alert" className="m-0 flex items-center gap-3 text-[13px]">
+            <TriangleAlert
+              aria-hidden="true"
+              size={18}
+              strokeWidth={2}
+              className="flex-none text-warning"
+            />
             The Google Drive token has expired. Backups will fail until you reconnect.
           </p>
-          <p className="m-0 text-[12px] text-muted">{TESTING_NOTE}</p>
+          <p className="m-0 text-[12px]">{TESTING_NOTE}</p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-3">
@@ -367,7 +372,7 @@ function Connected({
                     setName(e.target.value)
                     setNameError(null)
                   }}
-                  className={`${INPUT} ${nameError ? 'border-danger' : ''}`}
+                  className={`${INPUT} ${nameError ? 'border-field-error' : ''}`}
                 />
                 <button
                   type="submit"

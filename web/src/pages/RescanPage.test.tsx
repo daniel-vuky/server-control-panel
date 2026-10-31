@@ -181,7 +181,9 @@ describe('rescan page, progress', () => {
   it('redirects a first-scan job to onboarding, which takes over the scan from the state', async () => {
     api(jobRoute(job({ rescan: false, workspaceIds: [], path: '/srv', depth: 2 })))
     renderAt()
-    expect(await screen.findByRole('heading', { level: 1, name: 'Add a workspace' })).toBeVisible()
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Add project folder' }),
+    ).toBeVisible()
     // Onboarding shows the running scan: its own watch, the job's path and
     // depth, locked inputs, and no new scan posted.
     await waitFor(() =>
@@ -200,7 +202,7 @@ describe('rescan page, progress', () => {
     api(jobRoute(job({ rescan: false, workspaceIds: [], path: '/srv', depth: 1 })))
     renderAt()
     const es = await eventSource()
-    await screen.findByRole('heading', { level: 1, name: 'Add a workspace' })
+    await screen.findByRole('heading', { level: 1, name: 'Add project folder' })
     expect(es.closed).toBe(true)
   })
 
@@ -368,6 +370,17 @@ describe('rescan page, failure', () => {
     await waitFor(() =>
       expect(StubEventSource.instances.map((s) => s.url)).toContain('/api/scans/8/events'),
     )
+  })
+
+  it('shows the banner and Retry with no card around them', async () => {
+    await toEnd(failed({ workspaceIds: [5] }))
+    const banner = (await screen.findByText('docker is not reachable')).closest('[role="alert"]')
+    expect(banner).toHaveClass('bg-error-bg')
+    const title = screen.getByRole('heading', { level: 1, name: 'Rescan' })
+    expect(title.parentElement).not.toHaveClass('border')
+    expect(title.parentElement).not.toHaveClass('bg-surface')
+    // The same size as the results step's h1.
+    expect(title).toHaveClass('text-xl')
   })
 
   it('Retry rescans everything when the job covered several workspaces', async () => {

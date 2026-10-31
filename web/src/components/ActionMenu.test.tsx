@@ -308,6 +308,49 @@ describe('ActionMenu', () => {
       )
     })
 
+    it('puts a separator before Open details, which the arrow keys skip', () => {
+      withLinks()
+      const details = screen.getByRole('menuitem', { name: 'Open details' })
+      const logs = screen.getByRole('menuitem', { name: 'View logs' })
+      const seps = screen.getAllByRole('separator')
+      expect(seps).toHaveLength(2)
+      expect(seps[0]).toBe(details.previousElementSibling)
+      expect(seps[0]).toBe(logs.nextElementSibling)
+      logs.focus()
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+      expect(details).toHaveFocus()
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' })
+      expect(logs).toHaveFocus()
+    })
+
+    it('has no separator before Open details without it', () => {
+      withLinks({ links: false })
+      expect(screen.getAllByRole('separator')).toHaveLength(1)
+    })
+
+    it('Space on a focused link item follows it and closes the menu', () => {
+      withLinks()
+      const details = screen.getByRole('menuitem', { name: 'Open details' })
+      details.focus()
+      fireEvent.keyDown(details, { key: ' ' })
+      expect(screen.getByTestId('where')).toHaveTextContent('/projects/7')
+      expect(screen.queryByRole('menu')).toBeNull()
+    })
+
+    it('Space on View logs follows it', () => {
+      withLinks()
+      const logs = screen.getByRole('menuitem', { name: 'View logs' })
+      fireEvent.keyDown(logs, { key: ' ' })
+      expect(screen.getByTestId('where')).toHaveTextContent('/projects/7/logs')
+    })
+
+    it('Space on a disabled View logs does nothing', () => {
+      withLinks({ logsDisabledReason: 'The project folder is missing' })
+      fireEvent.keyDown(screen.getByRole('menuitem', { name: 'View logs' }), { key: ' ' })
+      expect(screen.getByTestId('where').textContent).toBe('/')
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+    })
+
     it('arrow keys move through the link items too', () => {
       withLinks()
       const menu = screen.getByRole('menu')

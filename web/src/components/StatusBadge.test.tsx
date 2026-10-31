@@ -40,4 +40,33 @@ describe('StatusBadge', () => {
     render(<StatusBadge status="weird" />)
     expect(screen.getByText('Unknown')).toBeInTheDocument()
   })
+
+  it('plain is the dot and the word in the status colour, with no pill and no ring', () => {
+    const { container } = render(<StatusBadge status="running" variant="plain" />)
+    const badge = container.firstElementChild as HTMLElement
+    expect(screen.getByText('Running')).toBeInTheDocument()
+    expect(badge).toHaveClass('text-success', 'text-[13px]')
+    expect(badge.className).not.toMatch(/\bbg-/)
+    expect(badge).not.toHaveClass('rounded-full')
+    const dot = container.querySelector('[aria-hidden="true"]') as HTMLElement
+    expect(dot).toHaveClass('size-[7px]', 'bg-success')
+    expect(dot.className).not.toMatch(/shadow-/)
+  })
+
+  it('pill keeps its tint and ring', () => {
+    const { container } = render(<StatusBadge status="running" />)
+    const badge = container.firstElementChild as HTMLElement
+    expect(badge).toHaveClass('rounded-full', 'bg-[rgba(63,207,142,0.12)]')
+    expect(container.querySelector('[aria-hidden="true"]')?.className).toMatch(/shadow-/)
+  })
+
+  it('plain in flight shows the spinner, with no pill and no ring', () => {
+    const { container } = render(<StatusBadge status="starting" variant="plain" />)
+    const badge = container.firstElementChild as HTMLElement
+    expect(screen.getByText('Starting…')).toBeInTheDocument()
+    expect(screen.getByTestId('status-spinner')).toBeInTheDocument()
+    expect(badge).toHaveClass('text-accent', 'text-[13px]')
+    expect(badge.className).not.toMatch(/\bbg-/)
+    expect(container.innerHTML).not.toMatch(/shadow-/)
+  })
 })

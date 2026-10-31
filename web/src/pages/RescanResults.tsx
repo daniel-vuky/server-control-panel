@@ -15,7 +15,7 @@ type Props = {
 /** NewTag is the "New" tag of design 10. */
 function NewTag() {
   return (
-    <span className="flex-none rounded-[4px] bg-[#1E3A2D] px-[7px] py-px text-[11.5px] text-[#8FE3B9]">
+    <span className="flex-none rounded-[4px] bg-success-bg px-[7px] py-px text-[11.5px] text-success-text">
       New
     </span>
   )
@@ -71,9 +71,9 @@ export default function RescanResults({ job, busy, error, onAdd, onBack }: Props
       className="flex w-full max-w-[980px] flex-col rounded-[14px] border border-border bg-surface"
     >
       <div className="flex flex-col gap-1.5 px-6 pt-6 pb-[18px]">
-        <h2 id="results-title" className="text-xl font-semibold tracking-tight">
+        <h1 id="results-title" className="m-0 text-xl font-semibold tracking-tight">
           Rescan results
-        </h2>
+        </h1>
         <p className="text-text-2">{summaryLine(result)}</p>
         <Summary job={job} result={result} where={false} />
         {ignored.length > 0 && (

@@ -5,7 +5,7 @@ import { getScan, isScanBusy, trackScan, watchScan } from '../api/scans'
 import type { ScanJob, ScanProgress, ScanResult, TrackItem } from '../api/types.gen'
 import { startRescan } from '../api/workspaces'
 import { LiveDim } from '../app/live'
-import { BadgeRow } from '../components/PageHeader'
+import { BrandRow } from '../components/PageHeader'
 import { useToast } from '../components/Toast'
 import { plural } from '../lib/plural'
 import ScanFailed from './onboarding/ScanFailed'
@@ -41,6 +41,19 @@ const isNotFound = (err: unknown) => err instanceof ApiError && err.status === 4
 /** retryScope is the workspace to rescan again: the job's only one, else all (0). */
 const retryScope = (job: ScanJob | null) =>
   job?.workspaceIds.length === 1 ? job.workspaceIds[0] : 0
+
+/**
+ * Plain holds the scanning, failed and not-found boxes: the page's h1 and the
+ * box, with no card around it (the box is its own border).
+ */
+function Plain({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex w-full max-w-[640px] flex-col gap-4">
+      <h1 className="m-0 text-xl font-semibold tracking-tight">Rescan</h1>
+      {children}
+    </div>
+  )
+}
 
 /** RescanPage is /rescan/:id: the progress and results of a rescan (not in the nav). */
 export default function RescanPage() {
@@ -170,13 +183,13 @@ function Rescan({ id }: { id: number }) {
   let body: ReactNode = null
   if (phase.kind === 'scanning') {
     body = (
-      <div className="flex w-full max-w-[640px] flex-col gap-4 rounded-[14px] border border-border bg-surface p-6">
+      <Plain>
         <ScanProgressView progress={progress} />
-      </div>
+      </Plain>
     )
   } else if (phase.kind === 'invalid') {
     body = (
-      <div className="flex w-full max-w-[640px] flex-col gap-4 rounded-[14px] border border-border bg-surface p-6">
+      <Plain>
         <p role="alert" className="text-[13px] text-text">
           This rescan was not found.
         </p>
@@ -187,11 +200,11 @@ function Rescan({ id }: { id: number }) {
         >
           Back to Dashboard
         </button>
-      </div>
+      </Plain>
     )
   } else if (phase.kind === 'failed') {
     body = (
-      <div className="flex w-full max-w-[640px] flex-col gap-4 rounded-[14px] border border-border bg-surface p-6">
+      <Plain>
         <ScanFailed
           error={phase.error}
           busy={starting}
@@ -205,7 +218,7 @@ function Rescan({ id }: { id: number }) {
         >
           Back to Dashboard
         </button>
-      </div>
+      </Plain>
     )
   } else if (phase.kind === 'results') {
     const job = phase.job
@@ -222,14 +235,9 @@ function Rescan({ id }: { id: number }) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <BadgeRow />
-      <div className="flex flex-col items-center gap-8">
-        <header className="flex w-full max-w-[980px] items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight">Rescan</h1>
-        </header>
-        <LiveDim className="flex w-full flex-col items-center gap-8">{body}</LiveDim>
-      </div>
+    <div className="flex flex-col items-center gap-8">
+      <BrandRow label="Rescan" />
+      <LiveDim className="flex w-full flex-col items-center gap-8">{body}</LiveDim>
     </div>
   )
 }

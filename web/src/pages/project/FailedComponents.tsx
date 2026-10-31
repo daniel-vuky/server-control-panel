@@ -38,7 +38,7 @@ export default function FailedComponents({ project }: { project: Project }) {
             <span className="font-mono font-semibold break-all text-white">{c.name}</span>
             <ContainerStatus container={c} />
             {c.exitReason !== '' && c.exitReason !== c.status && (
-              <span className="text-[#ff8c8f]">{c.exitReason}</span>
+              <span className="text-danger-text">{c.exitReason}</span>
             )}
             {c.restartCount > 0 && (
               <span className="text-muted">

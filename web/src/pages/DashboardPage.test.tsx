@@ -395,6 +395,16 @@ describe('DashboardPage', () => {
       expect(within(row(/panel/)).getByText('No public domain')).toBeInTheDocument()
     })
 
+    it('shows CPU and RAM as the value only, with no bars (design 01)', async () => {
+      serve([200, [{ ...projects[0], cpuPercent: 12.4, memBytes: 640 * 1024 * 1024 }, projects[1]]])
+      renderPage('/?view=table')
+      const shop = await screen.findByRole('row', { name: /shop/ })
+      expect(within(shop).getByText('12%')).toBeInTheDocument()
+      expect(within(shop).getByText('640 MB')).toBeInTheDocument()
+      expect(screen.queryByTestId('cpu-bar')).toBeNull()
+      expect(screen.queryByTestId('ram-bar')).toBeNull()
+    })
+
     it('runs a stop from a row, through the same confirm', async () => {
       const stub = route({
         'GET /api/projects': () => json(200, projects),

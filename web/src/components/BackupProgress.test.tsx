@@ -63,6 +63,20 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('BackupSteps grid', () => {
+  const grid = (g?: 'page' | 'dialog' | 'compact') => {
+    const { container } = render(<BackupSteps backup={makeBackup()} grid={g} />)
+    return container.querySelector('ol') as HTMLElement
+  }
+  it("is design 04's 180 px auto-fit on the page, four columns in the dialog", () => {
+    expect(grid('page')).toHaveClass('grid-cols-[repeat(auto-fit,minmax(min(180px,100%),1fr))]')
+    expect(grid('dialog')).toHaveClass('grid-cols-[repeat(4,minmax(0,1fr))]')
+  })
+  it('keeps the 160 px auto-fit by default', () => {
+    expect(grid()).toHaveClass('grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))]')
+  })
+})
+
 describe('BackupSteps', () => {
   it('shows each step state with its icon and detail', () => {
     render(
