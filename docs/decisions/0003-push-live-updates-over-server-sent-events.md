@@ -87,3 +87,11 @@ The API calls it after an untrack, a workspace removal and an add, and the scan 
 ## Note (2026-10-30, #32)
 
 The heartbeat of decision 4 is a named event, `event: ping` with `data: {}`, on every stream (`/api/events`, the scan progress streams and the log streams). A comment such as `: ping` keeps the tunnel open, but `EventSource` never hands it to the page, so the browser could not tell a quiet stream from a stalled one (the panel frozen, the TCP connection still open, no error). The client now arms a 60-second watchdog per stream, re-armed on every `state` (or `lines`) and `ping` event; when it fires, the badge shows "Connection lost, retrying…" and the stream is reopened after 1 second. A stall does not count towards the closed attempts that lead to the session check. See [ADR 10](0010-stream-logs-through-one-shared-follow-process.md).
+
+## Note (2026-10-31, server metrics)
+
+Server metrics, their history and the Server page (#59 to #63, #36) refine decision 3 and the polling of Option C:
+
+- **Sampling with nobody watching is every 30 seconds,** not 60 ([ADR 7](0007-run-background-jobs-inside-the-panel-process.md)). The sampler is its own loop in `internal/metrics`, not a hub cadence. It reuses the hub's `docker stats` and `docker inspect` reads when they are at most 15 seconds old (a tab is open), and reads Docker itself otherwise. The hub's 5-second status and 10-second metrics cadence is unchanged and still runs only while someone subscribes.
+- **History series are polled, by visible tabs only.** The Server page and a project's Overview re-read their series every 30 seconds while the tab is visible (the timer stops when the tab is hidden, and becoming visible re-reads at once). A sample changes only every 30 seconds and a series is a few kB, so a new SSE event would add hub state for no gain. This is the one place the panel polls; the series come from SQLite and the System cards from the panel's caches (`docker info` is read at most once a minute), so more tabs do not mean more Docker reads.
+- **Live values stay on SSE.** Project status, CPU and RAM and the Docker state still come from `/api/events`: the project charts' current CPU and RAM read the live project, and the Server page's Docker row and usage table follow `dockerUp` at once.

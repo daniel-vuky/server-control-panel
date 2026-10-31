@@ -83,3 +83,11 @@ The implementation of #75 refined the decision:
 The project detail flow (#31 to #38) refined the decision:
 
 - **Memory limit.** `mem_limit` is `384m`, not `200m` (decision 3), because the panel may run up to 3 live log follows at once, each a `docker compose logs --follow` of about 50 MB (#37, [ADR 10](0010-stream-logs-through-one-shared-follow-process.md)).
+
+## Note (2026-10-31, server metrics)
+
+Server metrics (#59 to #63) refined decision 3:
+
+- **The host's root, read-only, without `rslave`.** The panel service also mounts `/` at `/host/root` read-only, only to `statfs` each disk of the host's mount table (used and total per mount point); the panel opens no file under it. It is a plain recursive bind: with `rslave` Docker refuses to start the container when `/` is not a shared mount (seen on Docker Desktop), and the panel would not start at all. The cost is that a disk mounted after the panel started appears after its next restart, which every release does. The panel already has the Docker socket (root-equivalent), runs as a normal user and only reads, so the mount adds no new power. `deploy/test/compose-config.sh` checks the mount and the absence of `rslave`.
+- **Re-run `install.sh` to get it.** The updater pulls images but never rewrites `compose.yaml`, so an install from before this keeps its old compose file until `install.sh` is run again. Until then the panel lists one disk, "/ (panel data)" (the filesystem holding its data), and says "Re-run install.sh to list every disk." (`docs/deploy.md`, section 4b).
+- **`CLOUDFLARED_METRICS`.** The System services card reads the host's `cloudflared`: whether it runs from `/host/proc`, and its state from its metrics server over loopback HTTP (`/ready`, `/config`; 2 s timeout, loopback addresses only, no proxy or redirect). By default the panel tries cloudflared's default addresses, `127.0.0.1:20241` to `20245`. An owner who moved them sets `CLOUDFLARED_METRICS` in `panel.env` (`127.0.0.1`, `localhost` or `[::1]` with a port; anything else stops the panel at start-up) and re-runs `install.sh`. The install does not ask for it.

@@ -33,7 +33,7 @@ export const appRoutes: AppRoute[] = [
   {
     path: '/projects/:id',
     title: 'Project detail',
-    issues: [4, 5, 31, 32, 34, 35, 37, 38, 48, 56],
+    issues: [4, 5, 31, 32, 34, 35, 36, 37, 38, 48, 56],
   },
   { path: '/onboarding', title: 'Onboarding', issues: [17, 18, 23, 26] },
   { path: '/rescan/:id', title: 'Rescan', issues: [24] },
@@ -53,7 +53,7 @@ export const appRoutes: AppRoute[] = [
   {
     path: '/settings',
     title: 'Settings',
-    issues: [3, 6, 8, 17, 19],
+    issues: [3, 6, 8, 17, 19, 63],
     nav: { label: 'Settings', icon: Settings },
   },
 ]
