@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatCpu, formatDuration, formatMem, formatUptime } from './format'
+import {
+  formatBytes,
+  formatCpu,
+  formatDuration,
+  formatMem,
+  formatPercent,
+  formatRate,
+  formatUptime,
+  niceMax,
+} from './format'
 
 const MB = 1024 * 1024
 
@@ -80,5 +89,51 @@ describe('formatDuration', () => {
     [3_900_000, '1h 05m'],
   ])('%s ms is %s', (ms, want) => {
     expect(formatDuration(ms)).toBe(want)
+  })
+})
+
+describe('formatRate', () => {
+  it.each([
+    [null, '—'],
+    [0, '0 B/s'],
+    [512, '512 B/s'],
+    [3.1 * MB, '3.1 MB/s'],
+    [38 * MB, '38 MB/s'],
+  ])('%s is %s', (n, want) => {
+    expect(formatRate(n)).toBe(want)
+  })
+})
+
+describe('formatPercent', () => {
+  it.each([
+    [null, 0, '—'],
+    [34, 0, '34%'],
+    [64.6, 0, '65%'],
+    [9.84, 1, '9.8%'],
+  ])('%s with %s digits is %s', (p, digits, want) => {
+    expect(formatPercent(p, digits)).toBe(want)
+  })
+})
+
+describe('niceMax', () => {
+  const GB = 1024 * MB
+  it.each([
+    [0, 1],
+    [0.3, 1],
+    [7, 8],
+    [34, 40],
+    [90, 100],
+    [100, 100],
+    [130, 200],
+    [600, 600],
+    [1010, 1024],
+    [1500, 2048],
+    [3.1 * MB, 4 * MB],
+    [640 * MB, 800 * MB],
+    [1010 * MB, GB],
+    [7.7 * GB, 8 * GB],
+    [8 * GB, 8 * GB],
+  ])('%s rounds up to %s', (v, want) => {
+    expect(niceMax(v)).toBe(want)
   })
 })
