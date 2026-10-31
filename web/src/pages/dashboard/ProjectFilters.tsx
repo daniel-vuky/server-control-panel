@@ -50,7 +50,7 @@ export default function ProjectFilters({
               onClick={() => onChange({ status: s })}
               className={`box-border inline-flex h-[34px] cursor-pointer items-center gap-1.5 rounded-[7px] border px-3 font-sans text-[13px] ${FOCUS} ${
                 on
-                  ? 'border-selected bg-[#e7e9ec] text-[#0a0c0f]'
+                  ? 'border-text bg-text font-semibold text-bg'
                   : 'border-border-strong bg-surface text-text-2 hover:text-text'
               }`}
             >

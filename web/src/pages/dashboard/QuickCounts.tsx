@@ -35,7 +35,7 @@ export default function QuickCounts({
   latest: LatestBackup | null | undefined
   now?: Date
 }) {
-  const badge = latest ? (BADGES[latest.state] ?? BADGES.failed) : null
+  const badge = latest ? (BADGES[latest.state] ?? null) : null
   return (
     <section
       aria-label="Quick counts"
@@ -48,7 +48,8 @@ export default function QuickCounts({
             aria-hidden="true"
             className={`size-2 rounded-full ${dot}`}
           />
-          <b className="font-mono font-semibold">{counts[s]}</b> {s}
+          <b className="inline-block min-w-[2ch] text-right font-mono font-semibold">{counts[s]}</b>{' '}
+          {s}
         </span>
       ))}
       {latest !== undefined && (
@@ -70,7 +71,7 @@ export default function QuickCounts({
               <path d="M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 7 4.5 4.5 0 0 1 18 18z" />
               <path d="M12 11v6M9.5 13.5 12 11l2.5 2.5" />
             </svg>
-            {latest === null || badge === null ? (
+            {latest === null ? (
               'No backups yet'
             ) : (
               <>
@@ -78,9 +79,11 @@ export default function QuickCounts({
                 <span className="font-mono">
                   {latest.projectName} · {formatRecent(latest.at, now)}
                 </span>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.look}`}>
-                  {badge.word}
-                </span>
+                {badge !== null && (
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.look}`}>
+                    {badge.word}
+                  </span>
+                )}
               </>
             )}
           </span>

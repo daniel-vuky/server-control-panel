@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import type { LatestBackup } from '../../api/types.gen'
@@ -44,6 +44,22 @@ describe('QuickCounts', () => {
 
   it('says yesterday, or the date for an older one', () => {
     expect(setup(latest('ok', at(30, 2, 0)))).toHaveTextContent('shop · Yesterday 02:00')
+    cleanup()
+    expect(setup(latest('ok', at(28, 2, 0)))).toHaveTextContent('shop · Oct 28 02:00')
+  })
+
+  it('keeps each count at least two characters wide, right-aligned', () => {
+    const region = setup(undefined)
+    const n = within(region).getByText('3')
+    expect(n).toHaveClass('min-w-[2ch]', 'text-right')
+  })
+
+  it('shows no badge for a state it does not know', () => {
+    const region = setup(latest('queued'))
+    expect(region).toHaveTextContent('Latest backup: shop')
+    for (const w of ['OK', 'Failed', 'Refused', 'Interrupted']) {
+      expect(within(region).queryByText(w)).toBeNull()
+    }
   })
 
   it.each([
@@ -79,7 +95,7 @@ describe('QuickCounts', () => {
         'href',
         '/backups',
       )
-      document.body.innerHTML = ''
+      cleanup()
     }
   })
 })
