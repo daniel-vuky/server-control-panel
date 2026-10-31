@@ -308,7 +308,9 @@ function Row({ backup: b, several, flow }: { backup: Backup; several: boolean; f
                   Open in Drive
                 </a>
               )}
-              <a href={downloadUrl(b.id)} download className={LINK}>
+              {/* No download attribute: the server sends Content-Disposition, and a
+                  failure is a page to read, not a file to save. */}
+              <a href={downloadUrl(b.id)} className={LINK}>
                 Download
               </a>
             </>

@@ -173,7 +173,9 @@ describe('backup history', () => {
     expect(drive).toHaveAttribute('target', '_blank')
     const download = within(rows[4]).getByRole('link', { name: 'Download' })
     expect(download).toHaveAttribute('href', '/api/backups/2/download')
-    expect(download).toHaveAttribute('download')
+    // No download attribute: the server sends Content-Disposition on success,
+    // and a failure must open its page instead of being saved as a file.
+    expect(download).not.toHaveAttribute('download')
     expect(within(rows[4]).queryByRole('button', { name: 'Retry' })).toBeNull()
 
     // Failed, refused and interrupted: Retry only.

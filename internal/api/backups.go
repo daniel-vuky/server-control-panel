@@ -20,13 +20,12 @@ const (
 )
 
 const (
-	msgNoBackup      = "This backup does not exist."
-	msgShuttingDown  = "The panel is shutting down."
-	msgNotDownload   = "Only a backup that succeeded can be downloaded."
-	msgHistoryLimit  = "limit must be a number from 1 to 100."
-	msgHistoryBefore = "before must be a backup id."
-
-	codeNotOK = "not_ok"
+	msgNoBackup       = "This backup does not exist."
+	msgShuttingDown   = "The panel is shutting down."
+	msgNotDownload    = "Only a backup that succeeded can be downloaded."
+	msgDownloadFailed = "The panel could not complete this request. Try again."
+	msgHistoryLimit   = "limit must be a number from 1 to 100."
+	msgHistoryBefore  = "before must be a backup id."
 )
 
 // pathID is the positive {id} of r's path.
@@ -245,32 +244,35 @@ func (s *server) getBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 // downloadBackup is GET /api/backups/{id}/download: it streams a succeeded
-// backup's file from Drive. 409 when the backup did not succeed; a Drive
-// failure before the first byte is answered (502 with its code), one after it
-// cuts the connection so the download is never mistaken for complete. It is
-// not recorded in activity.
+// backup's file from Drive. The browser opens it as a navigation, so every
+// failure before the first byte is a short HTML page with a link back (404 for
+// an unknown id, 409 when the backup did not succeed or Drive is not
+// connected, 502 with the Drive words when Drive refused), never a body the
+// browser would save as the file. A failure after the first byte cuts the
+// connection so the download is never mistaken for complete. It is not
+// recorded in activity.
 func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r)
 	if !ok {
-		writeError(w, http.StatusNotFound, msgNoBackup)
+		downloadPage(w, http.StatusNotFound, msgNoBackup, 0)
 		return
 	}
 	b, err := s.Store.GetBackup(r.Context(), id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, msgNoBackup)
+		downloadPage(w, http.StatusNotFound, msgNoBackup, 0)
 		return
 	case err != nil:
-		s.internalError(w, r, err)
+		s.downloadFailed(w, r, err, 0)
 		return
 	}
 	if b.State != backup.StateOK || b.DriveFileID == "" {
-		writeJSON(w, http.StatusConflict, DriveError{Error: codeNotOK, Message: msgNotDownload})
+		downloadPage(w, http.StatusConflict, msgNotDownload, b.ProjectID)
 		return
 	}
 	rc, err := s.Drive.Download(r.Context(), b.DriveFileID)
 	if err != nil {
-		s.driveFailed(w, r, err)
+		s.downloadFailed(w, r, err, b.ProjectID)
 		return
 	}
 	defer func() { _ = rc.Close() }()
@@ -278,7 +280,7 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	// answered.
 	br := bufio.NewReaderSize(rc, 64<<10)
 	if _, err := br.Peek(1); err != nil && !errors.Is(err, io.EOF) {
-		s.driveFailed(w, r, err)
+		s.downloadFailed(w, r, err, b.ProjectID)
 		return
 	}
 	h := w.Header()
@@ -291,10 +293,45 @@ func (s *server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	// cut below reads as a failed download.
 	_ = http.NewResponseController(w).Flush()
 	if _, err := io.Copy(w, br); err != nil {
-		s.log.Warn("backup: the download stopped", "backup", id, "code", drive.CodeOf(err))
+		if r.Context().Err() != nil {
+			// The browser cancelled the download: nothing went wrong here.
+			s.log.Debug("backup: the download was cancelled", "backup", id)
+		} else {
+			s.log.Warn("backup: the download stopped", "backup", id, "code", drive.CodeOf(err))
+		}
 		// Abort the response: a clean end would look like a complete file.
 		panic(http.ErrAbortHandler)
 	}
+}
+
+// downloadFailed answers a download failure before the first byte as a page:
+// 409 for Drive's own state (not configured, not connected), 502 with the Drive
+// words when Drive refused, nothing when the client went away, else 500.
+func (s *server) downloadFailed(w http.ResponseWriter, r *http.Request, err error, projectID int64) {
+	if code, words, ok := driveCode(err); ok {
+		status := http.StatusBadGateway
+		if code == codeNotConfigured || code == codeNotConnected {
+			status = http.StatusConflict
+		}
+		downloadPage(w, status, words, projectID)
+		return
+	}
+	if r.Context().Err() != nil && errors.Is(err, r.Context().Err()) {
+		s.log.Debug("backup: the download was cancelled", "path", r.URL.Path)
+		return
+	}
+	s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+	downloadPage(w, http.StatusInternalServerError, msgDownloadFailed, projectID)
+}
+
+// downloadPage is the page of a failed download, with a link back to the
+// project's Database tab (or to Backups when the project is not known).
+func downloadPage(w http.ResponseWriter, status int, message string, projectID int64) {
+	back, text := "/backups", "Back to Backups"
+	if projectID > 0 {
+		back, text = "/projects/"+strconv.FormatInt(projectID, 10)+"/database", "Back to the project"
+	}
+	writePageBack(w, status, "The backup could not be downloaded", message, back, text)
 }
 
 // safeFileName keeps a file name safe inside a quoted header value: printable

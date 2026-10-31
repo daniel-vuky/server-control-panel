@@ -246,21 +246,29 @@ func (s *server) driveDisconnect(w http.ResponseWriter, r *http.Request) {
 }
 
 // pageTemplate is the minimal HTML page of a browser navigation that cannot
-// end in the app (the Drive callback).
+// end in the app (the Drive callback, a failed backup download).
 var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 16px">
 <h1 style="font-size:1.25rem">{{.Title}}</h1>
 <p>{{.Message}}</p>
-<p><a href="/settings">Back to Settings</a></p>
+<p><a href="{{.Back}}">{{.BackText}}</a></p>
 </body></html>
 `))
 
-// writePage writes the minimal HTML page with status.
+// writePage writes the minimal HTML page with status and a link back to
+// Settings.
 func writePage(w http.ResponseWriter, status int, title, message string) {
+	writePageBack(w, status, title, message, "/settings", "Back to Settings")
+}
+
+// writePageBack writes the minimal HTML page with status and a link back to
+// back, a local path.
+func writePageBack(w http.ResponseWriter, status int, title, message, back, backText string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_ = pageTemplate.Execute(w, struct{ Title, Message string }{title, message})
+	_ = pageTemplate.Execute(w, struct{ Title, Message, Back, BackText string }{title, message, back, backText})
 }

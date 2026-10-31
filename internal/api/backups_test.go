@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -462,19 +464,32 @@ func (errReader) Read([]byte) (int, error) {
 	return 0, &drive.Error{Code: drive.CodeUnreachable, Err: errors.New("cut")}
 }
 
+// wantPage checks that a download failure is a readable HTML page with
+// status, the words and a link back, not a JSON body a browser would save.
+func wantPage(t *testing.T, what string, rec *httptest.ResponseRecorder, status int, words, back string) {
+	t.Helper()
+	body := rec.Body.String()
+	if rec.Code != status || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("%s = %d %q, want %d text/html", what, rec.Code, rec.Header().Get("Content-Type"), status)
+	}
+	if rec.Header().Get("Content-Disposition") != "" {
+		t.Errorf("%s has Content-Disposition %q", what, rec.Header().Get("Content-Disposition"))
+	}
+	if !strings.Contains(body, html.EscapeString(words)) || !strings.Contains(body, `href="`+back+`"`) {
+		t.Errorf("%s body = %s, want %q and a link to %s", what, body, words, back)
+	}
+}
+
 func TestBackupDownloadNotOK(t *testing.T) {
 	d, h, alpha := backupSetup(t)
+	back := "/projects/" + strconv.FormatInt(alpha, 10) + "/database"
 
-	if rec := do(h, http.MethodGet, backupURL(999, "/download")); rec.Code != http.StatusNotFound {
-		t.Errorf("unknown = %d, want 404", rec.Code)
-	}
+	wantPage(t, "unknown", do(h, http.MethodGet, backupURL(999, "/download")), http.StatusNotFound, "This backup does not exist.", "/backups")
 	failed := storedBackup(t, d, alpha, "failed")
-	rec := do(h, http.MethodGet, backupURL(failed, "/download"))
-	if got := decode[DriveError](t, rec); rec.Code != http.StatusConflict || got.Error != "not_ok" {
-		t.Errorf("failed row = %d %s", rec.Code, rec.Body.String())
-	}
+	wantPage(t, "failed row", do(h, http.MethodGet, backupURL(failed, "/download")), http.StatusConflict,
+		"Only a backup that succeeded can be downloaded.", back)
 
-	// An ok row whose file is gone from Drive: 502 with the Drive code.
+	// An ok row whose file is gone from Drive: 502 with the Drive words.
 	now := time.Now()
 	gone, err := d.Store.InsertBackup(context.Background(), store.Backup{
 		ProjectID: alpha, ProjectName: "Alpha", DBType: "postgresql", DBName: "alpha", DBLocationKind: "container",
@@ -484,18 +499,13 @@ func TestBackupDownloadNotOK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec = do(h, http.MethodGet, backupURL(gone, "/download"))
-	if got := decode[DriveError](t, rec); rec.Code != http.StatusBadGateway ||
-		got != (DriveError{Error: drive.CodeFolderMissing, Message: drive.Words(drive.CodeFolderMissing)}) {
-		t.Errorf("gone file = %d %s", rec.Code, rec.Body.String())
-	}
+	wantPage(t, "gone file", do(h, http.MethodGet, backupURL(gone, "/download")), http.StatusBadGateway,
+		drive.Words(drive.CodeFolderMissing), back)
 
 	// Drive not connected.
 	doJSON(h, http.MethodPost, "/api/drive/disconnect", "")
-	rec = do(h, http.MethodGet, backupURL(gone, "/download"))
-	if got := decode[DriveError](t, rec); rec.Code != http.StatusConflict || got.Error != "not_connected" {
-		t.Errorf("not connected = %d %s", rec.Code, rec.Body.String())
-	}
+	wantPage(t, "not connected", do(h, http.MethodGet, backupURL(gone, "/download")), http.StatusConflict,
+		"Connect Google Drive first", back)
 }
 
 func TestBackupDownloadCutAfterFirstByte(t *testing.T) {
@@ -523,6 +533,73 @@ func TestBackupDownloadCutAfterFirstByte(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	if err == nil {
 		t.Errorf("the body ended cleanly after %d bytes, want the connection cut", len(body))
+	}
+}
+
+// cancelClient's downloads deliver some bytes, then end as the request's own
+// context does when the browser goes away: the reader cancels it and fails.
+type cancelClient struct {
+	drive.Client
+	cancel *context.CancelFunc
+}
+
+func (c cancelClient) Session(refresh string) drive.Session {
+	return cancelSession{Session: c.Client.Session(refresh), cancel: c.cancel}
+}
+
+type cancelSession struct {
+	drive.Session
+	cancel *context.CancelFunc
+}
+
+func (s cancelSession) Download(ctx context.Context, fileID string) (io.ReadCloser, error) {
+	rc, err := s.Session.Download(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(io.MultiReader(io.LimitReader(rc, 10), cancelReader{s.cancel})), nil
+}
+
+type cancelReader struct{ cancel *context.CancelFunc }
+
+func (r cancelReader) Read([]byte) (int, error) {
+	(*r.cancel)()
+	return 0, context.Canceled
+}
+
+// A download the client cancels is not a warning: only a Drive failure is.
+func TestBackupDownloadClientCancelIsNotAWarning(t *testing.T) {
+	var cancel context.CancelFunc
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	d := newTestDepsWith(t, func(c drive.Client) drive.Client { return cancelClient{Client: c, cancel: &cancel} })
+	h := NewRouter(d)
+	addProjects(t, d)
+	alpha, _ := trackedIDs(t, d)
+	dockerOf(d).set(func(f *fakeDocker) { f.containers = alphaUp() })
+	connectDrive(t, h, true)
+	id := startBackup(t, h, alpha, alphaKey)
+	if b := waitBackup(t, h, id); b.State != "ok" {
+		t.Fatalf("backup = %+v", b)
+	}
+
+	logs.Reset()
+	ctx, c := context.WithCancel(context.Background())
+	cancel = c
+	req := httptest.NewRequest(http.MethodGet, backupURL(id, "/download"), nil).WithContext(ctx)
+	func() {
+		defer func() {
+			if p := recover(); p != nil && p != http.ErrAbortHandler {
+				panic(p)
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	if strings.Contains(logs.String(), "the download stopped") {
+		t.Errorf("a client cancel was logged as a warning: %s", logs.String())
 	}
 }
 
