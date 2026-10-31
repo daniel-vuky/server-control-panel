@@ -508,3 +508,43 @@ func TestTimeoutForDBSize(t *testing.T) {
 		}
 	}
 }
+
+// The stop action ends an orphaned dump inside the database's container. It
+// takes the service and nothing else: no {dbname}, no other value reaches its
+// script.
+func TestArgvDBDumpStop(t *testing.T) {
+	checkDBArgv(t, DBDumpStop, DBDumpStopOverride, dumpStopScript, false)
+	if DBDumpStop != "db.dump.stop" {
+		t.Fatalf("name %s", DBDumpStop)
+	}
+	for _, a := range []Action{DBDumpStop, DBDumpStopOverride} {
+		var slots []string
+		for _, el := range registry[key{StackCompose, a}] {
+			if el.slot != "" {
+				slots = append(slots, el.slot)
+			}
+		}
+		want := []string{"dir", "file", "service"}
+		if a == DBDumpStopOverride {
+			want = []string{"dir", "file", "override", "service"}
+		}
+		if !equal(slots, want) {
+			t.Errorf("%s slots = %q, want %q", a, slots, want)
+		}
+		v := dbVals(a, "shop")
+		if _, err := argv(StackCompose, a, v); !errors.Is(err, ErrBadValue) {
+			t.Errorf("%s with dbname: err = %v, want ErrBadValue", a, err)
+		}
+		delete(v, "dbname")
+		if _, err := argv(StackCompose, a, with(v, "service", "-it")); !errors.Is(err, ErrBadValue) {
+			t.Errorf("%s with a flag service: err = %v, want ErrBadValue", a, err)
+		}
+		// A read command: Run runs it with the read timeout; RunTo and Stream refuse it.
+		if isDump(a) || isFollow(a) {
+			t.Errorf("%s is a dump or a follow", a)
+		}
+		if got := timeoutFor(a, 15*time.Second); got != 15*time.Second {
+			t.Errorf("timeoutFor(%s) = %v, want the read timeout", a, got)
+		}
+	}
+}

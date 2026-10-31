@@ -6,11 +6,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-// allScripts names every database script constant.
+// dumpScripts are the scripts that run a dumper, record it and wait for it.
+var dumpScripts = map[string]bool{"pgDump": true, "mysqlDump": true, "mongoDump": true}
+
+// allScripts names every database script constant but the stop script.
 var allScripts = map[string]string{
 	"pgDump":    pgDumpScript,
 	"pgSize":    pgSizeScript,
@@ -51,7 +57,7 @@ func TestMySQLDumpScriptNoPasswordOnArgvAndFlags(t *testing.T) {
 			continue
 		}
 		dumps++
-		if !strings.Contains(l, `--defaults-extra-file="$f" `) || !strings.HasSuffix(strings.TrimSuffix(l, " ;;"), flags) {
+		if !strings.Contains(l, `--defaults-extra-file="$f" `) || !strings.HasSuffix(strings.TrimSuffix(l, " ;;"), flags+" &") {
 			t.Errorf("dump line %q lacks the defaults file or the flags", l)
 		}
 		if isMaria && strings.Contains(l, "--set-gtid-purged") {
@@ -89,10 +95,10 @@ func TestMongoScriptsPasswordOnlyInConfigOrEnv(t *testing.T) {
 	if strings.Contains(mongoDumpScript, "username:") || strings.Contains(mongoDumpScript, "-p ") {
 		t.Fatal("the dump puts more than the password in the config, or a password flag on argv")
 	}
-	if !strings.Contains(mongoDumpScript, `mongodump --archive --db "$1" --username "$u" --authenticationDatabase admin --config "$f"`) {
+	if !strings.Contains(mongoDumpScript, `mongodump --archive --db "$1" --username "$u" --authenticationDatabase admin --config "$f" &`+"\n") {
 		t.Fatal("the authenticated dump argv changed")
 	}
-	if !strings.Contains(mongoDumpScript, `mongodump --archive --db "$1"`+"\n") {
+	if !strings.Contains(mongoDumpScript, `mongodump --archive --db "$1" &`+"\n") {
 		t.Fatal("the dump without a root user changed")
 	}
 	run := scriptLines(mongoSizeScript, "mongosh")
@@ -116,7 +122,7 @@ func TestMongoScriptsPasswordOnlyInConfigOrEnv(t *testing.T) {
 func TestPgScriptsUseSocketFirst(t *testing.T) {
 	for name, s := range map[string]string{"pgDump": pgDumpScript, "pgSize": pgSizeScript} {
 		probe := strings.Index(s, "if ! psql --no-password -X -q -U \"$u\" -d \"$d\" -tAc 'select 1'")
-		tmp := strings.Index(s, "mktemp")
+		tmp := strings.Index(s, "f=$(mktemp)")
 		if probe < 0 || tmp < probe {
 			t.Errorf("%s does not try the socket without a password before writing a PGPASSFILE", name)
 		}
@@ -132,7 +138,7 @@ func TestPgScriptsUseSocketFirst(t *testing.T) {
 			t.Errorf("%s does not fall back to the image's default database", name)
 		}
 	}
-	if !strings.HasSuffix(pgDumpScript, `pg_dump --no-password --clean --if-exists -U "$u" -d "$d"`+"\n") {
+	if !strings.HasSuffix(pgDumpScript, `pg_dump --no-password --clean --if-exists -U "$u" -d "$d" &`+"\n"+wantDumpTail) {
 		t.Fatal("pg_dump line changed")
 	}
 	if !strings.HasSuffix(pgSizeScript, `-tAc 'select pg_database_size(current_database())'`+"\n") {
@@ -151,7 +157,12 @@ func TestScriptsQuoteNameAndCleanUp(t *testing.T) {
 		if !strings.HasPrefix(s, "umask 077\n") {
 			t.Errorf("%s does not start with umask 077", name)
 		}
-		if !strings.Contains(s, `trap '[ -z "${f:-}" ] || rm -f "$f"' EXIT`) || !strings.Contains(s, "trap 'exit 1' HUP INT TERM PIPE") {
+		exitTrap, sigTrap := `trap '[ -z "${f:-}" ] || rm -f "$f"' EXIT`, "trap 'exit 1' HUP INT TERM PIPE"
+		if dumpScripts[name] {
+			exitTrap = `trap '[ -z "${f:-}" ] || rm -f "$f"; [ -z "${t:-}" ] || rm -f "$t"; [ -z "${o:-}" ] || rm -f /tmp/.scp-dump.pid' EXIT`
+			sigTrap = `trap '[ -z "${k:-}" ] || { kill -s TERM "$k"; kill -s CONT "$k"; wait "$k"; } 2>/dev/null; exit 1' HUP INT TERM PIPE`
+		}
+		if strings.Count(s, "trap '") != 2 || !strings.Contains(s, exitTrap) || !strings.Contains(s, sigTrap) {
 			t.Errorf("%s does not remove its temp file on every exit", name)
 		}
 		if strings.Contains(s, "mktemp") && !strings.Contains(s, "f=$(mktemp) || exit 1") {
@@ -190,7 +201,11 @@ func TestScriptsReadFileTwins(t *testing.T) {
 }
 
 func TestScriptsParse(t *testing.T) {
+	scripts := map[string]string{"dumpStop": dumpStopScript}
 	for name, s := range allScripts {
+		scripts[name] = s
+	}
+	for name, s := range scripts {
 		out, err := exec.Command("sh", "-n", "-c", s, "sh", "shop").CombinedOutput() //nolint:gosec // G204: parses the package's own constant scripts
 		if err != nil {
 			t.Errorf("%s does not parse: %v\n%s", name, err, out)
@@ -227,13 +242,24 @@ for a in "$@"; do
 		exit "${FAKE_PROBE_EXIT:-0}"
 	fi
 done
+if [ -n "${FAKE_SLOW:-}" ] && [ "${1:-}" != --version ]; then
+	[ -z "${FAKE_IGNORE_TERM:-}" ] || trap '' TERM
+	[ -z "${FAKE_TERM_DELAY:-}" ] || trap 'sleep 0.5; exit 143' TERM
+	i=0
+	while [ "$i" -lt 600 ]; do
+		sleep 0.1
+		i=$((i + 1))
+	done
+fi
 echo "$n output"
+exit "${FAKE_EXIT:-0}"
 `
 
 type scriptRun struct {
 	out, tmp string
 	code     int
 	stdout   string
+	stderr   string
 }
 
 func (r scriptRun) read(t *testing.T, name string) string {
@@ -245,25 +271,41 @@ func (r scriptRun) read(t *testing.T, name string) string {
 	return string(b)
 }
 
-// runScript runs script under sh with fake clients for tools on PATH, the
-// environment env and the arguments args, the way compose exec runs it.
-func runScript(t *testing.T, script string, tools []string, env []string, args ...string) scriptRun {
+// scriptDirs are a script run's fake clients (bin), what they record (out) and
+// its TMPDIR (tmp).
+type scriptDirs struct{ bin, out, tmp string }
+
+// newScriptDirs makes the directories of one run, with fake clients for tools.
+func newScriptDirs(t *testing.T, tools []string) scriptDirs {
 	t.Helper()
 	dir := t.TempDir()
-	bin, out, tmp := filepath.Join(dir, "bin"), filepath.Join(dir, "out"), filepath.Join(dir, "tmp")
-	for _, d := range []string{bin, out, tmp} {
-		if err := os.Mkdir(d, 0o700); err != nil {
+	d := scriptDirs{filepath.Join(dir, "bin"), filepath.Join(dir, "out"), filepath.Join(dir, "tmp")}
+	for _, p := range []string{d.bin, d.out, d.tmp} {
+		if err := os.Mkdir(p, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, tool := range tools {
-		if err := os.WriteFile(filepath.Join(bin, tool), []byte(fakeTool), 0o700); err != nil { //nolint:gosec // G306: the fake must be executable
+		if err := os.WriteFile(filepath.Join(d.bin, tool), []byte(fakeTool), 0o700); err != nil { //nolint:gosec // G306: the fake must be executable
 			t.Fatal(err)
 		}
 	}
+	return d
+}
+
+// command is script under sh, the way compose exec runs it, with the fakes
+// first on PATH and the environment env.
+func (d scriptDirs) command(script string, env []string, args ...string) *exec.Cmd {
 	cmd := exec.Command("sh", append([]string{"-c", script, "sh"}, args...)...) //nolint:gosec // G204: runs the package's own constant scripts against fakes
-	cmd.Env = append([]string{"PATH=" + bin + ":/usr/bin:/bin", "FAKE_OUT=" + out, "TMPDIR=" + tmp}, env...)
-	stdout, err := cmd.Output()
+	cmd.Env = append([]string{"PATH=" + d.bin + ":/usr/bin:/bin", "FAKE_OUT=" + d.out, "TMPDIR=" + d.tmp}, env...)
+	return cmd
+}
+
+// finish waits for cmd and checks that the run left no temp file behind, in
+// TMPDIR or as the pid file.
+func (d scriptDirs) finish(t *testing.T, cmd *exec.Cmd, stdout, stderr *strings.Builder) scriptRun {
+	t.Helper()
+	err := cmd.Wait()
 	code := 0
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -271,14 +313,40 @@ func runScript(t *testing.T, script string, tools []string, env []string, args .
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	left, err := os.ReadDir(tmp)
+	left, err := os.ReadDir(d.tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(left) != 0 {
 		t.Errorf("temp files left behind: %v", left)
 	}
-	return scriptRun{out: out, tmp: tmp, code: code, stdout: string(stdout)}
+	return scriptRun{out: d.out, tmp: d.tmp, code: code, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+// start starts script and returns the command and its output buffers.
+func (d scriptDirs) start(t *testing.T, script string, env []string, args ...string) (*exec.Cmd, *strings.Builder, *strings.Builder) {
+	t.Helper()
+	cmd := d.command(script, env, args...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd, &stdout, &stderr
+}
+
+// runScript runs script under sh with fake clients for tools on PATH, the
+// environment env and the arguments args, the way compose exec runs it. A
+// dump script must leave no pid file behind.
+func runScript(t *testing.T, script string, tools []string, env []string, args ...string) scriptRun {
+	t.Helper()
+	d := newScriptDirs(t, tools)
+	cmd, stdout, stderr := d.start(t, script, env, args...)
+	r := d.finish(t, cmd, stdout, stderr)
+	if _, err := os.Lstat(dumpPidFile); err == nil {
+		t.Errorf("%s left behind", dumpPidFile)
+	}
+	return r
 }
 
 // secretFile writes value to a file for a *_FILE variable.
@@ -439,4 +507,362 @@ func TestMongoScriptsBehaviour(t *testing.T) {
 			t.Fatalf("mongosh argv %q", argv)
 		}
 	})
+}
+
+// dumpPidFile is where a running dump records its shell's and its dumper's
+// pids. The scripts spell it out; it is never spliced into them.
+const dumpPidFile = "/tmp/.scp-dump.pid"
+
+// wantDumpTail ends every dump script: it waits for the dumper and exits with
+// its status, forgetting the pid first so that a late signal is not forwarded
+// to a reused one.
+const wantDumpTail = "k=$!\nscp_claim\nwait \"$k\"\ne=$?\nk=\nexit \"$e\"\n"
+
+// The dump scripts refuse while a previous dump lives, before any credential
+// is read; run the dumper as a child they record and wait for; and touch no
+// file but their own temp files and the pid file.
+func TestDumpScriptsRecordTheirDumper(t *testing.T) {
+	dumpers := map[string]int{"pgDump": 1, "mysqlDump": 3, "mongoDump": 2}
+	for name, s := range allScripts {
+		if !dumpScripts[name] {
+			if strings.Contains(s, "scp-dump") || strings.Contains(s, " &\n") {
+				t.Errorf("%s is a read; it must not record or background anything", name)
+			}
+			continue
+		}
+		refuse := strings.Index(s, "echo 'a previous dump is still running' >&2\n\texit 1\n")
+		login := strings.Index(s, "${MONGO_INITDB_ROOT_USERNAME:-")
+		for _, l := range []string{"${POSTGRES_USER:-", "${MYSQL_ROOT_PASSWORD:-"} {
+			if i := strings.Index(s, l); i >= 0 {
+				login = i
+			}
+		}
+		if refuse < 0 || login < 0 || refuse > login {
+			t.Errorf("%s does not refuse a second dump before it reads a credential", name)
+		}
+		if !strings.HasSuffix(s, wantDumpTail) {
+			t.Errorf("%s does not end by waiting for its dumper", name)
+		}
+		if n := strings.Count(s, " &\n") + strings.Count(s, " & ;;\n"); n != dumpers[name] {
+			t.Errorf("%s backgrounds %d commands, want %d (its dumper lines)", name, n, dumpers[name])
+		}
+		if n := strings.Count(s, "/tmp/.scp-dump."); n != strings.Count(s, dumpPidFile)+1 {
+			t.Errorf("%s names a scp-dump path other than %s and its mktemp template", name, dumpPidFile)
+		}
+		for _, bad := range []string{"eval", "exec ", "kill -s KILL", "rm -rf"} {
+			if strings.Contains(s, bad) {
+				t.Errorf("%s contains %q", name, bad)
+			}
+		}
+	}
+	if !strings.Contains(dumpGuard, `t=$(mktemp /tmp/.scp-dump.XXXXXX) && printf '%s %s\n' "$$" "${k:-}" >"$t" && mv -f "$t" /tmp/.scp-dump.pid && t= && o=1`) {
+		t.Fatal("the pid file is not written through a private mktemp file renamed into place")
+	}
+}
+
+// The stop script reads only the pid file, signals only a live dumper or dump
+// shell, and takes no value.
+func TestDumpStopScriptShape(t *testing.T) {
+	s := dumpStopScript
+	if !strings.HasPrefix(s, "umask 077\n") {
+		t.Error("the stop script does not start with umask 077")
+	}
+	if nameUse.MatchString(strings.ReplaceAll(s, `i="$1"`, "")) {
+		t.Error("the stop script reads an argument; it takes none")
+	}
+	for _, bad := range []string{"eval", "exec ", "rm -rf", "mktemp", "PASSWORD", "$(cat \"$"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("the stop script contains %q", bad)
+		}
+	}
+	for _, l := range scriptLines(s, "rm ") {
+		if strings.TrimSpace(l) != "rm -f "+dumpPidFile {
+			t.Errorf("the stop script removes something else: %q", l)
+		}
+	}
+	for _, l := range scriptLines(s, "kill ") {
+		if !regexp.MustCompile(`kill -s (TERM|CONT|KILL) "\$[sk]"`).MatchString(l) {
+			t.Errorf("unexpected kill: %q", l)
+		}
+	}
+	if !strings.Contains(dumpLive, "pg_dump | mysqldump | mariadb-dump | mongodump)") {
+		t.Fatal("the liveness check does not name the dumpers")
+	}
+}
+
+// requireProc skips a test that needs Linux's /proc, which the scripts read.
+func requireProc(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat("/proc/self/comm"); err != nil {
+		t.Skip("needs /proc")
+	}
+}
+
+// cleanPidFile removes the pid file before and after the test.
+func cleanPidFile(t *testing.T) {
+	t.Helper()
+	_ = os.Remove(dumpPidFile)
+	t.Cleanup(func() { _ = os.Remove(dumpPidFile) })
+}
+
+// pidFile reads the pid file's two fields, "" when absent.
+func pidFile(t *testing.T) (shell, dumper string) {
+	t.Helper()
+	b, err := os.ReadFile(dumpPidFile)
+	if err != nil {
+		return "", ""
+	}
+	f := strings.Fields(string(b))
+	switch len(f) {
+	case 1:
+		return f[0], ""
+	case 2:
+		return f[0], f[1]
+	}
+	t.Fatalf("pid file %q", b)
+	return "", ""
+}
+
+// comm is a process's name, "" when it is gone.
+func comm(pid string) string {
+	b, err := os.ReadFile("/proc/" + pid + "/comm") //nolint:gosec // G304: a /proc path of a pid the test started
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// alive reports whether pid runs and is not a zombie.
+func procAlive(pid string) bool {
+	b, err := os.ReadFile("/proc/" + pid + "/stat") //nolint:gosec // G304: as above
+	return err == nil && !strings.Contains(string(b), ") Z ")
+}
+
+// waitDumper waits until the pid file names a running tool, and returns the
+// shell's and the tool's pids.
+func waitDumper(t *testing.T, tool string) (shell, dumper string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s, k := pidFile(t)
+		if k != "" && comm(k) == tool {
+			return s, k
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no running %s in the pid file (%q %q)", tool, s, k)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// runStop runs the stop script and returns its exit code and stderr.
+func runStop(t *testing.T) (int, string) {
+	t.Helper()
+	d := newScriptDirs(t, nil)
+	cmd, stdout, stderr := d.start(t, dumpStopScript, nil)
+	r := d.finish(t, cmd, stdout, stderr)
+	if r.stdout != "" {
+		t.Errorf("stop stdout %q", r.stdout)
+	}
+	return r.code, r.stderr
+}
+
+func TestDumpScriptsStopAndRefuse(t *testing.T) {
+	requireProc(t)
+	cases := []struct {
+		name, script, tool string
+		tools, env         []string
+	}{
+		{"pg", pgDumpScript, "pg_dump", []string{"psql", "pg_dump"}, nil},
+		{"mysql", mysqlDumpScript, "mysqldump", []string{"mysqldump"}, []string{"MYSQL_ROOT_PASSWORD=" + hostilePassword}},
+		{"mariadb", mysqlDumpScript, "mariadb-dump", []string{"mariadb-dump"}, []string{"MARIADB_ROOT_PASSWORD=" + hostilePassword}},
+		{"mongo", mongoDumpScript, "mongodump", []string{"mongodump"}, []string{"MONGO_INITDB_ROOT_USERNAME=root", "MONGO_INITDB_ROOT_PASSWORD=" + hostilePassword}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanPidFile(t)
+			d := newScriptDirs(t, tc.tools)
+			cmd, stdout, stderr := d.start(t, tc.script, append([]string{"FAKE_SLOW=1"}, tc.env...), "shop")
+			s, k := waitDumper(t, tc.tool)
+			if s != strconv.Itoa(cmd.Process.Pid) {
+				t.Errorf("the pid file names shell %s, want %d", s, cmd.Process.Pid)
+			}
+
+			// A second dump is refused before it runs anything.
+			second := runSecond(t, tc.script, tc.tools, tc.env)
+			if second.code != 1 || second.stdout != "" || second.stderr != "a previous dump is still running\n" {
+				t.Errorf("second dump: exit %d, stdout %q, stderr %q", second.code, second.stdout, second.stderr)
+			}
+			for _, tool := range tc.tools {
+				if got := second.read(t, tool+".argv"); got != "" {
+					t.Errorf("the refused dump ran %s: %q", tool, got)
+				}
+			}
+			if s2, k2 := pidFile(t); s2 != s || k2 != k {
+				t.Errorf("the refused dump changed the pid file to %q %q", s2, k2)
+			}
+
+			began := time.Now()
+			if code, msg := runStop(t); code != 0 || msg != "" {
+				t.Fatalf("stop: exit %d, stderr %q", code, msg)
+			}
+			if took := time.Since(began); took > 3*time.Second {
+				t.Errorf("stop took %v for a dumper that obeys TERM", took)
+			}
+			r := d.finish(t, cmd, stdout, stderr)
+			if r.code == 0 || r.stdout != "" {
+				t.Errorf("stopped dump: exit %d, stdout %q", r.code, r.stdout)
+			}
+			if procAlive(k) || procAlive(s) {
+				t.Error("the dumper or its shell still runs")
+			}
+			if _, err := os.Lstat(dumpPidFile); err == nil {
+				t.Error("the pid file is left after the stop")
+			}
+		})
+	}
+}
+
+// runSecond runs a dump while another holds the pid file; unlike runScript it
+// expects that pid file to stay.
+func runSecond(t *testing.T, script string, tools, env []string) scriptRun {
+	t.Helper()
+	d := newScriptDirs(t, tools)
+	cmd, stdout, stderr := d.start(t, script, env, "shop")
+	return d.finish(t, cmd, stdout, stderr)
+}
+
+// A dumper that ignores TERM is killed; the shell then exits and cleans up.
+func TestDumpStopKillsAStubbornDumper(t *testing.T) {
+	requireProc(t)
+	if testing.Short() {
+		t.Skip("waits out the TERM grace")
+	}
+	cleanPidFile(t)
+	d := newScriptDirs(t, []string{"psql", "pg_dump"})
+	cmd, stdout, stderr := d.start(t, pgDumpScript, []string{"FAKE_SLOW=1", "FAKE_IGNORE_TERM=1"}, "shop")
+	_, k := waitDumper(t, "pg_dump")
+	if code, msg := runStop(t); code != 0 || msg != "" {
+		t.Fatalf("stop: exit %d, stderr %q", code, msg)
+	}
+	r := d.finish(t, cmd, stdout, stderr)
+	if r.code != 128+int(syscall.SIGKILL) || procAlive(k) {
+		t.Errorf("dump exit %d, dumper alive %v", r.code, procAlive(k))
+	}
+	if _, err := os.Lstat(dumpPidFile); err == nil {
+		t.Error("the pid file is left")
+	}
+}
+
+// A pid file whose pids are gone, or name processes that are not a dump, does
+// not block a dump, and the stop signals none of them.
+func TestDumpPidFileStaleOrReused(t *testing.T) {
+	requireProc(t)
+	other := exec.Command("sleep", "30")
+	shell := exec.Command("sh", "-c", "sleep 30; :")
+	for _, c := range []*exec.Cmd{other, shell} {
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.Process.Kill(); _ = c.Wait() })
+	}
+	reused := strconv.Itoa(shell.Process.Pid) + " " + strconv.Itoa(other.Process.Pid) + "\n"
+	for name, content := range map[string]string{"dead": "999999999 999999998\n", "reused": reused, "garbage": "-1 $(id)\n", "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			cleanPidFile(t)
+			if err := os.WriteFile(dumpPidFile, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if code, msg := runStop(t); code != 0 || msg != "" {
+				t.Fatalf("stop: exit %d, stderr %q", code, msg)
+			}
+			if _, err := os.Lstat(dumpPidFile); err == nil {
+				t.Error("the stop left a stale pid file")
+			}
+			if !procAlive(strconv.Itoa(other.Process.Pid)) || !procAlive(strconv.Itoa(shell.Process.Pid)) {
+				t.Fatal("the stop signalled a process that is not a dump")
+			}
+			if err := os.WriteFile(dumpPidFile, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r := runScript(t, pgDumpScript, []string{"psql", "pg_dump"}, nil, "shop")
+			if r.code != 0 || r.stdout != "pg_dump output\n" || r.stderr != "" {
+				t.Errorf("dump over a stale pid file: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+			}
+		})
+	}
+	if code, msg := runStop(t); code != 0 || msg != "" {
+		t.Fatalf("stop without a pid file: exit %d, stderr %q", code, msg)
+	}
+}
+
+// The pid file is replaced, never written through: a symlink planted at its
+// path does not redirect the write, and is not followed by the stop.
+func TestDumpPidFileSymlinkNotFollowed(t *testing.T) {
+	requireProc(t)
+	cleanPidFile(t)
+	target := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, dumpPidFile); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := runStop(t); code != 0 {
+		t.Fatalf("stop over a symlink: exit %d", code)
+	}
+	r := runScript(t, pgDumpScript, []string{"psql", "pg_dump"}, nil, "shop")
+	if r.code != 0 || r.stdout != "pg_dump output\n" {
+		t.Errorf("dump: exit %d, stdout %q", r.code, r.stdout)
+	}
+	if b, err := os.ReadFile(target); err != nil || string(b) != "keep\n" { //nolint:gosec // G304: the test's own file
+		t.Errorf("the symlink's target = %q, %v; it was written through", b, err)
+	}
+}
+
+// A signal to the dump shell is forwarded to its dumper, the shell waits for
+// (and reaps) it, and its exit removes the credentials file and the pid file.
+func TestDumpScriptForwardsTerm(t *testing.T) {
+	requireProc(t)
+	cleanPidFile(t)
+	d := newScriptDirs(t, []string{"mysqldump"})
+	// The dumper takes a while to end on TERM; the shell must outwait it.
+	cmd := d.command(mysqlDumpScript, []string{"FAKE_SLOW=1", "FAKE_TERM_DELAY=1", "MYSQL_ROOT_PASSWORD=" + hostilePassword}, "shop")
+	// Files, not pipes: Wait then returns when the shell exits, not when the
+	// last holder of its stdout does.
+	out, err := os.Create(filepath.Join(t.TempDir(), "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = out.Close() }()
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_, k := waitDumper(t, "mysqldump")
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	var ee *exec.ExitError
+	if err := cmd.Wait(); !errors.As(err, &ee) || ee.ExitCode() != 1 {
+		t.Errorf("exit = %v, want 1", err)
+	}
+	if _, err := os.Stat("/proc/" + k); err == nil {
+		t.Errorf("the dumper outlived its shell (%s)", comm(k))
+	}
+	if _, err := os.Lstat(dumpPidFile); err == nil {
+		t.Error("the pid file is left")
+	}
+	if left, _ := os.ReadDir(d.tmp); len(left) != 0 {
+		t.Errorf("credentials file left: %v", left)
+	}
+}
+
+// The script's status is the dumper's, and its stdout only the dumper's.
+func TestDumpScriptExitStatusIsTheDumpers(t *testing.T) {
+	cleanPidFile(t)
+	r := runScript(t, pgDumpScript, []string{"psql", "pg_dump"}, []string{"FAKE_EXIT=3"}, "shop")
+	if r.code != 3 || r.stdout != "pg_dump output\n" {
+		t.Fatalf("exit %d, stdout %q", r.code, r.stdout)
+	}
 }

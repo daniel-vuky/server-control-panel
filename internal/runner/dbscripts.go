@@ -18,6 +18,12 @@ package runner
 //   - unset clears the script's variable names first, so a variable of the same
 //     name in the container's environment cannot export them.
 //
+// The dump scripts also keep killing the docker client from leaving the dump
+// running inside the container (ADR 0011): they run the dumper as a child,
+// record the shell's and the dumper's pids in /tmp/.scp-dump.pid, forward a
+// signal to the dumper, and refuse to start while that file names a live dump.
+// dumpStopScript (db.dump.stop) ends the dump the file names.
+//
 // Verified on postgres:17-alpine (busybox sh), mysql:9 (bash), mariadb:11 and
 // mongo:7 (dash), with a non-root MySQL and MariaDB user, a MongoDB root user,
 // *_FILE secrets and the password p:a\ss"w'o#r d;$x.
@@ -28,6 +34,85 @@ const scriptStart = `umask 077
 unset f u d pw c
 trap '[ -z "${f:-}" ] || rm -f "$f"' EXIT
 trap 'exit 1' HUP INT TERM PIPE
+`
+
+// dumpLive defines scp_live, true when one of its arguments is the pid of a
+// live dump: a dumper by its name (not a zombie), or a dump shell by the pid
+// file's path in its command line, which only the dump scripts' text holds. A
+// pid that is not all digits, is the shell's own, or has gone is skipped, so
+// a stale or reused pid is never taken for a dump. It reads only /proc.
+const dumpLive = `scp_live() {
+	for q in "$@"; do
+		case $q in
+		'' | *[!0-9]*) continue ;;
+		esac
+		[ "$q" != "$$" ] || continue
+		n=
+		read -r n 2>/dev/null <"/proc/$q/comm" || continue
+		case $n in
+		pg_dump | mysqldump | mariadb-dump | mongodump)
+			case $(cat 2>/dev/null "/proc/$q/stat") in
+			'' | *') Z '*) ;;
+			*) return 0 ;;
+			esac
+			;;
+		*)
+			case $(tr '\0' ' ' 2>/dev/null <"/proc/$q/cmdline") in
+			*/tmp/.scp-dump.pid*) return 0 ;;
+			esac
+			;;
+		esac
+	done
+	return 1
+}
+`
+
+// dumpStart begins every dump script, in place of scriptStart. Besides the
+// credentials file f, the EXIT trap removes the pid file's temp file t and,
+// once this shell has written it (o), the pid file. A signal is forwarded to
+// the dumper k (CONT too, so a stopped one gets it), and the shell waits for
+// it before it exits: the pid file goes only once the dumper has, and the
+// dumper is reaped, not left a zombie under a pid 1 that does not reap.
+const dumpStart = `umask 077
+unset f u d pw c s r k t o q n e
+trap '[ -z "${f:-}" ] || rm -f "$f"; [ -z "${t:-}" ] || rm -f "$t"; [ -z "${o:-}" ] || rm -f /tmp/.scp-dump.pid' EXIT
+trap '[ -z "${k:-}" ] || { kill -s TERM "$k"; kill -s CONT "$k"; wait "$k"; } 2>/dev/null; exit 1' HUP INT TERM PIPE
+`
+
+// dumpGuard refuses, before any credential is read, while the pid file names
+// a live dump (only one backup runs panel-wide, so another one is an orphan
+// still finishing). Otherwise it takes the pid file, a stale one included,
+// with this shell's pid. scp_claim writes "<shell> <dumper>" to a fresh
+// mktemp file (0600) and renames it over the path: a rename replaces whatever
+// is there, a planted symlink too, and never writes through it. A failed
+// write leaves the dump running, only unrecorded.
+const dumpGuard = dumpLive + `scp_claim() {
+	t=$(mktemp /tmp/.scp-dump.XXXXXX) && printf '%s %s\n' "$$" "${k:-}" >"$t" && mv -f "$t" /tmp/.scp-dump.pid && t= && o=1
+}
+s=
+r=
+if [ -f /tmp/.scp-dump.pid ] && [ ! -L /tmp/.scp-dump.pid ]; then
+	read -r s r </tmp/.scp-dump.pid || :
+fi
+if scp_live "$s" "$r"; then
+	echo 'a previous dump is still running' >&2
+	exit 1
+fi
+s=
+r=
+scp_claim
+`
+
+// dumpTail follows the dumper, started in the background (`&`) as k: it
+// records the dumper's pid, waits for it, and exits with its status. Its
+// stdout is the script's stdout, untouched. k is cleared first so that a
+// late signal is not forwarded to a pid reused meanwhile.
+const dumpTail = `k=$!
+scp_claim
+wait "$k"
+e=$?
+k=
+exit "$e"
 `
 
 // pgLogin sets u (POSTGRES_USER, else postgres) and d ("$1", else the image's
@@ -58,9 +143,9 @@ fi
 // pgDumpScript writes a plain SQL dump of the database to stdout. It serves
 // db.pg.dump ("$1" is the name) and db.pg.dump.default (no "$1": the image's
 // default database).
-const pgDumpScript = scriptStart + pgLogin +
-	`pg_dump --no-password --clean --if-exists -U "$u" -d "$d"
-`
+const pgDumpScript = dumpStart + dumpGuard + pgLogin +
+	`pg_dump --no-password --clean --if-exists -U "$u" -d "$d" &
+` + dumpTail
 
 // pgSizeScript prints the size of the same database in bytes. It serves
 // db.pg.size and db.pg.size.default.
@@ -102,16 +187,16 @@ unset pw
 // --set-gtid-purged=OFF let a non-root MySQL user dump (they avoid the PROCESS
 // and RELOAD privileges); MariaDB rejects --set-gtid-purged, so an older
 // MariaDB whose dump tool is still called mysqldump does not get it.
-const mysqlDumpScript = scriptStart + mysqlLogin +
+const mysqlDumpScript = dumpStart + dumpGuard + mysqlLogin +
 	`if command -v mariadb-dump >/dev/null 2>&1; then
-	mariadb-dump --defaults-extra-file="$f" --single-transaction --routines --triggers --no-tablespaces --databases "$1"
+	mariadb-dump --defaults-extra-file="$f" --single-transaction --routines --triggers --no-tablespaces --databases "$1" &
 else
 	case $(mysqldump --version 2>/dev/null) in
-	*MariaDB*) mysqldump --defaults-extra-file="$f" --single-transaction --routines --triggers --no-tablespaces --databases "$1" ;;
-	*) mysqldump --defaults-extra-file="$f" --set-gtid-purged=OFF --single-transaction --routines --triggers --no-tablespaces --databases "$1" ;;
+	*MariaDB*) mysqldump --defaults-extra-file="$f" --single-transaction --routines --triggers --no-tablespaces --databases "$1" & ;;
+	*) mysqldump --defaults-extra-file="$f" --set-gtid-purged=OFF --single-transaction --routines --triggers --no-tablespaces --databases "$1" & ;;
 	esac
 fi
-`
+` + dumpTail
 
 // mysqlSizeScript prints the data and index bytes of database "$1". The name
 // has to go into the SQL, so the script checks it again with the {dbname}
@@ -141,18 +226,18 @@ fi
 // password goes into a --config file, which the database tools accept with
 // password: alone, as a single-quoted YAML string (' doubled). The user name
 // is not a secret and stays on argv.
-const mongoDumpScript = scriptStart +
+const mongoDumpScript = dumpStart + dumpGuard +
 	`u=${MONGO_INITDB_ROOT_USERNAME:-$(cat "${MONGO_INITDB_ROOT_USERNAME_FILE:-/dev/null}" 2>/dev/null)}
 if [ -z "$u" ]; then
-	mongodump --archive --db "$1"
+	mongodump --archive --db "$1" &
 else
 	pw=${MONGO_INITDB_ROOT_PASSWORD:-$(cat "${MONGO_INITDB_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
 	f=$(mktemp) || exit 1
 	printf "password: '%s'\n" "$(printf '%s' "$pw" | sed "s/'/''/g")" >"$f" || exit 1
 	unset pw
-	mongodump --archive --db "$1" --username "$u" --authenticationDatabase admin --config "$f"
+	mongodump --archive --db "$1" --username "$u" --authenticationDatabase admin --config "$f" &
 fi
-`
+` + dumpTail
 
 // mongoJS is the fixed program of the MongoDB size read. It takes the user,
 // password and database name from its own environment, never from its text,
@@ -167,4 +252,48 @@ const mongoSizeScript = scriptStart +
 	`u=${MONGO_INITDB_ROOT_USERNAME:-$(cat "${MONGO_INITDB_ROOT_USERNAME_FILE:-/dev/null}" 2>/dev/null)}
 pw=${MONGO_INITDB_ROOT_PASSWORD:-$(cat "${MONGO_INITDB_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
 U=$u P=$pw N="$1" mongosh --quiet --norc --nodb --eval '` + mongoJS + `'
+`
+
+// dumpStopScript ends the dump the pid file names (db.dump.stop). It takes no
+// argument and reads only the pid file and /proc; scp_live guards every
+// signal, so a stale or reused pid is left alone. The dumper gets TERM (and
+// CONT) and up to 5 s, then KILL; its shell, which then exits by itself and
+// runs its cleanup trap, gets 2 s, then TERM and 2 s, then KILL. A shell still
+// before its dumper (the PostgreSQL probe) is sent TERM at once. When nothing
+// is left it removes the pid file; when something is, it says so and exits 1,
+// keeping the file so that the next dump is refused. At most about 10 s, inside
+// the read timeout.
+const dumpStopScript = `umask 077
+unset s k q n i
+` + dumpLive + `scp_wait() {
+	i="$1"
+	shift
+	while scp_live "$@"; do
+		[ "$i" -gt 0 ] || return 1
+		i=$((i - 1))
+		sleep 0.2
+	done
+	return 0
+}
+[ -f /tmp/.scp-dump.pid ] && [ ! -L /tmp/.scp-dump.pid ] || exit 0
+s=
+k=
+read -r s k </tmp/.scp-dump.pid || :
+if scp_live "$k"; then
+	kill -s TERM "$k" 2>/dev/null
+	kill -s CONT "$k" 2>/dev/null
+	scp_wait 25 "$k" || kill -s KILL "$k" 2>/dev/null
+	scp_wait 10 "$s" || :
+fi
+if scp_live "$s"; then
+	kill -s TERM "$s" 2>/dev/null
+	kill -s CONT "$s" 2>/dev/null
+	scp_wait 10 "$s" || kill -s KILL "$s" 2>/dev/null
+fi
+if scp_wait 5 "$s" "$k"; then
+	rm -f /tmp/.scp-dump.pid
+	exit 0
+fi
+echo 'the previous dump did not stop' >&2
+exit 1
 `

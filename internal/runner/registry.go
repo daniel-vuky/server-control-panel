@@ -71,6 +71,11 @@ const (
 	DBMongoDumpOverride     Action = "db.mongo.dump.override"
 	DBMongoSize             Action = "db.mongo.size"
 	DBMongoSizeOverride     Action = "db.mongo.size.override"
+	// DBDumpStop ends a dump the panel gave up on, inside its container: the
+	// dump scripts record their pids, and its fixed script stops them. It takes
+	// only the service and runs through Run.
+	DBDumpStop         Action = "db.dump.stop"
+	DBDumpStopOverride Action = "db.dump.stop.override"
 )
 
 // Values are the arguments of one call, keyed by placeholder name without
@@ -247,6 +252,8 @@ var registry = map[key][]arg{
 	{StackCompose, DBMongoDumpOverride}:     dbScript(composeBaseOverride, mongoDumpScript, true),
 	{StackCompose, DBMongoSize}:             dbScript(composeBase, mongoSizeScript, true),
 	{StackCompose, DBMongoSizeOverride}:     dbScript(composeBaseOverride, mongoSizeScript, true),
+	{StackCompose, DBDumpStop}:              dbScript(composeBase, dumpStopScript, false),
+	{StackCompose, DBDumpStopOverride}:      dbScript(composeBaseOverride, dumpStopScript, false),
 }
 
 // dbScript is a database action: exec -T {service} sh -c <script> sh, then
