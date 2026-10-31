@@ -1,6 +1,6 @@
 import { CloudUpload, RotateCw } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { downloadUrl, listBackups } from '../../api/backups'
+import { downloadUrl, listProjectBackups } from '../../api/backups'
 import type { Backup, BackupHistory as Page, Project } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import LoadError from '../../components/LoadError'
@@ -74,7 +74,7 @@ function useHistory(projectId: number, refusals: number) {
     newestCtl.current?.abort()
     const ctl = new AbortController()
     newestCtl.current = ctl
-    listBackups(projectId, undefined, ctl.signal).then(
+    listProjectBackups(projectId, undefined, ctl.signal).then(
       (page) => {
         if (ctl.signal.aborted) return
         setState((prev) => ({
@@ -105,7 +105,7 @@ function useHistory(projectId: number, refusals: number) {
     const ctl = new AbortController()
     olderCtl.current = ctl
     setOlder({ busy: true, error: '' })
-    listBackups(projectId, before, ctl.signal).then(
+    listProjectBackups(projectId, before, ctl.signal).then(
       (page) => {
         if (ctl.signal.aborted) return
         olderCtl.current = null

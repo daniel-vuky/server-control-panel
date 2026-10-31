@@ -90,17 +90,11 @@ describe('BackupsPage', () => {
     expect(within(banner).getByRole('button', { name: 'Connect Google Drive' })).toBeEnabled()
   })
 
-  it('offers Reconnect Google Drive when the token expired', async () => {
-    const stub = vi.fn(async () => json(200, { url: 'https://accounts.google.com/y' }))
-    vi.stubGlobal('fetch', stub)
+  it('has no expired banner of its own: the app shell shows it on every page', () => {
     open(drive('expired'))
-    const banner = screen.getByRole('alert')
-    expect(banner).toHaveTextContent('Google Drive token has expired.')
-    expect(banner).toHaveTextContent('Backups will fail until you reconnect.')
-    fireEvent.click(within(banner).getByRole('button', { name: 'Reconnect Google Drive' }))
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('https://accounts.google.com/y'))
-    const [, init] = stub.mock.calls[0] as unknown as [string, RequestInit]
-    expect(JSON.parse(String(init.body))).toEqual({ returnTo: '/backups' })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(/token has expired/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reconnect Google Drive' })).toBeNull()
   })
 
   it('says why the connect failed', async () => {

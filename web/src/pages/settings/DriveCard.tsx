@@ -413,7 +413,7 @@ function Connected({
       {confirm && (
         <ConfirmDialog
           title="Disconnect Google Drive?"
-          body="Backups stop until you connect again. Files already on Drive stay there."
+          body="Scheduled backups will fail until Google Drive is connected again. Files already on Drive stay there."
           confirmLabel="Disconnect"
           tone="danger"
           onCancel={() => setConfirm(false)}

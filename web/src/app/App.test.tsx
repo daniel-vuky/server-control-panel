@@ -37,8 +37,11 @@ describe('app shell', () => {
 
   it('maps /settings to the Settings page, not its placeholder', async () => {
     renderAt('/settings')
-    expect(screen.getByRole('region', { name: 'Workspaces' })).toBeInTheDocument()
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load workspaces.')
+    const workspaces = screen.getByRole('region', { name: 'Workspaces' })
+    expect(await within(workspaces).findByRole('alert')).toHaveTextContent(
+      'Could not load workspaces.',
+    )
+    expect(screen.getByRole('region', { name: 'Backup defaults' })).toBeInTheDocument()
   })
 
   it('shows the Google return toast on any page of the shell', async () => {

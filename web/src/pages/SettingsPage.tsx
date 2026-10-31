@@ -10,6 +10,7 @@ import { plural } from '../lib/plural'
 import { formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
 import { useRescan } from '../lib/useRescan'
+import BackupDefaultsCard from './settings/BackupDefaultsCard'
 import DriveCard from './settings/DriveCard'
 
 const card = 'rounded-[10px] border border-border bg-surface'
@@ -20,7 +21,7 @@ const mono = (text: string): ReactNode => <span className="font-mono">{text}</sp
 
 const head = 'flex flex-col gap-1 border-b border-border px-[18px] py-4'
 
-/** SettingsPage is /settings: the workspaces card, then the sections still to come. */
+/** SettingsPage is /settings: workspaces, Google Drive, alerts (still to come) and backup defaults. */
 export default function SettingsPage() {
   return (
     <div className="flex max-w-[1040px] flex-col gap-[18px]">
@@ -37,9 +38,7 @@ export default function SettingsPage() {
       <Soon id="alert-title" title="Alerts" issues={[8]}>
         Where the panel sends alerts.
       </Soon>
-      <Soon id="bk-title" title="Backup defaults" issues={[6]}>
-        Schedule and retention for new backups.
-      </Soon>
+      <BackupDefaultsCard />
     </div>
   )
 }

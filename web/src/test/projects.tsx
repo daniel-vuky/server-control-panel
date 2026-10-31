@@ -1,6 +1,13 @@
 import { act } from '@testing-library/react'
 import { useLocation } from 'react-router'
-import type { Backup, Container, Database, DriveStatus, Project } from '../api/types.gen'
+import type {
+  Backup,
+  BackupBatch,
+  Container,
+  Database,
+  DriveStatus,
+  Project,
+} from '../api/types.gen'
 import { projectRoute } from '../app/App'
 import { FakeEventSource } from './fakeEventSource'
 import { renderApp } from './renderApp'
@@ -121,7 +128,7 @@ export function renderProject(path: string) {
 export function pushState(
   projects: Project[],
   dockerUp = true,
-  extra: { backups?: Backup[]; drive?: DriveStatus } = {},
+  extra: { backups?: Backup[]; batch?: BackupBatch | null; drive?: DriveStatus } = {},
 ) {
   act(() => {
     const es = FakeEventSource.latest('/api/events')
@@ -131,6 +138,7 @@ export function pushState(
       dockerUp,
       projects,
       backups: extra.backups ?? [],
+      batch: extra.batch ?? null,
       drive: extra.drive ?? { state: 'not_connected', email: '', folder: null, reason: '' },
     })
   })

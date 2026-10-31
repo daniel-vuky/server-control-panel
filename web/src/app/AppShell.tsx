@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import ConnectionBadge from '../components/ConnectionBadge'
 import DockerBanner from '../components/DockerBanner'
+import DriveExpiredBanner from '../components/DriveExpiredBanner'
 import DriveReturn from './DriveReturn'
 import { LiveProvider, useLive } from './live'
 import { appRoutes } from './routes'
@@ -74,6 +75,7 @@ export default function AppShell() {
           </div>
           <LiveContent>
             <DockerBanner />
+            <DriveExpiredBanner />
             <Outlet />
           </LiveContent>
         </main>

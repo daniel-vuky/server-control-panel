@@ -1,4 +1,4 @@
-import { CircleAlert, CloudUpload, TriangleAlert } from 'lucide-react'
+import { CircleAlert, CloudUpload } from 'lucide-react'
 import { useId, useState } from 'react'
 import { Link } from 'react-router'
 import { connectDrive, type DriveIssue, driveIssue } from '../api/drive'
@@ -60,13 +60,17 @@ export default function BackupsPage() {
   )
 }
 
-/** DriveBanner is design 04's banner for Drive not connected or expired; none when connected. */
+/**
+ * DriveBanner is design 04's banner for Drive not connected or not set up.
+ * None when connected, and none when expired: the app shell shows that one
+ * on every page.
+ */
 function DriveBanner({ drive }: { drive: DriveStatus }) {
   const [busy, setBusy] = useState(false)
   const [issue, setIssue] = useState<DriveIssue | null>(null)
   usePageRestore(() => setBusy(false))
 
-  if (drive.state === 'connected') return null
+  if (drive.state === 'connected' || drive.state === 'expired') return null
   if (drive.state === 'not_configured') {
     return (
       <div className="flex items-center gap-3 rounded-[10px] border border-border-strong bg-[#12161c] px-4 py-3.5 text-[13px] text-text-2">
@@ -76,7 +80,6 @@ function DriveBanner({ drive }: { drive: DriveStatus }) {
     )
   }
 
-  const expired = drive.state === 'expired'
   const connect = async () => {
     if (busy) return
     setBusy(true)
@@ -88,38 +91,6 @@ function DriveBanner({ drive }: { drive: DriveStatus }) {
       setIssue(driveIssue(err))
       setBusy(false)
     }
-  }
-  const label = expired ? 'Reconnect Google Drive' : 'Connect Google Drive'
-  const failed = issue && (
-    <span className="basis-full text-[13px] text-danger">{issue.message}</span>
-  )
-
-  if (expired) {
-    return (
-      <div
-        role="alert"
-        className="flex flex-wrap items-center gap-3 rounded-[10px] border border-[#5c4a1e] bg-[#221c0e] px-4 py-3 text-[#f7e2a6]"
-      >
-        <TriangleAlert
-          aria-hidden="true"
-          size={18}
-          strokeWidth={2}
-          className="flex-none text-warning"
-        />
-        <span>
-          <b>Google Drive token has expired.</b> Backups will fail until you reconnect.
-        </span>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void connect()}
-          className={`${BUTTON} ml-auto h-[34px] border border-[#8a6d1e] bg-transparent px-3.5 text-[#f7e2a6]`}
-        >
-          {label}
-        </button>
-        {failed}
-      </div>
-    )
   }
 
   return (
@@ -140,9 +111,9 @@ function DriveBanner({ drive }: { drive: DriveStatus }) {
         onClick={() => void connect()}
         className={`${BUTTON} ml-auto border-0 bg-text text-bg`}
       >
-        {label}
+        Connect Google Drive
       </button>
-      {failed}
+      {issue && <span className="basis-full text-[13px] text-danger">{issue.message}</span>}
     </div>
   )
 }
