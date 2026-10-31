@@ -43,7 +43,12 @@ export const appRoutes: AppRoute[] = [
     issues: [6, 45, 49, 52, 57],
     nav: { label: 'Backups', icon: DatabaseBackup },
   },
-  { path: '/server', title: 'Server', issues: [7], nav: { label: 'Server', icon: Server } },
+  {
+    path: '/server',
+    title: 'Server',
+    issues: [7, 59, 60, 61, 62, 63],
+    nav: { label: 'Server', icon: Server },
+  },
   { path: '/activity', title: 'Activity', issues: [8], nav: { label: 'Activity', icon: Activity } },
   {
     path: '/settings',
