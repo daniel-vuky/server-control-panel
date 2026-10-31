@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Backup } from '../api/types.gen'
 import { makeBackup, makeDatabase, makeProject } from '../test/projects'
-import { backupLine, databaseRule, projectFolder, projectRule, stepLabel } from './backup'
+import { backupLine, databaseRule, projectRule, stepLabel } from './backup'
 
 const rule = (reason: string, service = '') => ({ allowed: reason === '', reason, service })
 
@@ -164,24 +164,5 @@ describe('backupLine', () => {
       'Refused · Start db first',
     )
     expect(backupLine(backup({ state: 'interrupted' }))).toBe('Interrupted')
-  })
-})
-
-describe('projectFolder', () => {
-  // The same cases as internal/backup/names_test.go's slug.
-  it.each([
-    ['shop', 'shop'],
-    ['Shop', 'shop'],
-    ['a__b..c--d', 'a__b..c--d'],
-    ['Ünïcödé name', 'n-c-d-name'],
-    ['tab\tnew\nline', 'tab-new-line'],
-    ['Shop API', 'shop-api'],
-    ['crm_db.v2', 'crm_db.v2'],
-    ['  --a//b..  ', 'a-b'],
-    ['..hidden', 'hidden'],
-    ['日本', 'project'],
-    ['', 'project'],
-  ])('%j is %j', (name, want) => {
-    expect(projectFolder(name)).toBe(want)
   })
 })

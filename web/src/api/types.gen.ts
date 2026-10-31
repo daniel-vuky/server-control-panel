@@ -269,6 +269,8 @@ export interface Workspace {
  * could not be read). GET /api/projects reads only docker ps, so there
  * metrics are null, UpSince is "" and each container has no restart count,
  * start time or health; the live state fills them in.
+ * DriveFolder is the project's sub-folder on Drive, under the destination
+ * folder, that its backups go to (the slugged display name).
  */
 export interface Project {
   id: number /* int64 */;
@@ -289,6 +291,7 @@ export interface Project {
   memBytes: number | null;
   upSince: string;
   containers: Container[];
+  driveFolder: string;
 }
 /**
  * Container is one row of Project.Containers. Status is the word for the

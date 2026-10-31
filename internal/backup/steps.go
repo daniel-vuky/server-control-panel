@@ -506,7 +506,7 @@ func (m *Manager) send(ctx context.Context, j *job, tmp string, size int64) (str
 	if err != nil {
 		return "", "", err
 	}
-	sub, err := sess.FindOrCreateFolder(ctx, projectFolder(j.b.ProjectName), folder.ID)
+	sub, err := sess.FindOrCreateFolder(ctx, ProjectFolder(j.b.ProjectName), folder.ID)
 	if err != nil {
 		return "", "", err
 	}

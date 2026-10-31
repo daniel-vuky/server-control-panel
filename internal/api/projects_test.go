@@ -93,6 +93,10 @@ func TestProjectsLiveStatus(t *testing.T) {
 	if beta.DisplayName != "Beta" || beta.Status != "partial" || !beta.Self {
 		t.Errorf("beta = %+v", beta)
 	}
+	// The Drive sub-folder the backups go to: the server's slug of the name.
+	if alpha.DriveFolder != "alpha" || beta.DriveFolder != "beta" {
+		t.Errorf("drive folders = %q, %q", alpha.DriveFolder, beta.DriveFolder)
+	}
 	if !strings.Contains(rec.Body.String(), `"databases":[]`) {
 		t.Errorf("body = %s, want beta's databases as []", rec.Body.String())
 	}

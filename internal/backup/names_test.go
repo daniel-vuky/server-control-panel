@@ -83,3 +83,12 @@ func TestFormatBytes(t *testing.T) {
 		}
 	}
 }
+
+// ProjectFolder is the slug, or "project" when nothing is left of the name.
+func TestProjectFolder(t *testing.T) {
+	for name, want := range map[string]string{"Shop API": "shop-api", "crm_db.v2": "crm_db.v2", "..hidden": "hidden", "日本": "project", "": "project"} {
+		if got := ProjectFolder(name); got != want {
+			t.Errorf("ProjectFolder(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

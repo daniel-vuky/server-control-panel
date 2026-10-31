@@ -21,8 +21,10 @@ func fileName(projectName, dbName, dbType string, at time.Time, loc *time.Locati
 	return slugOr(projectName, "project") + "_" + slugOr(dbName, "db") + "_" + at.In(loc).Format("20060102-1504") + ext
 }
 
-// projectFolder is the project's sub-folder on Drive: its slugged display name.
-func projectFolder(displayName string) string { return slugOr(displayName, "project") }
+// ProjectFolder is the project's sub-folder on Drive, under the destination
+// folder: its slugged display name. The API sends it (Project.driveFolder), so
+// the UI never re-derives it.
+func ProjectFolder(displayName string) string { return slugOr(displayName, "project") }
 
 // slug lowercases s and turns every run of characters other than a-z, 0-9, ".",
 // "_" and "-" into one "-". Dashes and dots are trimmed from both ends, so a

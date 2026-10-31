@@ -31,6 +31,7 @@ const projects: Project[] = [
     memBytes: null,
     upSince: '',
     containers: [],
+    driveFolder: 'shop',
   },
   {
     id: 2,
@@ -51,6 +52,7 @@ const projects: Project[] = [
     memBytes: null,
     upSince: '',
     containers: [],
+    driveFolder: 'panel',
   },
 ]
 

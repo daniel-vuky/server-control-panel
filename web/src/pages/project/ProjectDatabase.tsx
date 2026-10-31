@@ -4,7 +4,6 @@ import type { Backup, Database, Project } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import { BackupSteps } from '../../components/BackupProgress'
 import IssueLinks from '../../components/IssueLinks'
-import { projectFolder } from '../../lib/backup'
 import { databasePlace, databaseType } from '../../lib/databases'
 import type { BackupFlow } from '../../lib/useBackup'
 import BackUpButton from './BackUpButton'
@@ -56,7 +55,7 @@ export default function ProjectDatabase() {
                   <span className="min-w-0 break-all">
                     Stored in{' '}
                     <span className="font-mono text-text-2">
-                      Drive/{folder.name}/{projectFolder(project.displayName)}/
+                      Drive/{folder.name}/{project.driveFolder}/
                     </span>
                   </span>
                 </p>

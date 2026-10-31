@@ -190,25 +190,3 @@ export function backupLine(b: Backup): string {
       return stateWord(b.state)
   }
 }
-
-/**
- * projectFolder is the project's sub-folder on Drive: its display name
- * slugged the way internal/backup/names.go's projectFolder does (lowercase;
- * each run of characters other than a-z, 0-9, ".", "_" and "-" becomes one
- * "-"; dashes and dots trimmed from both ends; "project" when nothing is
- * left). Change both together.
- */
-export function projectFolder(displayName: string): string {
-  let out = ''
-  let dash = false
-  for (const r of displayName.toLowerCase()) {
-    if (/^[a-z0-9._-]$/.test(r)) {
-      out += r
-      dash = false
-    } else if (!dash) {
-      out += '-'
-      dash = true
-    }
-  }
-  return out.replace(/^[-.]+|[-.]+$/g, '') || 'project'
-}

@@ -54,6 +54,8 @@ describe('database and backup tab', () => {
     pushState(
       [
         makeProject({
+          // The server names the Drive sub-folder; the page never slugs the name.
+          driveFolder: 'shop-from-server',
           databases: [
             makeDatabase({
               name: 'shop_production',
@@ -106,7 +108,7 @@ describe('database and backup tab', () => {
     )
 
     // Where the copies go on Drive: the folder, then the project's sub-folder.
-    expect(card).toHaveTextContent('Stored in Drive/server-backups/shop/')
+    expect(card).toHaveTextContent('Stored in Drive/server-backups/shop-from-server/')
   })
 
   it('says when no database was detected', () => {

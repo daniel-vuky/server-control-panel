@@ -45,6 +45,7 @@ const state: LiveState = {
       memBytes: null,
       upSince: '',
       containers: [],
+      driveFolder: 'shop',
     },
   ],
 }

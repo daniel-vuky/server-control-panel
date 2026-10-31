@@ -26,6 +26,7 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     memBytes: null,
     upSince: '',
     containers: [],
+    driveFolder: 'shop',
     ...overrides,
   }
 }

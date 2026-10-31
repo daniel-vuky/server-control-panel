@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/backup"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
 	"github.com/daniel-vuky/server-control-panel/internal/project"
 	"github.com/daniel-vuky/server-control-panel/internal/scan"
@@ -69,6 +70,7 @@ func toProjects(vs []control.ProjectView) []Project {
 			MemBytes:        v.MemBytes,
 			UpSince:         formatTime(v.UpSince),
 			Containers:      toContainers(v.Components),
+			DriveFolder:     backup.ProjectFolder(v.DisplayName),
 		}
 		out = append(out, p)
 	}
