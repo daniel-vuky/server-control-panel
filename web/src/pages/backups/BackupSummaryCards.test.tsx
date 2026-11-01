@@ -176,4 +176,41 @@ describe('BackupSummaryCards', () => {
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     expect(retry).toHaveBeenCalled()
   })
+
+  it('pulses shared skeleton blocks while loading, with no Loading text', () => {
+    const { container } = render(
+      <BackupSummaryCards summary={null} zone={zone} error="" onRetry={() => {}} />,
+    )
+    const loading = container.querySelector('section[aria-busy="true"]') as HTMLElement
+    expect(loading.querySelectorAll('.animate-scp-pulse')).toHaveLength(12)
+    expect(loading.querySelector('.animate-pulse')).toBeNull()
+    expect(loading).not.toHaveTextContent('Loading')
+  })
+
+  it('keeps the cards dimmed under the banner when a re-read fails, and Retry reads again', () => {
+    const retry = vi.fn()
+    const { rerender } = render(
+      <BackupSummaryCards summary={summary()} zone={zone} error="" onRetry={retry} />,
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+    rerender(
+      <BackupSummaryCards
+        summary={summary()}
+        zone={zone}
+        error="database is locked"
+        onRetry={retry}
+      />,
+    )
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('Could not load the backup summary.')
+    expect(alert).toHaveTextContent('database is locked')
+    const drive = card('Drive usage')
+    expect(drive).toHaveTextContent('1.4 GB')
+    const box = drive.parentElement as HTMLElement
+    expect(box).toHaveAttribute('data-stale')
+    expect(box.style.opacity).toBe('0.55')
+    expect(box.style.filter).toBe('saturate(0.6)')
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(retry).toHaveBeenCalledTimes(1)
+  })
 })

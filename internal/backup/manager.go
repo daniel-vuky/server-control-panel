@@ -613,11 +613,7 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 	service, reason := project.BackupReason(db, t.ComposeProject, t.ServiceDetails, cs, up)
 	switch reason {
 	case project.ReasonNotSupported:
-		words := wordsNoService
-		if db.Type != "postgresql" && db.Type != "mysql" && db.Type != "mongodb" {
-			words = wordsType
-		}
-		return plan{}, &Refusal{Code: CodeNotSupported, Words: words}
+		return plan{}, &Refusal{Code: CodeNotSupported, Words: notSupportedWords(db)}
 	case project.ReasonNoDBName:
 		return plan{service: service}, &Refusal{Code: CodeNoDBName, Words: noDBNameWords(db.Type), Service: service}
 	case project.ReasonDockerDown:
@@ -632,13 +628,42 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 	values["service"] = service
 	byDefault := db.Type == "postgresql" && project.NameIsPlaceholder(db, service)
 	if !byDefault {
+		// The named actions also take the user and password variable names: a
+		// hand-added database's, else empty, the image's standard variables.
 		values["dbname"] = db.Name
+		values["uservar"], values["passvar"] = db.UserVar, db.PasswordVar
 	}
 	image := serviceImage(t.ServiceDetails, service)
 	p := plan{service: service, image: image, values: values, tool: dumpTool(db.Type, image),
-		secrets: scan.SecretValues(scan.ReadDotenv(filepath.Join(t.Path, ".env")))}
+		secrets: scan.ReadProjectSecrets(ctx, m.r, t, m.log, credentialVars(db)...)}
 	p.dump, p.size = actions(db.Type, byDefault, override)
 	return p, nil
+}
+
+// credentialVars are the names of a hand-added database's user and password
+// variables, whose values are masked whatever the names look like; none for
+// a detected database or the image's standard variables.
+func credentialVars(db project.Database) []string {
+	var out []string
+	for _, n := range []string{db.UserVar, db.PasswordVar} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// notSupportedWords words a not_supported database whose type and location
+// passed checkLocation: a type the panel cannot back up, a hand-added
+// database whose service left the project, or a service that cannot be found.
+func notSupportedWords(db project.Database) string {
+	switch {
+	case db.Type != "postgresql" && db.Type != "mysql" && db.Type != "mongodb":
+		return wordsType
+	case db.Manual:
+		return "The service " + db.Location + " is not in the project any more."
+	}
+	return wordsNoService
 }
 
 // noDBNameWords names the variable that sets the database name: POSTGRES_DB
@@ -871,6 +896,17 @@ func (m *Manager) activeJob(key dbRef) *job {
 		}
 	}
 	return nil
+}
+
+// Busy says whether a backup of database key of project projectID is queued
+// or running, or an Enqueue of it is between its checks. Removing a
+// hand-added database is refused while it is.
+func (m *Manager) Busy(projectID int64, key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ref := dbRef{projectID, key}
+	_, reserved := m.reserved[ref]
+	return reserved || m.activeJob(ref) != nil
 }
 
 func alreadyRunning(id int64, dbName string) *Refusal {

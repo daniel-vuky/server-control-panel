@@ -1,14 +1,20 @@
 import { TriangleAlert } from 'lucide-react'
 
-/** LoadError is the error banner of design 10, with a Retry button. */
+/**
+ * LoadError is the error banner of design 10, with a Retry button. `busy`
+ * (the read Retry started is on its way) disables Retry and has it read
+ * "Retrying…".
+ */
 export default function LoadError({
   title,
   message,
   onRetry,
+  busy = false,
 }: {
   title: string
   message: string
   onRetry(): void
+  busy?: boolean
 }) {
   return (
     <div
@@ -26,9 +32,11 @@ export default function LoadError({
       <button
         type="button"
         onClick={onRetry}
-        className="ml-auto h-8 cursor-pointer rounded-md border border-error-strong bg-transparent px-3 text-error-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        disabled={busy}
+        aria-busy={busy || undefined}
+        className="ml-auto h-8 cursor-pointer rounded-md border border-error-strong bg-transparent px-3 text-error-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Retry
+        {busy ? 'Retrying…' : 'Retry'}
       </button>
     </div>
   )

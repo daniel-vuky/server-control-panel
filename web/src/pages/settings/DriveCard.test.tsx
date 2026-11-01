@@ -75,6 +75,16 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Google Drive card', () => {
+  it('shows skeleton lines, not a Loading line, until the first live state', () => {
+    route({})
+    renderApp('/settings', { routes: [{ path: '/settings', element: <DriveCard /> }] })
+    const card = screen.getByRole('region', { name: 'Google Drive' })
+    const skeleton = within(card).getByRole('status', { name: 'Loading Google Drive' })
+    expect(skeleton.querySelectorAll('.animate-scp-pulse').length).toBe(2)
+    expect(card).not.toHaveTextContent('Loading')
+    expect(within(card).queryAllByRole('button')).toHaveLength(0)
+  })
+
   it('not_configured says so, links the guide and has no buttons', () => {
     route({})
     renderCard(

@@ -42,16 +42,19 @@ func webStub() http.Handler {
 }
 
 // fakeDocker answers compose.config with canned JSON per {dir} (a project
-// with one nginx service by default), docker.containers with canned lines,
+// with one nginx service by default) or the error set for {dir} in
+// configErrs, docker.containers with canned lines,
 // docker.ping with pingErr, and the lifecycle commands with lifecycleErr. A
 // lifecycle command that succeeds replaces the container lines with after,
-// when set. The compose.logs.tail* backlog commands answer backlog, and each
+// when set. The db.*.check actions succeed, or fail with checkErr, and are
+// kept in checks. The compose.logs.tail* backlog commands answer backlog, and each
 // Stream (the compose.logs follow) delivers the lines sent on follow until
 // follow is closed (it then exits 0) or its context ends. It logs every action
 // it is asked to run.
 type fakeDocker struct {
 	mu            sync.Mutex
 	configs       map[string]string
+	configErrs    map[string]error
 	containers    string
 	containersErr error
 	pingErr       error
@@ -70,10 +73,21 @@ type fakeDocker struct {
 	streamStarted   chan runner.Values // one value per Stream call
 	streamCancelled chan struct{}      // one value per Stream that ended on its ctx
 
-	dbSize string        // what the db.*.size actions print ("1024" by default)
-	dump   []byte        // what the db.*.dump actions write (dumpData by default)
-	dgate  chan struct{} // when set, the dumps wait for it to close
-	donce  sync.Once
+	dbSize  string            // what the db.*.size actions print ("1024" by default)
+	dump    []byte            // what the db.*.dump actions write (dumpData by default)
+	dumpErr *runner.ExitError // when set, the dumps fail with it and its stderr
+	dgate   chan struct{}     // when set, the dumps wait for it to close
+	donce   sync.Once
+
+	checkErr *runner.ExitError // when set, the db.*.check actions fail with it and its stderr
+	checks   []call            // the db.*.check actions run, in order
+	onCheck  func()            // when set, runs (unlocked) as a db.*.check action starts
+}
+
+// call is one command the fake ran, with its values.
+type call struct {
+	a runner.Action
+	v runner.Values
 }
 
 // dumpData is what a dump writes by default.
@@ -86,6 +100,7 @@ func isDBAction(a runner.Action, kind string) bool {
 func newFakeDocker() *fakeDocker {
 	return &fakeDocker{
 		configs:         map[string]string{},
+		configErrs:      map[string]error{},
 		follow:          make(chan string),
 		streamStarted:   make(chan runner.Values, 16),
 		streamCancelled: make(chan struct{}, 16),
@@ -114,6 +129,7 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 	f.calls = append(f.calls, a)
 	gate, lgate, containers, containersErr := f.gate, f.lgate, f.containers, f.containersErr
 	cfg, ok := f.configs[v["dir"]]
+	cfgErr := f.configErrs[v["dir"]]
 	f.mu.Unlock()
 	switch {
 	case a == runner.DockerContainers:
@@ -125,6 +141,9 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 		}
 		return runner.Result{Stdout: []byte(containers)}, nil
 	case a == runner.ComposeConfig || a == runner.ComposeConfigOverride:
+		if cfgErr != nil {
+			return runner.Result{ExitCode: 1}, cfgErr
+		}
 		if !ok {
 			cfg = configJSON(scan.NormalizeProjectName(filepath.Base(v["dir"])), map[string]service{"app": {Image: "nginx"}})
 		}
@@ -137,6 +156,24 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		return runner.Result{Stdout: []byte("29.0.0\n")}, f.pingErr
+	case isDBAction(a, "check"):
+		f.mu.Lock()
+		hook := f.onCheck
+		f.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		cp := runner.Values{}
+		for k, val := range v {
+			cp[k] = val
+		}
+		f.checks = append(f.checks, call{a: a, v: cp})
+		if f.checkErr != nil {
+			return runner.Result{Stderr: []byte(f.checkErr.Stderr), ExitCode: f.checkErr.Code}, f.checkErr
+		}
+		return runner.Result{}, nil
 	case isDBAction(a, "size"):
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -164,11 +201,11 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 }
 
 // RunTo answers the db.*.dump actions: it writes dump (dumpData by default)
-// to stdout, after waiting for dgate when it is set.
+// to stdout, or fails with dumpErr, after waiting for dgate when it is set.
 func (f *fakeDocker) RunTo(ctx context.Context, s runner.Stack, a runner.Action, _ runner.Values, _ []string, stdout io.Writer) ([]byte, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, a)
-	gate, data := f.dgate, f.dump
+	gate, data, dumpErr := f.dgate, f.dump, f.dumpErr
 	f.mu.Unlock()
 	if !isDBAction(a, "dump") {
 		return nil, fmt.Errorf("fake: unexpected %s %s", s, a)
@@ -179,6 +216,9 @@ func (f *fakeDocker) RunTo(ctx context.Context, s runner.Stack, a runner.Action,
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+	if dumpErr != nil {
+		return []byte(dumpErr.Stderr), dumpErr
 	}
 	if data == nil {
 		data = dumpData
@@ -292,6 +332,13 @@ func (f *fakeDocker) setConfig(dir, cfg string) {
 type service struct {
 	Image       string            `json:"image"`
 	Environment map[string]string `json:"environment,omitempty"`
+	EnvFile     []envFile         `json:"env_file,omitempty"`
+}
+
+// envFile is one env_file entry as docker compose config prints it.
+type envFile struct {
+	Path     string `json:"path"`
+	Required bool   `json:"required"`
 }
 
 // configJSON is a docker compose config with the given name and services.

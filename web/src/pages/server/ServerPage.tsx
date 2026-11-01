@@ -5,7 +5,8 @@ import { LiveDim, useLive } from '../../app/live'
 import LoadError from '../../components/LoadError'
 import PageHeader from '../../components/PageHeader'
 import RangeSwitch from '../../components/RangeSwitch'
-import { SkeletonCard } from '../../components/Skeleton'
+import Skeleton, { SkeletonCard } from '../../components/Skeleton'
+import Stale from '../../components/Stale'
 import { formatBytes } from '../../lib/format'
 import { useRangeParam } from '../../lib/range'
 import { useRead } from '../../lib/useRead'
@@ -43,8 +44,9 @@ function headerLine(info: ServerInfo): string {
  * ServerPage is /server (design 05): the header with the server's facts and
  * the period switch (in the URL, 24 hours by default), the four resource
  * charts, the usage by app, System info and System services. It re-reads
- * every 30 s while the tab is visible; the Docker state follows the live
- * state at once.
+ * every 30 s while the tab is visible (a failed re-read keeps what is shown,
+ * dimmed under the error banner); the Docker state follows the live state at
+ * once.
  */
 export default function ServerPage() {
   const live = useLive()
@@ -64,60 +66,102 @@ export default function ServerPage() {
   }, REFRESH_MS)
 
   const info = server.data
+  // Until the server answers, the charts and the system cards hold their place.
+  const serverPending = info === null && server.error === ''
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
         title="Server"
-        subtitle={info ? headerLine(info) : undefined}
+        subtitle={
+          info ? (
+            headerLine(info)
+          ) : serverPending ? (
+            <span role="status" aria-busy="true" aria-label="Loading the server">
+              <Skeleton inline className="h-3 w-[min(420px,70vw)]" />
+            </span>
+          ) : undefined
+        }
         actions={<RangeSwitch value={range} onChange={setRange} />}
       />
 
       <LiveDim className="flex min-w-0 flex-col gap-5">
-        {info === null && server.error === '' && (
-          <p role="status" className="m-0 text-[13px] text-muted">
-            Loading the server…
-          </p>
-        )}
         {server.error !== '' && (
           <LoadError
             title="Could not load the server."
             message={server.error}
             onRetry={server.refresh}
+            busy={server.pending}
           />
         )}
 
         {info && !info.available && <NotAvailable reason={info.reason} />}
-        {info?.available && series.data && <ServerCharts series={series.data} info={info} />}
-        {info?.available && series.data === null && series.error === '' && <ChartsLoading />}
-        {info?.available && series.error !== '' && (
-          <LoadError
-            title="Could not load the charts."
-            message={series.error}
-            onRetry={series.refresh}
-          />
+        {(serverPending || info?.available) && (
+          <>
+            {series.data && info && (
+              <Stale
+                error={series.staleError}
+                onRetry={series.refresh}
+                title="Could not refresh the charts."
+              >
+                <ServerCharts series={series.data} info={info} />
+              </Stale>
+            )}
+            {(series.data === null || info === null) && series.error === '' && <ChartsLoading />}
+            {series.error !== '' && (
+              <LoadError
+                title="Could not load the charts."
+                message={series.error}
+                onRetry={series.refresh}
+                busy={series.pending}
+              />
+            )}
+          </>
         )}
 
         {usage.data === null && usage.error === '' && <SkeletonCard />}
-        {usage.data && <UsageTable report={usage.data} dockerUp={live.dockerUp} />}
+        {usage.data && (
+          <Stale
+            error={usage.staleError}
+            onRetry={usage.refresh}
+            title="Could not refresh the usage by app."
+            className="min-w-0"
+          >
+            <UsageTable report={usage.data} dockerUp={live.dockerUp} />
+          </Stale>
+        )}
         {usage.error !== '' && (
           <LoadError
             title="Could not load the usage by app."
             message={usage.error}
             onRetry={usage.refresh}
+            busy={usage.pending}
           />
         )}
 
+        {serverPending && (
+          <div className={SYSTEM_GRID}>
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        )}
         {info && (
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] gap-3.5">
+          <Stale
+            error={server.staleError}
+            onRetry={server.refresh}
+            title="Could not refresh the server."
+            className={SYSTEM_GRID}
+          >
             <SystemInfoCard info={info} />
             <ServicesCard info={info} dockerUp={live.dockerUp} />
-          </div>
+          </Stale>
         )}
       </LiveDim>
     </div>
   )
 }
+
+const SYSTEM_GRID = 'grid grid-cols-[repeat(auto-fit,minmax(min(380px,100%),1fr))] gap-3.5'
 
 /** ChartsLoading holds the charts' place while a period is read. */
 function ChartsLoading() {

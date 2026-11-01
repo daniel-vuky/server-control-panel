@@ -33,7 +33,7 @@ export default function PageHeader({
  * brand and what the page is on the left, the page's extras (the stepper) and
  * the connection badge on the right. The card below it holds the page's h1.
  */
-export function BrandRow({ label, children }: { label: string; children?: ReactNode }) {
+export function BrandRow({ label, children }: { label: ReactNode; children?: ReactNode }) {
   return (
     <header className="flex w-full max-w-[980px] flex-wrap items-center justify-between gap-4">
       <p className="m-0 flex items-baseline gap-2">

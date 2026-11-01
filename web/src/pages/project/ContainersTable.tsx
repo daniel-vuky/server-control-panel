@@ -1,6 +1,8 @@
+import { Box } from 'lucide-react'
 import { useId } from 'react'
 import type { Container } from '../../api/types.gen'
 import ContainerStatus from '../../components/ContainerStatus'
+import EmptyState from '../../components/EmptyState'
 import { containerTone } from '../../lib/containers'
 import { formatCpu, formatMem } from '../../lib/format'
 
@@ -47,7 +49,11 @@ export default function ContainersTable({
           Docker is not responding, so containers can't be read.
         </p>
       ) : containers.length === 0 ? (
-        <p className="m-0 px-4 py-5 text-[13px] text-muted">No containers yet.</p>
+        <div className="p-3.5">
+          <EmptyState icon={Box} title="No containers yet">
+            Start the project to create its containers.
+          </EmptyState>
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] table-fixed border-collapse text-left">

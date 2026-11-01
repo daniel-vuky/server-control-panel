@@ -691,7 +691,7 @@ func TestLineWriterLineEnds(t *testing.T) {
 }
 
 // dumpValues fills every slot of DBPgDump.
-var dumpValues = Values{"dir": "/w/a", "file": "/w/a/compose.yaml", "service": "db", "dbname": "shop"}
+var dumpValues = Values{"dir": "/w/a", "file": "/w/a/compose.yaml", "service": "db", "dbname": "shop", "uservar": "", "passvar": ""}
 
 // setDumpLimits lowers the stall and ceiling of RunTo for one test.
 func setDumpLimits(t *testing.T, stall, ceiling time.Duration) {
@@ -724,7 +724,7 @@ func TestRunToArgv(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"compose", "--project-directory", "/w/a", "-f", "/w/a/compose.yaml",
-		"exec", "-T", "db", "sh", "-c", pgDumpScript, "sh", "shop"}
+		"exec", "-T", "db", "sh", "-c", pgDumpScript, "sh", "shop", "", ""}
 	// The script spans lines; join the ARG: lines back at the script.
 	got := strings.Split(strings.SplitN(out.String(), "\nENV:", 2)[0], "\nARG:")
 	got[0] = strings.TrimPrefix(got[0], "ARG:")
@@ -860,6 +860,9 @@ func TestRunToRefusesNonDump(t *testing.T) {
 		{DBPgSize, dumpValues},
 		{DBMySQLSize, dumpValues},
 		{DBMongoSize, dumpValues},
+		{DBPgCheck, dumpValues},
+		{DBMySQLCheck, dumpValues},
+		{DBMongoCheckOverride, with(dumpValues, "override", "/w/a/compose.override.yaml")},
 		{ComposeUp, plain},
 		{ComposeLogs, with(plain, "since", "2026-10-30T10:00:00Z")},
 		{DockerContainers, nil},
@@ -896,6 +899,20 @@ func TestRunSizeAction(t *testing.T) {
 	res, err := r.Run(context.Background(), StackCompose, DBPgSizeDefault, v, nil)
 	if err != nil || string(res.Stdout) != "7706291\n" {
 		t.Fatalf("Run = %q, %v", res.Stdout, err)
+	}
+}
+
+// The check actions are reads: Run runs them, with the three named slots.
+func TestRunCheckAction(t *testing.T) {
+	r := newRunner(t, "")
+	for _, a := range []Action{DBPgCheck, DBMySQLCheck, DBMongoCheck} {
+		res, err := r.Run(context.Background(), StackCompose, a, with(dumpValues, "uservar", "APP_USER", "passvar", "APP_PASSWORD"), nil)
+		if err != nil {
+			t.Fatalf("Run %s: %v", a, err)
+		}
+		if out := string(res.Stdout); !strings.Contains(out, "\nARG:shop\nARG:APP_USER\nARG:APP_PASSWORD\n") {
+			t.Errorf("Run %s argv %q", a, out)
+		}
 	}
 }
 

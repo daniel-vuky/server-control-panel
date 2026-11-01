@@ -2,7 +2,6 @@ import { type FormEvent, useEffect, useId, useRef, useState } from 'react'
 import { getBackupSettings, saveBackupDefaults } from '../../api/backups'
 import { ApiError, isFieldError } from '../../api/client'
 import type { BackupSettings } from '../../api/types.gen'
-import LoadError from '../../components/LoadError'
 import ScheduleForm from '../../components/ScheduleForm'
 import { useToast } from '../../components/Toast'
 import {
@@ -13,7 +12,8 @@ import {
   type ScheduleField,
   sameDraft,
 } from '../../lib/schedule'
-import { useLoad } from '../../lib/useLoad'
+import { useRead } from '../../lib/useRead'
+import CardRead from './CardRead'
 
 const message = (err: unknown) =>
   err instanceof Error && err.message ? err.message : 'Something went wrong.'
@@ -24,7 +24,7 @@ const message = (err: unknown) =>
  * database starts from. Saving never changes an existing database's schedule.
  */
 export default function BackupDefaultsCard() {
-  const { load, retry } = useLoad(getBackupSettings)
+  const read = useRead(getBackupSettings, 'backup-settings')
 
   return (
     <section aria-labelledby="bk-title" className="rounded-[10px] border border-border bg-surface">
@@ -37,21 +37,9 @@ export default function BackupDefaultsCard() {
           Database &amp; Backup tab.
         </span>
       </div>
-      {load.state === 'loading' && (
-        <p role="status" className="px-[18px] py-3.5 text-[13px] text-muted">
-          Loading backup defaults…
-        </p>
-      )}
-      {load.state === 'error' && (
-        <div className="p-3.5">
-          <LoadError
-            title="Could not load backup defaults."
-            message={load.message}
-            onRetry={retry}
-          />
-        </div>
-      )}
-      {load.state === 'ok' && <DefaultsForm settings={load.data} />}
+      <CardRead read={read} what="backup defaults" lines={3}>
+        {(settings) => <DefaultsForm settings={settings} />}
+      </CardRead>
     </section>
   )
 }

@@ -1,15 +1,19 @@
 package runner
 
 // The database scripts. Each runs as `docker compose exec -T {service} sh -c
-// <script> sh [{dbname}]`, so inside the database's own container, as the
-// service's user, with the container's environment (ADR 0011). They are fixed
-// constants: no value is ever spliced into them, and the database name, when
-// there is one, arrives only as "$1", checked by the {dbname} slot.
+// <script> sh [{dbname} {uservar} {passvar}]`, so inside the database's own
+// container, as the service's user, with the container's environment (ADR
+// 0011). They are fixed constants: no value is ever spliced into them. The
+// named scripts get three validated names: the database name as "$1", checked
+// by the {dbname} slot, and the names of the variables that hold the user and
+// the password as "$2" and "$3", checked by the {uservar} and {passvar} slots
+// and again by varGuard; both empty mean the image's standard variables.
 //
 // Rules every script keeps:
 //   - credentials are read from the variable or its Docker-secrets twin,
 //     ${VAR:-$(cat "${VAR_FILE:-/dev/null}" 2>/dev/null)}, as the official
-//     images' entrypoints do;
+//     images' entrypoints do; a custom variable is read the same way through
+//     eval, which varGuard's check makes unable to run anything;
 //   - a password is never on a command line and never exported: it goes into a
 //     mktemp file (umask 077) that the EXIT trap removes, and printf, a shell
 //     builtin in busybox ash, dash and bash, writes it without a new process;
@@ -31,7 +35,7 @@ package runner
 // scriptStart begins every script: private temp files, and their removal on
 // every way out. f is the temp file, once there is one.
 const scriptStart = `umask 077
-unset f u d pw c
+unset f u d pw c pf a r
 trap '[ -z "${f:-}" ] || rm -f "$f"' EXIT
 trap 'exit 1' HUP INT TERM PIPE
 `
@@ -74,7 +78,7 @@ const dumpLive = `scp_live() {
 // it before it exits: the pid file goes only once the dumper has, and the
 // dumper is reaped, not left a zombie under a pid 1 that does not reap.
 const dumpStart = `umask 077
-unset f u d pw c s r k t o q n e
+unset f u d pw c s r k t o q n e pf a
 trap '[ -z "${f:-}" ] || rm -f "$f"; [ -z "${t:-}" ] || rm -f "$t"; [ -z "${o:-}" ] || rm -f /tmp/.scp-dump.pid' EXIT
 trap '[ -z "${k:-}" ] || { kill -s TERM "$k"; kill -s CONT "$k"; wait "$k"; } 2>/dev/null; exit 1' HUP INT TERM PIPE
 `
@@ -126,21 +130,69 @@ k=
 exit "$e"
 `
 
-// pgLogin sets u (POSTGRES_USER, else postgres) and d ("$1", else the image's
-// default database, POSTGRES_DB, else the user). The official image trusts
-// local socket connections, so it first tries the socket with no password.
-// Only when that fails and POSTGRES_PASSWORD is set does it write a
-// PGPASSFILE, with : and \ escaped as .pgpass needs, and export its path (not
-// the password).
-const pgLogin = `u=${POSTGRES_USER:-$(cat "${POSTGRES_USER_FILE:-/dev/null}" 2>/dev/null)}
-u=${u:-postgres}
+// varGuard checks the variable names "$2" and "$3" again, before anything
+// reads them: each is empty or a shell variable name (a letter or _, then
+// letters, digits and _, at most 64), and both are set or neither. Anything
+// else exits 64 and runs nothing. A name that passes cannot carry shell
+// syntax, so customVars may eval it.
+const varGuard = `case "${2:-}" in
+[0-9]* | *[!A-Za-z0-9_]*)
+	echo 'invalid variable name' >&2
+	exit 64
+	;;
+esac
+case "${3:-}" in
+[0-9]* | *[!A-Za-z0-9_]*)
+	echo 'invalid variable name' >&2
+	exit 64
+	;;
+esac
+if [ "${#2}" -gt 64 ] || [ "${#3}" -gt 64 ] || { [ -n "${2:-}" ] && [ -z "${3:-}" ]; } || { [ -z "${2:-}" ] && [ -n "${3:-}" ]; }; then
+	echo 'invalid variable name' >&2
+	exit 64
+fi
+`
+
+// customVars sets u and pw from the variables named "$2" and "$3", or their
+// _FILE twins, the way the standard variables are read. It runs inside
+// "if [ -n "${2:-}" ]", after varGuard. An empty user is refused, naming the
+// variable; an empty password is left to the database to refuse.
+const customVars = `	eval "u=\${$2:-}"
+	if [ -z "$u" ]; then
+		eval "pf=\${${2}_FILE:-}"
+		u=$(cat "${pf:-/dev/null}" 2>/dev/null)
+	fi
+	eval "pw=\${$3:-}"
+	if [ -z "$pw" ]; then
+		eval "pf=\${${3}_FILE:-}"
+		pw=$(cat "${pf:-/dev/null}" 2>/dev/null)
+	fi
+	pf=
+	if [ -z "$u" ]; then
+		echo "$2 is empty in the container's environment" >&2
+		exit 1
+	fi
+`
+
+// pgLogin sets u (the custom user variable, else POSTGRES_USER, else
+// postgres) and d ("$1", else the image's default database, POSTGRES_DB, else
+// the user). The official image trusts local socket connections, so it first
+// tries the socket with no password. Only when that fails and there is a
+// password (the custom password variable, else POSTGRES_PASSWORD) does it
+// write a PGPASSFILE, with : and \ escaped as .pgpass needs, and export its
+// path (not the password).
+const pgLogin = `if [ -n "${2:-}" ]; then
+` + customVars + `else
+	u=${POSTGRES_USER:-$(cat "${POSTGRES_USER_FILE:-/dev/null}" 2>/dev/null)}
+	u=${u:-postgres}
+fi
 d="${1:-}"
 if [ -z "$d" ]; then
 	d=${POSTGRES_DB:-$(cat "${POSTGRES_DB_FILE:-/dev/null}" 2>/dev/null)}
 	d=${d:-$u}
 fi
 if ! psql --no-password -X -q -U "$u" -d "$d" -tAc 'select 1' >/dev/null 2>&1; then
-	pw=${POSTGRES_PASSWORD:-$(cat "${POSTGRES_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
+	[ -n "${2:-}" ] || pw=${POSTGRES_PASSWORD:-$(cat "${POSTGRES_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
 	if [ -n "$pw" ]; then
 		f=$(mktemp) || exit 1
 		printf '*:*:*:*:%s\n' "$(printf '%s' "$pw" | sed 's/[\\:]/\\&/g')" >"$f" || exit 1
@@ -149,39 +201,61 @@ if ! psql --no-password -X -q -U "$u" -d "$d" -tAc 'select 1' >/dev/null 2>&1; t
 		export PGPASSFILE
 	fi
 fi
+unset pw
 `
 
 // pgDumpScript writes a plain SQL dump of the database to stdout. It serves
 // db.pg.dump ("$1" is the name) and db.pg.dump.default (no "$1": the image's
 // default database).
-const pgDumpScript = dumpStart + dumpGuard + pgLogin +
+const pgDumpScript = dumpStart + varGuard + dumpGuard + pgLogin +
 	`pg_dump --no-password --clean --if-exists -U "$u" -d "$d" &
 ` + dumpTail
 
 // pgSizeScript prints the size of the same database in bytes. It serves
 // db.pg.size and db.pg.size.default.
-const pgSizeScript = scriptStart + pgLogin +
+const pgSizeScript = scriptStart + varGuard + pgLogin +
 	`psql --no-password -X -q -U "$u" -d "$d" -tAc 'select pg_database_size(current_database())'
 `
 
-// mysqlLogin writes the client's defaults file to f: root with
-// MYSQL_ROOT_PASSWORD or MARIADB_ROOT_PASSWORD when one is set, else
-// MYSQL_USER or MARIADB_USER with its password, else root with no password
-// (MariaDB's unix_socket login, or an allowed empty password). Values are
-// double-quoted with \ and " escaped, the option-file syntax of both MySQL and
-// MariaDB. MYSQL_PWD is not used: MySQL 9.7 deprecates it.
-const mysqlLogin = `pw=${MYSQL_ROOT_PASSWORD:-$(cat "${MYSQL_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
-[ -n "$pw" ] || pw=${MARIADB_ROOT_PASSWORD:-$(cat "${MARIADB_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
-if [ -n "$pw" ]; then
-	u=root
-else
-	u=${MYSQL_USER:-$(cat "${MYSQL_USER_FILE:-/dev/null}" 2>/dev/null)}
-	[ -n "$u" ] || u=${MARIADB_USER:-$(cat "${MARIADB_USER_FILE:-/dev/null}" 2>/dev/null)}
-	pw=${MYSQL_PASSWORD:-$(cat "${MYSQL_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
-	[ -n "$pw" ] || pw=${MARIADB_PASSWORD:-$(cat "${MARIADB_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
-	if [ -z "$u" ]; then
+// pgCheckScript (db.pg.check) connects to database "$1" as the user. A
+// database that does not exist or refuses the user gets the panel's words;
+// any other failure (a wrong password, an unknown role) keeps psql's.
+const pgCheckScript = scriptStart + varGuard + pgLogin +
+	`if ! r=$(psql --no-password -X -q -U "$u" -d "$1" -tAc 'select 1' 2>&1 >/dev/null); then
+	case $r in
+	*'database "'*'" does not exist'* | *'permission denied for database'*)
+		echo "Database $1 was not found, or the user has no access to it." >&2
+		;;
+	*)
+		[ -z "$r" ] || printf '%s\n' "$r" >&2
+		;;
+	esac
+	exit 1
+fi
+`
+
+// mysqlLogin writes the client's defaults file to f: the custom user and
+// password variables when they are given; else root with MYSQL_ROOT_PASSWORD
+// or MARIADB_ROOT_PASSWORD when one is set, else MYSQL_USER or MARIADB_USER
+// with its password, else root with no password (MariaDB's unix_socket login,
+// or an allowed empty password). Values are double-quoted with \ and "
+// escaped, the option-file syntax of both MySQL and MariaDB. MYSQL_PWD is not
+// used: MySQL 9.7 deprecates it.
+const mysqlLogin = `if [ -n "${2:-}" ]; then
+` + customVars + `else
+	pw=${MYSQL_ROOT_PASSWORD:-$(cat "${MYSQL_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
+	[ -n "$pw" ] || pw=${MARIADB_ROOT_PASSWORD:-$(cat "${MARIADB_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
+	if [ -n "$pw" ]; then
 		u=root
-		pw=
+	else
+		u=${MYSQL_USER:-$(cat "${MYSQL_USER_FILE:-/dev/null}" 2>/dev/null)}
+		[ -n "$u" ] || u=${MARIADB_USER:-$(cat "${MARIADB_USER_FILE:-/dev/null}" 2>/dev/null)}
+		pw=${MYSQL_PASSWORD:-$(cat "${MYSQL_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
+		[ -n "$pw" ] || pw=${MARIADB_PASSWORD:-$(cat "${MARIADB_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
+		if [ -z "$u" ]; then
+			u=root
+			pw=
+		fi
 	fi
 fi
 f=$(mktemp) || exit 1
@@ -198,7 +272,7 @@ unset pw
 // --set-gtid-purged=OFF let a non-root MySQL user dump (they avoid the PROCESS
 // and RELOAD privileges); MariaDB rejects --set-gtid-purged, so an older
 // MariaDB whose dump tool is still called mysqldump does not get it.
-const mysqlDumpScript = dumpStart + dumpGuard + mysqlLogin +
+const mysqlDumpScript = dumpStart + varGuard + dumpGuard + mysqlLogin +
 	`if command -v mariadb-dump >/dev/null 2>&1; then
 	mariadb-dump --defaults-extra-file="$f" --single-transaction --routines --triggers --no-tablespaces --databases "$1" &
 else
@@ -209,12 +283,10 @@ else
 fi
 ` + dumpTail
 
-// mysqlSizeScript prints the data and index bytes of database "$1". The name
-// has to go into the SQL, so the script checks it again with the {dbname}
-// slot's rule before anything else: no character of that set can end the
-// quoted literal.
-const mysqlSizeScript = scriptStart +
-	`case "$1" in
+// mysqlNameCheck checks database "$1" again with the {dbname} slot's rule
+// before anything else, for the scripts that put the name into SQL: no
+// character of that set can end the quoted literal.
+const mysqlNameCheck = `case "$1" in
 '' | [!A-Za-z0-9_]* | *[!A-Za-z0-9_.\$-]*)
 	echo 'invalid database name' >&2
 	exit 2
@@ -224,45 +296,111 @@ if [ "${#1}" -gt 64 ]; then
 	echo 'invalid database name' >&2
 	exit 2
 fi
-` + mysqlLogin +
-	`c=mysql
+`
+
+// mysqlClient sets c to the client: mariadb when the image has it, else mysql.
+const mysqlClient = `c=mysql
 if command -v mariadb >/dev/null 2>&1; then
 	c=mariadb
 fi
-"$c" --defaults-extra-file="$f" -N -B -e "select coalesce(sum(data_length+index_length),0) from information_schema.tables where table_schema = '$1'"
+`
+
+// mysqlSizeScript prints the data and index bytes of database "$1".
+const mysqlSizeScript = scriptStart + mysqlNameCheck + varGuard + mysqlLogin + mysqlClient +
+	`"$c" --defaults-extra-file="$f" -N -B -e "select coalesce(sum(data_length+index_length),0) from information_schema.tables where table_schema = '$1'"
+`
+
+// mysqlCheckScript (db.mysql.check) logs in and looks for database "$1" among
+// the schemata the user can see; a database it cannot see gets the panel's
+// words, a failed login keeps the client's.
+const mysqlCheckScript = scriptStart + mysqlNameCheck + varGuard + mysqlLogin + mysqlClient +
+	`r=$("$c" --defaults-extra-file="$f" -N -B -e "select schema_name from information_schema.schemata where schema_name = '$1'") || exit 1
+if [ "$r" != "$1" ]; then
+	echo "Database $1 was not found, or the user has no access to it." >&2
+	exit 1
+fi
+`
+
+// mongoProbeJS is the fixed program that finds the authentication database of
+// custom credentials: it logs in against admin, else against the database
+// itself, and prints the one that took the user. It takes the user, password
+// and database name from its own environment, never from its text. When
+// neither takes the user it throws the last login error, which mongosh prints
+// to stderr and exits non-zero.
+const mongoProbeJS = `let a = ""; let err = null; ` +
+	`for (const s of ["admin", process.env.N]) { try { ` +
+	`const st = connect("mongodb://127.0.0.1:27017/" + s, process.env.U, process.env.P).runCommand({connectionStatus: 1}); ` +
+	`if (st.authInfo.authenticatedUsers.length > 0) { a = s; break; } ` +
+	`} catch (e) { err = e; } } ` +
+	`if (!a) { throw err || new Error("Authentication failed."); } ` +
+	`print(a);`
+
+// mongoLogin sets u and pw, the user and password (none: no authentication),
+// and a, the database they authenticate against. The custom variables are
+// probed with mongoProbeJS in a mongosh with no server of its own (--nodb):
+// mongosh has no config file, so U, P and N are set for that one process
+// only, never on argv. Without them it is the root user against admin.
+const mongoLogin = `a=admin
+if [ -n "${2:-}" ]; then
+` + customVars + `	a=$(U=$u P=$pw N="$1" mongosh --quiet --norc --nodb --eval '` + mongoProbeJS + `') || exit 1
+	case $a in
+	admin | "$1") ;;
+	*)
+		echo 'could not find the database the user authenticates against' >&2
+		exit 1
+		;;
+	esac
+else
+	u=${MONGO_INITDB_ROOT_USERNAME:-$(cat "${MONGO_INITDB_ROOT_USERNAME_FILE:-/dev/null}" 2>/dev/null)}
+	pw=${MONGO_INITDB_ROOT_PASSWORD:-$(cat "${MONGO_INITDB_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
+fi
 `
 
 // mongoDumpScript writes a mongodump archive of database "$1" to stdout. With
-// a root user (MONGO_INITDB_ROOT_USERNAME) it logs in against admin; the
-// password goes into a --config file, which the database tools accept with
-// password: alone, as a single-quoted YAML string (' doubled). The user name
-// is not a secret and stays on argv.
-const mongoDumpScript = dumpStart + dumpGuard +
-	`u=${MONGO_INITDB_ROOT_USERNAME:-$(cat "${MONGO_INITDB_ROOT_USERNAME_FILE:-/dev/null}" 2>/dev/null)}
-if [ -z "$u" ]; then
+// a user it logs in against a; the password goes into a --config file, which
+// the database tools accept with password: alone, as a single-quoted YAML
+// string (' doubled). The user name is not a secret and stays on argv.
+const mongoDumpScript = dumpStart + varGuard + dumpGuard + mongoLogin +
+	`if [ -z "$u" ]; then
 	mongodump --archive --db "$1" &
 else
-	pw=${MONGO_INITDB_ROOT_PASSWORD:-$(cat "${MONGO_INITDB_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
 	f=$(mktemp) || exit 1
 	printf "password: '%s'\n" "$(printf '%s' "$pw" | sed "s/'/''/g")" >"$f" || exit 1
 	unset pw
-	mongodump --archive --db "$1" --username "$u" --authenticationDatabase admin --config "$f" &
+	mongodump --archive --db "$1" --username "$u" --authenticationDatabase "$a" --config "$f" &
 fi
 ` + dumpTail
 
-// mongoJS is the fixed program of the MongoDB size read. It takes the user,
-// password and database name from its own environment, never from its text,
-// and prints the database's dataSize in bytes.
-const mongoJS = `const url = "mongodb://127.0.0.1:27017/admin"; ` +
-	`const c = process.env.U ? connect(url, process.env.U, process.env.P) : connect(url); ` +
-	`print(c.getSiblingDB(process.env.N).stats().dataSize);`
+// mongoConnectJS opens the connection of the MongoDB reads: as U with P
+// against A (admin by default), or with no user. The values come from the
+// process's own environment.
+const mongoConnectJS = `const url = "mongodb://127.0.0.1:27017/" + (process.env.A || "admin"); ` +
+	`const c = process.env.U ? connect(url, process.env.U, process.env.P) : connect(url); `
 
-// mongoSizeScript runs mongoJS. mongosh has no config file, so U, P and N are
-// set for that one mongosh process only. --norc skips any .mongoshrc.js.
-const mongoSizeScript = scriptStart +
-	`u=${MONGO_INITDB_ROOT_USERNAME:-$(cat "${MONGO_INITDB_ROOT_USERNAME_FILE:-/dev/null}" 2>/dev/null)}
-pw=${MONGO_INITDB_ROOT_PASSWORD:-$(cat "${MONGO_INITDB_ROOT_PASSWORD_FILE:-/dev/null}" 2>/dev/null)}
-U=$u P=$pw N="$1" mongosh --quiet --norc --nodb --eval '` + mongoJS + `'
+// mongoJS is the fixed program of the MongoDB size read. It prints the
+// database's dataSize in bytes.
+const mongoJS = mongoConnectJS + `print(c.getSiblingDB(process.env.N).stats().dataSize);`
+
+// mongoCheckJS is the fixed program of the MongoDB check: found when database
+// N is among those the user may list, else missing.
+const mongoCheckJS = mongoConnectJS +
+	`const r = c.adminCommand({listDatabases: 1, nameOnly: true, authorizedDatabases: true}); ` +
+	`print(r.databases.some(function (d) { return d.name === process.env.N; }) ? "found" : "missing");`
+
+// mongoSizeScript runs mongoJS with U, P, A and N set for that one mongosh
+// process only. --norc skips any .mongoshrc.js.
+const mongoSizeScript = scriptStart + varGuard + mongoLogin +
+	`U=$u P=$pw A=$a N="$1" mongosh --quiet --norc --nodb --eval '` + mongoJS + `'
+`
+
+// mongoCheckScript (db.mongo.check) runs mongoCheckJS the same way; a database
+// the user cannot list gets the panel's words, a failed login keeps mongosh's.
+const mongoCheckScript = scriptStart + varGuard + mongoLogin +
+	`r=$(U=$u P=$pw A=$a N="$1" mongosh --quiet --norc --nodb --eval '` + mongoCheckJS + `') || exit 1
+if [ "$r" != found ]; then
+	echo "Database $1 was not found, or the user has no access to it." >&2
+	exit 1
+fi
 `
 
 // dumpStopScript ends the dump the pid file names (db.dump.stop). It takes no

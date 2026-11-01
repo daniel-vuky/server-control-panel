@@ -1,80 +1,26 @@
-import { Check, CircleAlert, TriangleAlert } from 'lucide-react'
-import { type FormEvent, useEffect, useId, useState } from 'react'
+import { Check, TriangleAlert } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import {
   connectDrive,
-  createDriveFolder,
   DOCS_URL,
   type DriveIssue,
   disconnectDrive,
   driveIssue,
-  fieldError,
-  fieldIssue,
-  listDriveFolders,
-  selectDriveFolder,
   TESTING_NOTE,
   testDrive,
 } from '../../api/drive'
-import type { DriveFolder, DriveStatus } from '../../api/types.gen'
+import type { DriveStatus } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import ConfirmDialog from '../../components/ConfirmDialog'
-import FieldMessage from '../../components/FieldMessage'
+import { SkeletonLines } from '../../components/Skeleton'
 import { useToast } from '../../components/Toast'
-import { useLoad } from '../../lib/useLoad'
 import { usePageRestore } from '../../lib/usePageRestore'
+import FolderPicker, { Issue } from './FolderPicker'
 
 const buttonBase =
   'flex h-9 cursor-pointer items-center gap-2 rounded-[7px] px-3.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 const neutralButton = `${buttonBase} border border-border-strong bg-surface-2 text-text`
 const dangerButton = `${buttonBase} border border-danger-border bg-transparent text-danger-text`
-const INPUT =
-  'box-border h-[38px] w-full min-w-0 rounded-[7px] border border-border-strong bg-field px-2.5 font-mono text-[13px] text-text outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
-
-/** The select value of "+ Create new folder…". */
-const CREATE = '__create__'
-const DEFAULT_FOLDER_NAME = 'server-backups'
-
-type Folders = { ok: true; folders: DriveFolder[] } | { ok: false; issue: DriveIssue }
-
-/** loadFolders never rejects on a Drive refusal: the words and the code travel with the answer. */
-async function loadFolders(signal: AbortSignal): Promise<Folders> {
-  try {
-    return { ok: true, folders: await listDriveFolders(signal) }
-  } catch (err) {
-    if (signal.aborted) throw err
-    return { ok: false, issue: driveIssue(err) }
-  }
-}
-
-/** Issue shows a Drive refusal: its words, and the code small and muted beside them. */
-function Issue({ issue }: { issue: DriveIssue }) {
-  return (
-    <span role="alert" className="flex flex-wrap items-baseline gap-x-2 text-[13px] text-danger">
-      <span className="flex items-center gap-[7px]">
-        <CircleAlert aria-hidden="true" size={15} strokeWidth={2} className="flex-none" />
-        {issue.message}
-      </span>
-      {issue.code !== '' && (
-        <span className="font-mono text-[11.5px] text-muted">{issue.code}</span>
-      )}
-    </span>
-  )
-}
-
-/** FolderLoadError is the folder list failing: the Drive words, the code, and Retry. */
-function FolderLoadError({ issue, onRetry }: { issue: DriveIssue; onRetry(): void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Issue issue={issue} />
-      <button
-        type="button"
-        onClick={onRetry}
-        className="h-8 cursor-pointer rounded-md border border-border-strong bg-transparent px-3 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-      >
-        Retry
-      </button>
-    </div>
-  )
-}
 
 function Spinner() {
   return (
@@ -111,9 +57,7 @@ export default function DriveCard() {
         </span>
       </div>
       {status === null ? (
-        <p role="status" className="px-[18px] py-3.5 text-[13px] text-muted">
-          Loading Google Drive…
-        </p>
+        <SkeletonLines lines={2} label="Loading Google Drive" className="px-[18px] py-4" />
       ) : status.state === 'not_configured' ? (
         <NotConfigured status={status} />
       ) : status.state === 'connected' ? (
@@ -202,82 +146,15 @@ function Connected({
   onChange(next: DriveStatus): void
 }) {
   const toast = useToast()
-  const ids = useId()
-  const { load, retry } = useLoad(loadFolders)
-  const [creating, setCreating] = useState(false)
-  const [name, setName] = useState(DEFAULT_FOLDER_NAME)
-  const [nameError, setNameError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [folderIssue, setFolderIssue] = useState<DriveIssue | null>(null)
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<TestResult | null>(null)
   const [confirm, setConfirm] = useState(false)
   const [leaving, setLeaving] = useState(false)
 
-  const loaded = load.state === 'ok' && load.data.ok ? load.data.folders : null
   // A test result is about the folder it ran against.
   const folderKey = status.folder?.id ?? ''
   // biome-ignore lint/correctness/useExhaustiveDependencies: the folder changing clears the result.
   useEffect(() => setResult(null), [folderKey])
-
-  const folders: DriveFolder[] = loaded ?? []
-  // The selected folder always has an option, even before the list arrives.
-  const options =
-    status.folder && !folders.some((f) => f.id === status.folder?.id)
-      ? [status.folder, ...folders]
-      : folders
-  // With no folder chosen and none to choose from, the name field is the way forward.
-  const showCreate = creating || (status.folder === null && loaded !== null && folders.length === 0)
-
-  const pick = async (value: string) => {
-    if (value === CREATE) {
-      setCreating(true)
-      return
-    }
-    if (value === '' || saving) return
-    if (value === status.folder?.id) {
-      setCreating(false)
-      return
-    }
-    setCreating(false)
-    setFolderIssue(null)
-    setSaving(true)
-    try {
-      onChange(await selectDriveFolder(value))
-    } catch (err) {
-      const field = fieldError(err, 'id')
-      if (field === null) {
-        setFolderIssue(driveIssue(err))
-      } else {
-        setFolderIssue({ code: field.code, message: field.error })
-        // The folder is gone: the list still offering it is stale.
-        retry()
-      }
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const create = async (e: FormEvent) => {
-    e.preventDefault()
-    if (saving) return
-    setSaving(true)
-    setNameError(null)
-    setFolderIssue(null)
-    try {
-      const next = await createDriveFolder(name)
-      setCreating(false)
-      setName(DEFAULT_FOLDER_NAME)
-      onChange(next)
-      retry()
-    } catch (err) {
-      const words = fieldIssue(err, 'name')
-      if (words !== null) setNameError(words)
-      else setFolderIssue(driveIssue(err))
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const test = async () => {
     if (testing) return
@@ -311,10 +188,6 @@ function Connected({
     }
   }
 
-  const folderId = `${ids}-folder`
-  const nameId = `${ids}-name`
-  const selected = creating ? CREATE : (status.folder?.id ?? '')
-
   return (
     <>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] gap-4 px-[18px] py-4">
@@ -325,67 +198,7 @@ function Connected({
             <span className="font-mono">{status.email}</span>
           </span>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={folderId} className="text-[12.5px] text-muted">
-            Destination folder
-          </label>
-          <select
-            id={folderId}
-            value={selected}
-            disabled={saving}
-            onChange={(e) => void pick(e.target.value)}
-            className={INPUT}
-          >
-            {status.folder === null && !creating && (
-              <option value="" disabled>
-                Choose a folder…
-              </option>
-            )}
-            {options.map((f) => (
-              <option key={f.id} value={f.id}>
-                {`My Drive / ${f.name}`}
-              </option>
-            ))}
-            <option value={CREATE}>+ Create new folder…</option>
-          </select>
-          {load.state === 'error' && (
-            <FolderLoadError issue={{ code: '', message: load.message }} onRetry={retry} />
-          )}
-          {load.state === 'ok' && !load.data.ok && (
-            <FolderLoadError issue={load.data.issue} onRetry={retry} />
-          )}
-          {folderIssue && <Issue issue={folderIssue} />}
-          {showCreate && (
-            <form onSubmit={create} noValidate className="flex flex-col gap-1.5">
-              <label htmlFor={nameId} className="text-[12.5px] text-muted">
-                New folder name
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id={nameId}
-                  type="text"
-                  value={name}
-                  autoComplete="off"
-                  aria-invalid={nameError ? true : undefined}
-                  aria-describedby={nameError ? `${nameId}-error` : undefined}
-                  onChange={(e) => {
-                    setName(e.target.value)
-                    setNameError(null)
-                  }}
-                  className={`${INPUT} ${nameError ? 'border-field-error' : ''}`}
-                />
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className={`${buttonBase} border-0 bg-text font-semibold text-bg`}
-                >
-                  Create
-                </button>
-              </div>
-              {nameError && <FieldMessage id={`${nameId}-error`} message={nameError} />}
-            </form>
-          )}
-        </div>
+        <FolderPicker drive={status} onChange={onChange} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2.5 px-[18px] pb-4">

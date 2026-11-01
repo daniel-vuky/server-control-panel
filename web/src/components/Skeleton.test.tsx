@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import Skeleton, { SkeletonCard } from './Skeleton'
+import Skeleton, { SkeletonCard, SkeletonLines } from './Skeleton'
 
 describe('Skeleton', () => {
   it('is hidden from assistive tech and pulses', () => {
@@ -9,6 +9,30 @@ describe('Skeleton', () => {
     expect(el.getAttribute('aria-hidden')).toBe('true')
     expect(el.className).toContain('animate-scp-pulse')
     expect(el.className).toContain('h-4')
+  })
+
+  it('is an inline span with inline, to sit in a line of text', () => {
+    const { container } = render(<Skeleton inline className="h-3 w-24" />)
+    const el = container.firstElementChild as HTMLElement
+    expect(el.tagName).toBe('SPAN')
+    expect(el).toHaveClass('inline-block', 'animate-scp-pulse', 'h-3', 'w-24')
+    expect(el.getAttribute('aria-hidden')).toBe('true')
+  })
+})
+
+describe('SkeletonLines', () => {
+  it('is a busy region of pulsing bars, labelled Loading by default', () => {
+    render(<SkeletonLines lines={4} />)
+    const region = screen.getByRole('status', { name: 'Loading' })
+    expect(region.getAttribute('aria-busy')).toBe('true')
+    expect(region.querySelectorAll('.animate-scp-pulse').length).toBe(4)
+    expect(region.textContent).toBe('')
+  })
+
+  it('takes a label and the bar height', () => {
+    render(<SkeletonLines label="Loading workspaces" lineClassName="h-5" />)
+    const region = screen.getByRole('status', { name: 'Loading workspaces' })
+    expect(region.querySelectorAll('.h-5').length).toBe(3)
   })
 })
 

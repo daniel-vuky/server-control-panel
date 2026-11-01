@@ -168,6 +168,16 @@ describe('project overview', () => {
     expect(screen.queryByRole('region', { name: 'Failed components' })).toBeNull()
   })
 
+  it('no container at all shows the empty state in the card', () => {
+    renderProject('/projects/1')
+    pushState([makeProject({ status: 'stopped', actions: ['start', 'untrack'], containers: [] })])
+    const card = screen.getByRole('region', { name: 'Containers' })
+    const title = within(card).getByRole('heading', { name: 'No containers yet' })
+    // design 10's dashed empty card
+    expect(title.parentElement).toHaveClass('border-dashed')
+    expect(within(card).queryByRole('table')).toBeNull()
+  })
+
   it('updates values in place on a live update', () => {
     renderProject('/projects/1')
     pushState([broken])

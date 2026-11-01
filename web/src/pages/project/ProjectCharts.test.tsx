@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackupSettings, ProjectPoint, ProjectSeries } from '../../api/types.gen'
 import { FakeEventSource } from '../../test/fakeEventSource'
@@ -107,6 +107,7 @@ describe('project resource charts', () => {
     const cards = await within(region()).findAllByLabelText('Loading')
     expect(cards).toHaveLength(3)
     for (const c of cards) expect(c).toHaveClass('min-h-[220px]')
+    expect(region()).not.toHaveTextContent('Loading')
   })
 
   it('sits above the Containers card', async () => {
@@ -231,7 +232,41 @@ describe('project resource charts', () => {
     pushState([live])
     await screen.findByRole('img', { name: 'CPU chart, last 1 hour' })
     expect(seriesCalls(stub)).toHaveLength(1)
-    vi.advanceTimersByTime(30_000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
     await waitFor(() => expect(seriesCalls(stub)).toHaveLength(2))
+  })
+
+  it('keeps the charts dimmed under the banner when a re-read fails, and Retry reads again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let n = 0
+    const stub = serve((range) => {
+      n++
+      return n === 2 ? json(500, { error: 'metrics are down' }) : json(200, series({ range }))
+    })
+    renderProject('/projects/1')
+    pushState([live])
+    await screen.findByRole('img', { name: 'CPU chart, last 1 hour' })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+    const banner = await within(region()).findByRole('alert')
+    expect(banner).toHaveTextContent('Could not refresh the charts.')
+    expect(banner).toHaveTextContent('metrics are down')
+    // The charts stay, dimmed.
+    const box = chart('CPU').closest('[data-stale]') as HTMLElement
+    expect(box).not.toBeNull()
+    expect(box.style.opacity).toBe('0.55')
+    expect(box.style.filter).toBe('saturate(0.6)')
+    expect(screen.getByRole('img', { name: 'CPU chart, last 1 hour' })).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(within(banner).getByRole('button', { name: 'Retry' }))
+    })
+    await waitFor(() => expect(within(region()).queryByRole('alert')).toBeNull())
+    expect(seriesCalls(stub)).toHaveLength(3)
+    expect(chart('CPU').closest('[data-stale]')).toBeNull()
   })
 })

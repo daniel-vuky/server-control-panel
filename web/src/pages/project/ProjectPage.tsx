@@ -1,11 +1,13 @@
-import { CloudUpload, Folder, Globe, Play, RotateCw, Square } from 'lucide-react'
+import { CloudUpload, Folder, FolderX, Globe, Play, RotateCw, Square } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from 'react'
 import { Link, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import type { Project } from '../../api/types.gen'
 import { LiveDim, useLive } from '../../app/live'
 import ConnectionBadge from '../../components/ConnectionBadge'
+import EmptyState, { EmptyStateLink } from '../../components/EmptyState'
 import MonitorOnlyTag from '../../components/MonitorOnlyTag'
 import { BadgeRow } from '../../components/PageHeader'
+import Skeleton from '../../components/Skeleton'
 import StatusBadge from '../../components/StatusBadge'
 import { projectRule } from '../../lib/backup'
 import { isNotCreated } from '../../lib/containers'
@@ -143,34 +145,40 @@ function useBackupParam(project: Project | null, backup: BackupFlow) {
   }, [wanted, waiting, ready, setParams])
 }
 
+/** Loading holds the page's place until the first live state: the breadcrumb, the header's lines, the tab row and a card. */
 function Loading() {
   return (
-    <div role="status" className="flex flex-col gap-5">
-      <span className="sr-only">Loading project…</span>
-      <div aria-hidden="true" className="h-3.5 w-40 animate-pulse rounded bg-border" />
-      <div aria-hidden="true" className="flex flex-col gap-3">
-        <div className="h-7 w-1/3 animate-pulse rounded bg-border" />
-        <div className="h-3.5 w-1/2 animate-pulse rounded bg-border" />
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Loading project"
+      className="flex flex-col gap-5"
+    >
+      <Skeleton className="h-3.5 w-40" />
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-7 w-1/3" />
+        <Skeleton className="h-3.5 w-1/2" />
       </div>
-      <div
-        aria-hidden="true"
-        className="h-[220px] animate-pulse rounded-[10px] border border-border bg-surface"
-      />
+      <Skeleton className="h-[42px] w-full max-w-[460px]" />
+      <div className="flex h-[220px] flex-col gap-3.5 rounded-[10px] border border-border bg-surface p-[18px]">
+        <Skeleton className="h-3.5 w-2/5" />
+        <Skeleton className="h-[22px] w-[65%]" />
+        <Skeleton className="h-3 w-1/2" />
+      </div>
     </div>
   )
 }
 
+/** NotTracked is design 10's empty card for an id the panel does not track. */
 function NotTracked() {
   return (
-    <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border-strong p-5">
-      <p className="m-0 font-semibold">This project is not tracked.</p>
-      <Link
-        to="/"
-        className="flex h-9 items-center rounded-[7px] border border-border-strong px-3.5 text-text no-underline"
-      >
-        Back to the Dashboard
-      </Link>
-    </div>
+    <EmptyState
+      icon={FolderX}
+      title="This project is not tracked."
+      action={<EmptyStateLink to="/">Back to the Dashboard</EmptyStateLink>}
+    >
+      It may have been removed from the panel, or the link is wrong.
+    </EmptyState>
   )
 }
 

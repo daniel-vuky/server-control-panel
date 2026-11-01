@@ -14,6 +14,7 @@ import {
   waitingLine,
 } from '../lib/backup'
 import Dialog, { PRIMARY_BUTTON, SECONDARY_BUTTON } from './Dialog'
+import { SkeletonLines } from './Skeleton'
 
 const Spinner = ({ testId, size = 11 }: { testId?: string; size?: number }) => (
   <span
@@ -321,9 +322,7 @@ export default function BackupProgress({ id, retrying, onClose, onRetry }: Props
       {error !== '' && <p className="m-0 text-[13px] text-error-text">{error}</p>}
       {b === null ? (
         error === '' && (
-          <p role="status" className="m-0 text-[13px] text-muted">
-            Loading backup…
-          </p>
+          <SkeletonLines lines={4} label="Loading the backup" lineClassName="h-[18px]" />
         )
       ) : (
         <>

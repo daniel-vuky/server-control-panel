@@ -451,6 +451,8 @@ func (m *Manager) examine(ctx context.Context, f Folder) (row Row, configRead bo
 		action = runner.ComposeConfigOverride
 	}
 
+	// The config read is masked by .env, the only masks known before it; the
+	// scan keeps no value from the config, so it needs no ProjectSecrets.
 	dotenv := ReadDotenv(filepath.Join(f.Path, ".env"))
 	secrets := SecretValues(dotenv)
 

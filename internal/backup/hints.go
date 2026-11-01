@@ -116,13 +116,16 @@ func mysqlVar(family, v string) string {
 	return "MYSQL_" + v + " (or MARIADB_" + v + ")"
 }
 
-// Hint gives the fix for a failed dump from its masked stderr (spec §4),
-// matched case-insensitively on the lines that are not warnings, or "" when
-// nothing matches. image is the service's image: it picks the MySQL or MariaDB
-// words. When the database was detected from variables (its sources), the hint
-// names them: "(detected from DATABASE_URL)". It never holds a value: only the
-// database and service names and variable names.
-func Hint(dbType, image, dbName, service, stderr string, sources []string) string {
+// Hint gives the fix for a failed dump or check from its masked stderr (spec
+// §4), matched case-insensitively on the lines that are not warnings, or ""
+// when nothing matches. image is the service's image: it picks the MySQL or
+// MariaDB words. When the database was detected from variables (its sources),
+// the hint names them: "(detected from DATABASE_URL)". userVar and passVar are
+// the variables a hand-added database reads its credentials from (both empty:
+// the image's standard ones); when set, a credentials hint names them instead
+// ("Check APP_PASSWORD in the container's environment."). It never holds a
+// value: only the database and service names and variable names.
+func Hint(dbType, image, dbName, service, stderr string, sources []string, userVar, passVar string) string {
 	lines := meaningful(stderr)
 	text := strings.ToLower(strings.Join(lines, "\n"))
 	has := func(subs ...string) bool {
@@ -150,6 +153,11 @@ func Hint(dbType, image, dbName, service, stderr string, sources []string) strin
 		// The dump script's own refusal: an orphaned dump still holds the pid
 		// file inside the container. Not about credentials, so no sources.
 		return "A previous backup of this database is still finishing inside the container; try again in a few minutes."
+	}
+	if userVar != "" && passVar != "" {
+		if hint := customHint(dbType, userVar, passVar, has, onOneLine, pgRoleMissing.MatchString(text)); hint != "" {
+			return hint
+		}
 	}
 	family := mysqlFamily(image)
 	hint := ""
@@ -183,6 +191,29 @@ func Hint(dbType, image, dbName, service, stderr string, sources []string) strin
 		hint = strings.TrimSuffix(hint, ".") + " (detected from " + strings.Join(vars, ", ") + ")."
 	}
 	return hint
+}
+
+// customHint is the credentials hint of a database with custom variables, ""
+// when the failure is not about its credentials (the shared table words it
+// then). It names one variable, the one to look at.
+func customHint(dbType, userVar, passVar string, has, onOneLine func(...string) bool, pgRole bool) string {
+	check := func(v string) string { return "Check " + v + " in the container's environment." }
+	switch {
+	case onOneLine(strings.ToLower(userVar), "is empty in the container's environment"):
+		// The scripts' own words for an empty user variable.
+		return check(userVar)
+	case dbType == "postgresql" && pgRole:
+		return check(userVar)
+	case dbType == "postgresql" && has("password authentication failed", "no password supplied"):
+		return check(passVar)
+	case dbType == "mysql" && has("access denied for user") && has("(using password"):
+		return check(passVar)
+	case dbType == "mysql" && (has("access denied; you need") || (has("access denied for user") && has(" to database "))):
+		return "The user in " + userVar + " lacks a privilege the dump needs. Grant the privilege named above."
+	case dbType == "mongodb" && has("authentication failed", "requires authentication"):
+		return check(passVar)
+	}
+	return ""
 }
 
 // missingTool returns the program a "not found" line says is missing: a dump

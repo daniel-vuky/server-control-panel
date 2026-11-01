@@ -1,6 +1,7 @@
 import { Download, Pause, Play, Search } from 'lucide-react'
 import { memo, type ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
+import Skeleton from '../../components/Skeleton'
 import { LEVEL_COLOR } from '../../lib/logLevel'
 import { plural } from '../../lib/plural'
 import {
@@ -112,6 +113,8 @@ export default function ProjectLogs() {
 
   const hasContainers = selectionContainers(project, service).length > 0
   const showService = service === ''
+  // Before the selection's backlog: skeleton lines, not an empty box.
+  const waiting = !stream.loaded && stream.state === 'live'
 
   return (
     <section aria-label="Logs" className="flex flex-col gap-3">
@@ -185,6 +188,7 @@ export default function ProjectLogs() {
         onScroll={onScroll}
         className="h-[560px] max-h-[70vh] overflow-auto rounded-[10px] border border-border bg-[#07090b] py-3.5 font-mono text-[12.5px] leading-[1.75]"
       >
+        {waiting && <LogSkeleton />}
         {shown.map((l) => (
           <Line
             key={l.id}
@@ -199,6 +203,26 @@ export default function ProjectLogs() {
         )}
       </div>
     </section>
+  )
+}
+
+/** The widths of the skeleton lines, so they read as log output. */
+const SKELETON_WIDTHS = ['w-[72%]', 'w-[48%]', 'w-[64%]', 'w-[38%]', 'w-[80%]', 'w-[55%]']
+
+/** LogSkeleton holds the log's place until the first lines arrive. */
+function LogSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Loading logs"
+      data-testid="log-skeleton"
+      className="flex flex-col gap-2.5 px-4 py-1"
+    >
+      {SKELETON_WIDTHS.map((w) => (
+        <Skeleton key={w} className={`h-3 ${w}`} />
+      ))}
+    </div>
   )
 }
 

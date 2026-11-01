@@ -17,6 +17,8 @@ describe('verbOf', () => {
     ['scan.track', 'started tracking projects in'],
     ['workspace.rescan', 'rescanned workspace'],
     ['workspace.remove', 'removed workspace'],
+    ['database.add', 'added database'],
+    ['database.remove', 'removed database'],
     ['backup.run', 'backed up'],
     ['backup.all', 'backed up all projects'],
     ['backup.schedule', 'changed the backup schedule of'],

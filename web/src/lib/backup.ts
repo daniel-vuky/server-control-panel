@@ -20,6 +20,7 @@ function notSupported(db: Database): string {
     return 'Backups of databases outside a container are not supported yet'
   }
   if (!SUPPORTED.has(db.type)) return 'Backups of this database type are not supported yet'
+  if (db.manual) return `The service ${db.location} is not in the project any more.`
   return "The database's service could not be found"
 }
 
@@ -80,7 +81,7 @@ export function projectRule(
   driveState: string | undefined,
 ): { enabled: boolean; reason: string } {
   if (p.databases.length === 0) {
-    return { enabled: false, reason: 'No databases detected in this project.' }
+    return { enabled: false, reason: 'No database detected' }
   }
   const rules = p.databases.map((d) => databaseRule(d, driveState))
   if (rules.some((r) => r.enabled)) return { enabled: true, reason: '' }

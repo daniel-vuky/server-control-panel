@@ -221,3 +221,61 @@ describe('ProjectCard', () => {
     })
   })
 })
+
+describe('ProjectCard phone action', () => {
+  const button = (card: HTMLElement, name: string) => within(card).getByRole('button', { name })
+
+  it('is a full-width 48 px button shown only on phones, where the switch is hidden', () => {
+    const { card } = setup()
+    const b = button(card, 'Stop shop')
+    expect(b).toHaveTextContent('Stop')
+    expect(b).toHaveClass('hidden', 'max-sm:flex', 'h-12', 'w-full')
+    expect(within(card).getByRole('switch').closest('.max-sm\\:hidden')).not.toBeNull()
+  })
+
+  it.each([
+    ['running', ['stop', 'restart', 'untrack'], 'Stop'],
+    ['partial', ['stop', 'restart', 'untrack'], 'Stop'],
+    ['stopped', ['start', 'untrack'], 'Start'],
+    ['error', ['start', 'restart', 'stop'], 'Restart'],
+    ['error', ['start', 'stop'], 'Start'],
+  ])('%s with %j reads %s', (status, actions, label) => {
+    const { card } = setup({ status, actions })
+    expect(button(card, `${label} shop`)).toBeEnabled()
+  })
+
+  it('calls the flow: stop, start and restart', () => {
+    const a = setup()
+    fireEvent.click(button(a.card, 'Stop shop'))
+    expect(a.item.onStop).toHaveBeenCalledTimes(1)
+    document.body.innerHTML = ''
+    const b = setup({ status: 'stopped', actions: ['start'] })
+    fireEvent.click(button(b.card, 'Start shop'))
+    expect(b.item.onStart).toHaveBeenCalledTimes(1)
+    document.body.innerHTML = ''
+    const c = setup({ status: 'error', actions: ['start', 'restart'] })
+    fireEvent.click(button(c.card, 'Restart shop'))
+    expect(c.item.onRestart).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['starting', 'Starting…'],
+    ['stopping', 'Stopping…'],
+    ['restarting', 'Restarting…'],
+  ])('shows %s as a disabled %s', (status, label) => {
+    const { card } = setup({ status, actions: [] })
+    const b = within(card).getByRole('button', { name: new RegExp(label) })
+    expect(b).toBeDisabled()
+    expect(b).toHaveTextContent(label)
+  })
+
+  it.each([
+    ['stopped', ['untrack']],
+    ['running', []],
+    ['notfound', ['remove']],
+    ['unknown', ['untrack']],
+  ])('has no button for %s with %j', (status, actions) => {
+    const { card } = setup({ status, actions })
+    expect(within(card).queryByRole('button', { name: /^(Stop|Start|Restart)/ })).toBeNull()
+  })
+})

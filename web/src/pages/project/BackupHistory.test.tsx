@@ -504,4 +504,43 @@ describe('backup history', () => {
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     expect(bodyRows(await history())).toHaveLength(1)
   })
+
+  it('holds the table with skeleton rows until the first page answers', async () => {
+    serve(get(HISTORY, () => new Promise<Response>(() => {}) as unknown as Response))
+    open([shopDb])
+    const card = await screen.findByRole('region', { name: 'Backup history' })
+    const skeleton = within(card).getByRole('status', { name: 'Loading the backup history' })
+    expect(skeleton.querySelectorAll('.animate-scp-pulse').length).toBeGreaterThan(0)
+    expect(card).not.toHaveTextContent('Loading')
+  })
+
+  it('keeps the rows dimmed under the banner when a re-read fails, and Retry reads again', async () => {
+    const running = makeBackup({ id: 3, state: 'running', queuePosition: 0 })
+    let answer: () => Response = () => json(200, { backups: [ok(2)], more: false })
+    const stub = serve(get(HISTORY, () => answer()))
+    open([shopDb], [running])
+    const table = await history()
+    expect(bodyRows(table)).toHaveLength(2)
+
+    // The running backup ends: the list is read again, and that read fails.
+    answer = () => json(503, { error: 'database is locked' })
+    pushState([makeProject({ databases: [shopDb] })], true, { drive: connected, backups: [] })
+    const card = screen.getByRole('region', { name: 'Backup history' })
+    const banner = await within(card).findByRole('alert')
+    expect(banner).toHaveTextContent('Could not load the backup history.')
+    expect(banner).toHaveTextContent('database is locked')
+    const box = screen
+      .getByRole('table', { name: 'Backup history' })
+      .closest('[data-stale]') as HTMLElement
+    expect(box).not.toBeNull()
+    expect(box.style.opacity).toBe('0.55')
+    expect(box.style.filter).toBe('saturate(0.6)')
+    expect(bodyRows(screen.getByRole('table'))).toHaveLength(2)
+
+    answer = () => json(200, { backups: [ok(3), ok(2)], more: false })
+    fireEvent.click(within(banner).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(within(card).queryByRole('alert')).toBeNull())
+    expect(screen.getByRole('table', { name: 'Backup history' }).closest('[data-stale]')).toBeNull()
+    expect(callsTo(stub, HISTORY)).toHaveLength(3)
+  })
 })

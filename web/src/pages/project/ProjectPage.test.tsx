@@ -68,15 +68,22 @@ beforeEach(() => {
   leaveChartsUnanswered()
 })
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers()
+  // Let the reads a test left open (a tab's history and zone) land inside act.
+  await act(async () => {
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0))
+  })
   vi.unstubAllGlobals()
 })
 
 describe('project page', () => {
   it('shows a skeleton before the first state', () => {
     renderProject('/projects/1')
-    expect(screen.getByRole('status')).toHaveTextContent('Loading project…')
+    const loading = screen.getByRole('status', { name: 'Loading project' })
+    expect(loading).toHaveAttribute('aria-busy', 'true')
+    expect(loading.querySelectorAll('.animate-scp-pulse').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Loading/)).toBeNull()
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
   })
 
@@ -176,7 +183,7 @@ describe('project page', () => {
       renderProject('/projects/1')
       pushState([shop])
       expect(button()).toBeDisabled()
-      expect(button()).toHaveAttribute('title', 'No databases detected in this project.')
+      expect(button()).toHaveAttribute('title', 'No database detected')
     })
 
     it("is disabled with the first database's reason when none can be backed up", () => {
@@ -353,10 +360,12 @@ describe('project page', () => {
     expect(screen.getByRole('tab', { name: 'Database & Backup' })).toBeInTheDocument()
   })
 
-  it('untracked id shows not tracked', () => {
+  it('untracked id shows not tracked, as an empty state', () => {
     renderProject('/projects/9')
     pushState([shop])
-    expect(screen.getByText('This project is not tracked.')).toBeInTheDocument()
+    const title = screen.getByRole('heading', { level: 2, name: 'This project is not tracked.' })
+    // design 10's dashed empty card
+    expect(title.parentElement).toHaveClass('border-dashed')
     expect(screen.getByRole('link', { name: 'Back to the Dashboard' })).toHaveAttribute('href', '/')
     expect(screen.queryByRole('tablist')).toBeNull()
   })

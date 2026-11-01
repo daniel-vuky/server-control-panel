@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { checkDocker } from '../api/projects'
 import type { Backup, BackupBatch, DriveStatus, LiveState, Project } from '../api/types.gen'
+import { STALE_STYLE } from '../components/Stale'
 
 /**
  * connection is the state of the live stream: connecting until the first state
@@ -254,9 +255,6 @@ export function useLive(): Live {
   if (!ctx) throw new Error('useLive must be used inside LiveProvider')
   return ctx
 }
-
-/** The dim of design 10 while the values on screen may be stale. */
-const STALE_STYLE = { opacity: 0.55, filter: 'saturate(0.6)' }
 
 /**
  * LiveDim wraps a page's body (below its header): it dims while the connection

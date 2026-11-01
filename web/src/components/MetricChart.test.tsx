@@ -328,3 +328,28 @@ describe('MetricChart', () => {
     expect(svg).toHaveStyle({ height: '120px' })
   })
 })
+
+describe('MetricChart on a phone', () => {
+  it('hides the y labels, the gridlines and the middle time label below 640 px', () => {
+    const { container } = chart({ threshold: 90 })
+    const scale = screen.getByText('0', { selector: 'span' }).parentElement
+    expect(scale).toHaveClass('max-sm:hidden')
+    expect(scale).toHaveAttribute('aria-hidden', 'true')
+    const grid = container.querySelectorAll('svg[role="img"] line:not([data-threshold])')
+    expect(grid.length).toBe(3)
+    for (const l of grid) expect(l).toHaveClass('max-sm:hidden')
+  })
+
+  it('keeps the lines and the threshold line, and the first and last time labels', () => {
+    const { container } = chart({ threshold: 90 })
+    expect(lines(container, 'CPU').length).toBe(1)
+    const threshold = container.querySelector('[data-threshold]')
+    expect(threshold).not.toBeNull()
+    expect(threshold).not.toHaveClass('max-sm:hidden')
+    const axis = screen.getByText('now').parentElement
+    const [start, mid, end] = Array.from(axis?.children ?? [])
+    expect(start).not.toHaveClass('max-sm:hidden')
+    expect(mid).toHaveClass('max-sm:hidden')
+    expect(end).not.toHaveClass('max-sm:hidden')
+  })
+})

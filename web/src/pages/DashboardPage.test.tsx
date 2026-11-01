@@ -5,6 +5,7 @@ import type { Project, Workspace } from '../api/types.gen'
 import { LatestBackupsProvider } from '../app/latestBackups'
 import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
+import { stubPhone } from '../test/phone'
 import { makeBackup, makeDatabase } from '../test/projects'
 import { renderApp } from '../test/renderApp'
 import { makeSeries, makeServerInfo } from '../test/server'
@@ -34,6 +35,7 @@ const projects: Project[] = [
     upSince: '',
     containers: [],
     driveFolder: 'shop',
+    serviceNames: [],
   },
   {
     id: 2,
@@ -55,6 +57,7 @@ const projects: Project[] = [
     upSince: '',
     containers: [],
     driveFolder: 'panel',
+    serviceNames: [],
   },
 ]
 
@@ -175,7 +178,9 @@ describe('DashboardPage', () => {
     )
     const { container } = renderPage()
     expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Loading projects…')
+    const loading = screen.getByRole('status', { name: 'Loading projects' })
+    expect(loading).toHaveAttribute('aria-busy', 'true')
+    expect(screen.queryByText(/Loading/)).toBeNull()
     expect(container.querySelectorAll('[data-skeleton-tile]')).toHaveLength(6)
     expect(container.querySelectorAll('[data-skeleton-bar]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-skeleton-card]')).toHaveLength(6)
@@ -189,7 +194,7 @@ describe('DashboardPage', () => {
       vi.fn(() => new Promise(() => {})),
     )
     const { container } = renderPage()
-    expect(screen.getByRole('status')).toHaveTextContent('Loading projects…')
+    expect(screen.getByRole('status', { name: 'Loading projects' })).toBeInTheDocument()
     expect(container.querySelectorAll('[data-skeleton-row]')).toHaveLength(3)
     expect(container.querySelectorAll('[data-skeleton-card]')).toHaveLength(0)
   })
@@ -343,6 +348,27 @@ describe('DashboardPage', () => {
     expect(gets(fetchStub, '/api/projects')).toHaveLength(2)
   })
 
+  it('shows Retrying… on a disabled Retry until the retry answers', async () => {
+    let answer: (r: Response) => void = () => {}
+    let n = 0
+    route({
+      'GET /api/projects': () =>
+        n++ === 0
+          ? json(500, { error: 'docker is down' })
+          : new Promise<Response>((resolve) => {
+              answer = resolve
+            }),
+    })
+    renderPage()
+    const alert = await screen.findByRole('alert')
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(within(alert).getByRole('button', { name: 'Retrying…' })).toBeDisabled()
+
+    await act(async () => answer(json(500, { error: 'still down' })))
+    expect(within(screen.getByRole('alert')).getByRole('button', { name: 'Retry' })).toBeEnabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('still down')
+  })
+
   it('treats a non-JSON 2xx as an error', async () => {
     vi.stubGlobal(
       'fetch',
@@ -357,6 +383,18 @@ describe('DashboardPage', () => {
     serve([200, { email: 'someone@example.com' }])
     renderPage()
     expect(await screen.findByRole('alert')).toHaveTextContent('Unexpected response')
+  })
+
+  describe('on a phone', () => {
+    it('forces the cards view, whatever the URL or the remembered choice says, and hides the switch', async () => {
+      stubPhone(true)
+      localStorage.setItem('dashboard.view', 'table')
+      serve([200, projects])
+      renderPage('/?view=table')
+      expect(await screen.findByRole('article', { name: 'shop' })).toBeInTheDocument()
+      expect(screen.queryByRole('table')).toBeNull()
+      expect(screen.queryByRole('group', { name: 'View mode' })).toBeNull()
+    })
   })
 
   describe('table view', () => {
@@ -532,7 +570,8 @@ describe('DashboardPage', () => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
 
       // The overlay's Stopping… row is still one of the rows the filter sees.
-      expect(within(card('shop')).getByText('Stopping…')).toBeInTheDocument()
+      // the status badge, and the phone button (hidden above 640 px)
+      expect(within(card('shop')).getAllByText('Stopping…')).toHaveLength(2)
       expect(screen.getByRole('region', { name: 'Quick counts' })).toHaveTextContent('0 running')
 
       await act(async () =>
@@ -600,7 +639,8 @@ describe('DashboardPage', () => {
       expect(url).toBe('/api/projects/1/stop')
       expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' })
 
-      expect(within(card('shop')).getByText('Stopping…')).toBeInTheDocument()
+      // the status badge, and the phone button (hidden above 640 px)
+      expect(within(card('shop')).getAllByText('Stopping…')).toHaveLength(2)
       expect(within(card('shop')).getByRole('switch')).toBeDisabled()
 
       await act(async () => release(ok('stopped')))
@@ -748,7 +788,8 @@ describe('DashboardPage', () => {
         })
       })
       const shop = card('shop')
-      expect(within(shop).getByText('Stopping…')).toBeInTheDocument()
+      // the status badge, and the phone button (hidden above 640 px)
+      expect(within(shop).getAllByText('Stopping…')).toHaveLength(2)
       expect(within(shop).getByRole('switch')).toBeDisabled()
       fireEvent.click(within(shop).getByRole('button', { name: 'More actions for shop' }))
       for (const name of ['Start', 'Restart']) {
@@ -1285,7 +1326,7 @@ describe('DashboardPage', () => {
       fireEvent.click(within(blog).getByRole('button', { name: 'More actions for blog' }))
       const item = screen.getByRole('menuitem', { name: 'Back up now' })
       expect(item).toHaveAttribute('aria-disabled', 'true')
-      expect(item).toHaveAttribute('title', 'No databases detected in this project.')
+      expect(item).toHaveAttribute('title', 'No database detected')
       fireEvent.click(item)
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(

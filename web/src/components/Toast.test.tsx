@@ -66,6 +66,11 @@ describe('Toast', () => {
     expect(screen.getByTestId('toast-region')).toBe(region)
   })
 
+  it('insets the region 16 px from both edges on a phone', () => {
+    setup()
+    expect(screen.getByTestId('toast-region')).toHaveClass('max-sm:right-4', 'max-sm:left-4')
+  })
+
   it('show is success', () => {
     setup()
     expect(api.show).toBe(api.success)

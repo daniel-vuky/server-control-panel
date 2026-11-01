@@ -5,6 +5,7 @@ import { useLive } from '../../app/live'
 import { BackupRow, byNewest, HEAD, mergeNewest, ROW_BUTTON } from '../../components/BackupRow'
 import LoadError from '../../components/LoadError'
 import { SkeletonCard } from '../../components/Skeleton'
+import Stale from '../../components/Stale'
 import { zoneLabel } from '../../lib/schedule'
 import type { BackupFlow } from '../../lib/useBackup'
 
@@ -86,7 +87,8 @@ export function useAllBackups(filters: Filters, changed: string, ready: boolean)
       },
       (err: unknown) => {
         if (ctl.signal.aborted) return
-        setState((prev) => ({ ...prev, loaded: true, error: message(err) }))
+        // loaded stays as it was: it means a page was read under these filters.
+        setState((prev) => ({ ...prev, error: message(err) }))
       },
     )
   }, [project, result, from, to])
@@ -285,74 +287,81 @@ export default function BackupsTable({ all: h, flow, projects }: TableProps) {
     projects.find((p) => p.id === b.projectId)?.databases.find((d) => d.key === b.database.key)
       ?.schedule?.keep ?? null
 
-  if (h.error !== '' && h.rows.length === 0) {
-    return (
-      <LoadError title="Could not load the backups." message={h.error} onRetry={h.readNewest} />
-    )
-  }
   if (!h.loaded) {
+    if (h.error !== '') {
+      return (
+        <LoadError title="Could not load the backups." message={h.error} onRetry={h.readNewest} />
+      )
+    }
     return <SkeletonCard />
   }
   if (h.rows.length === 0) {
+    // Read, and empty: a later failed re-read keeps the words, dimmed under the banner.
     return (
-      <p className="m-0 rounded-[10px] border border-border bg-surface px-4 py-5 text-[13px] text-muted">
-        No backups match these filters.
-      </p>
+      <Stale error={h.error} onRetry={h.readNewest} title="Could not load the backups.">
+        <p className="m-0 rounded-[10px] border border-border bg-surface px-4 py-5 text-[13px] text-muted">
+          No backups match these filters.
+        </p>
+      </Stale>
     )
   }
   return (
     <section className="rounded-[10px] border border-border bg-surface">
-      {h.error !== '' && (
-        <div className="px-4 py-3.5">
-          <LoadError title="Could not load the backups." message={h.error} onRetry={h.readNewest} />
-        </div>
-      )}
-      <div className="overflow-x-auto">
-        <table
-          aria-label="All backups"
-          className="w-full min-w-[980px] table-fixed border-collapse text-left"
-        >
-          <colgroup>
-            {COLUMN_WIDTHS.map((width, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of eight columns.
-              <col key={i} style={{ width }} />
-            ))}
-          </colgroup>
-          <thead>
-            <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
-              {['Time', 'Project', 'Database', 'Size', 'Duration', 'Status', 'Triggered by'].map(
-                (name) => (
-                  <th key={name} scope="col" className={HEAD}>
-                    {name}
-                  </th>
-                ),
-              )}
-              <th scope="col" className={`${HEAD} text-right`}>
-                File
-              </th>
-            </tr>
-          </thead>
-          <tbody className="font-mono text-[13px] tabular-nums">
-            {h.rows.map((b) => (
-              <BackupRow key={b.id} backup={b} several withProject flow={flow} keep={keepOf(b)} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {h.more && (
-        <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
-          <button
-            type="button"
-            disabled={h.older.busy}
-            aria-busy={h.older.busy || undefined}
-            onClick={h.readOlder}
-            className={`${ROW_BUTTON} h-8 px-3 text-[13px]`}
+      <Stale
+        error={h.error}
+        onRetry={h.readNewest}
+        title="Could not load the backups."
+        bannerClassName="px-4 pt-3.5"
+      >
+        <div className="overflow-x-auto">
+          <table
+            aria-label="All backups"
+            className="w-full min-w-[980px] table-fixed border-collapse text-left"
           >
-            Show older
-          </button>
-          {h.older.error !== '' && <span className="text-[13px] text-danger">{h.older.error}</span>}
+            <colgroup>
+              {COLUMN_WIDTHS.map((width, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of eight columns.
+                <col key={i} style={{ width }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
+                {['Time', 'Project', 'Database', 'Size', 'Duration', 'Status', 'Triggered by'].map(
+                  (name) => (
+                    <th key={name} scope="col" className={HEAD}>
+                      {name}
+                    </th>
+                  ),
+                )}
+                <th scope="col" className={`${HEAD} text-right`}>
+                  File
+                </th>
+              </tr>
+            </thead>
+            <tbody className="font-mono text-[13px] tabular-nums">
+              {h.rows.map((b) => (
+                <BackupRow key={b.id} backup={b} several withProject flow={flow} keep={keepOf(b)} />
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
+        {h.more && (
+          <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
+            <button
+              type="button"
+              disabled={h.older.busy}
+              aria-busy={h.older.busy || undefined}
+              onClick={h.readOlder}
+              className={`${ROW_BUTTON} h-8 px-3 text-[13px]`}
+            >
+              Show older
+            </button>
+            {h.older.error !== '' && (
+              <span className="text-[13px] text-danger">{h.older.error}</span>
+            )}
+          </div>
+        )}
+      </Stale>
     </section>
   )
 }

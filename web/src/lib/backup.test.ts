@@ -29,6 +29,16 @@ describe('databaseRule', () => {
     ],
     [makeDatabase({ backup: rule('not_supported') }), "The database's service could not be found"],
     [
+      // A database added by hand whose service left the project names it.
+      makeDatabase({
+        manual: true,
+        manualId: 3,
+        location: 'legacy',
+        backup: rule('not_supported'),
+      }),
+      'The service legacy is not in the project any more.',
+    ],
+    [
       makeDatabase({ type: 'mysql', backup: rule('no_db_name') }),
       'The database name is not known. Set MYSQL_DATABASE (or MONGO_INITDB_DATABASE) on the service, then rescan.',
     ],
@@ -103,7 +113,7 @@ describe('projectRule', () => {
   it('has a reason for a project without databases', () => {
     expect(projectRule(makeProject(), 'connected')).toEqual({
       enabled: false,
-      reason: 'No databases detected in this project.',
+      reason: 'No database detected',
     })
   })
 })

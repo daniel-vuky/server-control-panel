@@ -35,6 +35,7 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     upSince: '',
     containers: [],
     driveFolder: 'shop',
+    serviceNames: ['db'],
     ...overrides,
   }
 }
@@ -49,7 +50,16 @@ export function makeDatabase(overrides: Partial<Database> = {}): Database {
     sources: [],
     ...overrides,
   }
-  return { key: `${d.type}:${d.location}:${d.name}`, backup: null, schedule: null, ...d }
+  return {
+    key: `${d.type}:${d.location}:${d.name}`,
+    backup: null,
+    schedule: null,
+    manual: false,
+    manualId: 0,
+    userVar: '',
+    passwordVar: '',
+    ...d,
+  }
 }
 
 /**

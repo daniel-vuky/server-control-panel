@@ -54,9 +54,10 @@ const (
 	ComposeLogsTailServiceOverride Action = "compose.logs.tail.service.override"
 
 	// The database actions run a fixed script inside the database's container
-	// (dbscripts.go, ADR 0011). The dumps run only through RunTo; the sizes are
-	// read commands and run through Run. The Default variants take no {dbname}
-	// and use the image's default database.
+	// (dbscripts.go, ADR 0011). The dumps run only through RunTo; the sizes and
+	// the checks are read commands and run through Run. The named actions take
+	// {dbname}, {uservar} and {passvar}; the Default variants take none of them
+	// and use the image's default database and variables.
 	DBPgDump                Action = "db.pg.dump"
 	DBPgDumpOverride        Action = "db.pg.dump.override"
 	DBPgDumpDefault         Action = "db.pg.dump.default"
@@ -73,6 +74,14 @@ const (
 	DBMongoDumpOverride     Action = "db.mongo.dump.override"
 	DBMongoSize             Action = "db.mongo.size"
 	DBMongoSizeOverride     Action = "db.mongo.size.override"
+	// The check actions say whether the database is there for the user, before
+	// a database is added by hand.
+	DBPgCheck            Action = "db.pg.check"
+	DBPgCheckOverride    Action = "db.pg.check.override"
+	DBMySQLCheck         Action = "db.mysql.check"
+	DBMySQLCheckOverride Action = "db.mysql.check.override"
+	DBMongoCheck         Action = "db.mongo.check"
+	DBMongoCheckOverride Action = "db.mongo.check.override"
 	// DBDumpStop ends a dump the panel gave up on, inside its container: the
 	// dump scripts record their pids, and its fixed script stops them. It takes
 	// only the service and runs through Run.
@@ -82,9 +91,9 @@ const (
 
 // Values are the arguments of one call, keyed by placeholder name without
 // braces: "dir" for {dir}, "file" for {file}, "override" for {override},
-// "service" for {service}, "since" for {since}, "dbname" for {dbname}. "ids"
-// holds container ids joined by single spaces; argv expands it into one element
-// per id.
+// "service" for {service}, "since" for {since}, "dbname" for {dbname},
+// "uservar" and "passvar" for {uservar} and {passvar}. "ids" holds container
+// ids joined by single spaces; argv expands it into one element per id.
 type Values map[string]string
 
 // Labels that docker compose and the panel put on containers.
@@ -125,16 +134,23 @@ func label(name string) string {
 type slotKind int
 
 const (
-	kindPath   slotKind = iota // an absolute, clean path
-	kindIDs                    // 1 to maxIDs full container ids, space-joined, one element each
-	kindName                   // a service name
-	kindSince                  // an RFC 3339 UTC timestamp
-	kindDBName                 // a database name (ValidDBName)
+	kindPath    slotKind = iota // an absolute, clean path
+	kindIDs                     // 1 to maxIDs full container ids, space-joined, one element each
+	kindName                    // a service name
+	kindSince                   // an RFC 3339 UTC timestamp
+	kindDBName                  // a database name (ValidDBName)
+	kindEnvName                 // a variable name, or empty (ValidEnvName)
 )
 
 // ValidDBName reports whether name may reach a database dump script as its
 // database name: a whole argument, never a flag.
 func ValidDBName(name string) bool { return dbNamePattern.MatchString(name) }
+
+// ValidEnvName reports whether name may reach a database script as the name of
+// the variable that holds its user or password: empty (the image's standard
+// variables), or a shell variable name of at most 64 characters, which can
+// carry no shell syntax. It is a name only; the value stays in the container.
+func ValidEnvName(name string) bool { return name == "" || envNamePattern.MatchString(name) }
 
 // maxIDs is the most container ids one call may carry.
 const maxIDs = 1000
@@ -143,6 +159,9 @@ var (
 	idPattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	namePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 	dbNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.$-]{0,63}$`)
+	// envNamePattern is a shell variable name; dbscripts.go's varGuard checks
+	// the same again inside the container.
+	envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 	// sincePattern is RFC 3339 in UTC with an optional fraction, which docker
 	// compose logs --since accepts.
 	sincePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$`)
@@ -178,6 +197,10 @@ func sinceArg(slot string) arg { return arg{slot: slot, kind: kindSince} }
 
 // dbNameArg is the {dbname} placeholder, a database name that ValidDBName accepts.
 func dbNameArg() arg { return arg{slot: "dbname", kind: kindDBName} }
+
+// envNameArg is a placeholder whose value is a variable name or empty, as
+// ValidEnvName accepts. An empty value is still one (empty) argv element.
+func envNameArg(slot string) arg { return arg{slot: slot, kind: kindEnvName} }
 
 func join(parts ...[]arg) []arg {
 	var all []arg
@@ -256,17 +279,25 @@ var registry = map[key][]arg{
 	{StackCompose, DBMongoDumpOverride}:     dbScript(composeBaseOverride, mongoDumpScript, true),
 	{StackCompose, DBMongoSize}:             dbScript(composeBase, mongoSizeScript, true),
 	{StackCompose, DBMongoSizeOverride}:     dbScript(composeBaseOverride, mongoSizeScript, true),
+	{StackCompose, DBPgCheck}:               dbScript(composeBase, pgCheckScript, true),
+	{StackCompose, DBPgCheckOverride}:       dbScript(composeBaseOverride, pgCheckScript, true),
+	{StackCompose, DBMySQLCheck}:            dbScript(composeBase, mysqlCheckScript, true),
+	{StackCompose, DBMySQLCheckOverride}:    dbScript(composeBaseOverride, mysqlCheckScript, true),
+	{StackCompose, DBMongoCheck}:            dbScript(composeBase, mongoCheckScript, true),
+	{StackCompose, DBMongoCheckOverride}:    dbScript(composeBaseOverride, mongoCheckScript, true),
 	{StackCompose, DBDumpStop}:              dbScript(composeBase, dumpStopScript, false),
 	{StackCompose, DBDumpStopOverride}:      dbScript(composeBaseOverride, dumpStopScript, false),
 }
 
 // dbScript is a database action: exec -T {service} sh -c <script> sh, then
-// {dbname} when named. The script is one fixed argv element; "sh" fills $0, so
-// the name is "$1" inside it. -T keeps the dump's bytes free of a TTY.
+// {dbname} {uservar} {passvar} when named. The script is one fixed argv
+// element; "sh" fills $0, so the name is "$1" inside it and the user and
+// password variable names "$2" and "$3" (both empty for the image's standard
+// variables). -T keeps the dump's bytes free of a TTY.
 func dbScript(base []arg, script string, named bool) []arg {
 	a := join(base, lit("exec", "-T"), []arg{nameArg("service")}, lit("sh", "-c", script, "sh"))
 	if named {
-		a = append(a, dbNameArg())
+		a = append(a, dbNameArg(), envNameArg("uservar"), envNameArg("passvar"))
 	}
 	return a
 }
@@ -355,6 +386,10 @@ func argv(s Stack, a Action, v Values) ([]string, error) {
 		case kindDBName:
 			if !ValidDBName(val) {
 				return nil, fmt.Errorf("%w: {%s} is not a valid database name", ErrBadValue, el.slot)
+			}
+		case kindEnvName:
+			if !ValidEnvName(val) {
+				return nil, fmt.Errorf("%w: {%s} is not a valid variable name", ErrBadValue, el.slot)
 			}
 		default:
 			if err := checkPath(el.slot, val); err != nil {

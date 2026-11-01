@@ -102,6 +102,31 @@ afterEach(() => {
 })
 
 describe('project logs', () => {
+  it('shows skeleton lines until the first batch, then the lines', () => {
+    open()
+    const skeleton = within(logArea()).getByRole('status', { name: 'Loading logs' })
+    expect(skeleton.querySelectorAll('.animate-scp-pulse').length).toBeGreaterThan(0)
+    expect(logArea()).not.toHaveTextContent('Loading')
+
+    send([line(1, 'first')])
+    expect(within(logArea()).queryByRole('status', { name: 'Loading logs' })).toBeNull()
+    expect(rowTexts()[0]).toContain('first')
+  })
+
+  it('drops the skeleton for an empty backlog and for an end with nothing sent', () => {
+    open()
+    send([])
+    expect(within(logArea()).queryByRole('status', { name: 'Loading logs' })).toBeNull()
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Container' }), {
+      target: { value: 'db' },
+    })
+    const url = `${LOGS}?service=db`
+    expect(within(logArea()).getByRole('status', { name: 'Loading logs' })).toBeInTheDocument()
+    end('error', 'the backlog failed', url)
+    expect(within(logArea()).queryByRole('status', { name: 'Loading logs' })).toBeNull()
+  })
+
   it('shows the backlog then live lines', () => {
     open()
     expect(FakeEventSource.forUrl(LOGS)).toHaveLength(1)

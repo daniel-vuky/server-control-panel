@@ -46,14 +46,21 @@ type fakeRunner struct {
 	follow     chan string
 	delivered  chan struct{}
 	runs       []call
+	config     string // what compose.config prints; emptyConfig by default
+	configs    []call // the compose.config (masks) reads, kept out of runs
 	streams    []call
 	started    chan call     // one value per Stream call
 	ctxDone    chan struct{} // one value per Stream that ended on its ctx
 }
 
+// emptyConfig is the compose config the fake prints by default: the masks
+// read finds nothing in it beyond the project's .env.
+const emptyConfig = `{"name":"shop","services":{}}`
+
 func newFake(backlog string) *fakeRunner {
 	return &fakeRunner{
 		backlog:   backlog,
+		config:    emptyConfig,
 		follow:    make(chan string),
 		delivered: make(chan struct{}),
 		started:   make(chan call, 16),
@@ -63,6 +70,13 @@ func newFake(backlog string) *fakeRunner {
 
 func (f *fakeRunner) Run(ctx context.Context, _ runner.Stack, a runner.Action, v runner.Values, secrets []string) (runner.Result, error) {
 	f.mu.Lock()
+	if a == runner.ComposeConfig || a == runner.ComposeConfigOverride {
+		// The masks read is answered apart from the backlog and never gated.
+		f.configs = append(f.configs, call{a, v, secrets})
+		out := f.config
+		f.mu.Unlock()
+		return runner.Result{Stdout: []byte(out)}, nil
+	}
 	f.runs = append(f.runs, call{a, v, secrets})
 	gate, out, err, trunc := f.gate, f.backlog, f.backlogErr, f.truncated
 	f.mu.Unlock()
@@ -956,6 +970,36 @@ func TestLinesMasked(t *testing.T) {
 		t.Fatalf("live = %q", texts(got))
 	}
 	sub.Cancel()
+}
+
+// TestLinesMaskComposeSecrets: a value written in compose `environment:` and
+// one in an env_file are masked in the backlog and the follow, as the .env
+// value is, and the masks come from one compose.config read.
+func TestLinesMaskComposeSecrets(t *testing.T) {
+	f := newFake(raw("web-1", t0, "boot devpassword literal22 filesecret3") + "\n")
+	m := newManager(f, running("shop"))
+	tr := tracked(t, 1, "shop")
+	writeEnv(t, tr.Path)
+	if err := os.WriteFile(filepath.Join(tr.Path, "db.env"), []byte("API_TOKEN=filesecret3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.config = `{"name":"shop","services":{"web":{"environment":{"DB_PW":"literal22"},"env_file":[{"path":"` +
+		filepath.Join(tr.Path, "db.env") + `"}]}}}`
+	sub, _ := m.Subscribe(context.Background(), tr, "")
+	if got := next(t, sub); !slices.Equal(texts(got), []string{"boot •••• •••• ••••"}) {
+		t.Fatalf("backlog = %q", texts(got))
+	}
+	f.waitStarted(t)
+	f.emit(t, raw("web-1", t0.Add(time.Second), "live literal22 / filesecret3"))
+	if got := collect(t, sub, 1); !slices.Equal(texts(got), []string{"live •••• / ••••"}) {
+		t.Fatalf("live = %q", texts(got))
+	}
+	sub.Cancel()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.configs) != 1 || f.configs[0].Action != runner.ComposeConfig || f.configs[0].Values["dir"] != tr.Path {
+		t.Fatalf("config reads = %+v, want one compose.config", f.configs)
+	}
 }
 
 // Unparsed follow output (status lines, compose warnings) never reaches a viewer.

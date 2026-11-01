@@ -50,8 +50,13 @@ type fakeCmd struct {
 	peak     int
 }
 
+// emptyConfig is the compose config the fake prints by default: the masks
+// read finds nothing in it beyond the project's .env.
+const emptyConfig = `{"name":"x","services":{}}`
+
 func newFakeCmd() *fakeCmd {
-	return &fakeCmd{queues: map[runner.Action][]reply{}, inFlight: map[runner.Action]int{}, peakOf: map[runner.Action]int{}}
+	f := &fakeCmd{queues: map[runner.Action][]reply{}, inFlight: map[runner.Action]int{}, peakOf: map[runner.Action]int{}}
+	return f.on(runner.ComposeConfig, reply{stdout: emptyConfig}).on(runner.ComposeConfigOverride, reply{stdout: emptyConfig})
 }
 
 // on appends replies to the queue of action a.

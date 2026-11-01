@@ -2,6 +2,7 @@ package scan
 
 import (
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -134,6 +135,9 @@ func rawUserinfo(v string) []string {
 	return out
 }
 
+// isSecretKey says whether a variable name looks like it holds a secret: it
+// contains one of secretKeyWords, or has PW as a whole _-separated token
+// (DB_PW, PW_ROOT, not UPWARD), case-insensitive.
 func isSecretKey(k string) bool {
 	k = strings.ToUpper(k)
 	for _, w := range secretKeyWords {
@@ -141,5 +145,5 @@ func isSecretKey(k string) bool {
 			return true
 		}
 	}
-	return false
+	return slices.Contains(strings.Split(k, "_"), "PW")
 }

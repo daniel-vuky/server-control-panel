@@ -18,12 +18,28 @@ var dumpScripts = map[string]bool{"pgDump": true, "mysqlDump": true, "mongoDump"
 
 // allScripts names every database script constant but the stop script.
 var allScripts = map[string]string{
-	"pgDump":    pgDumpScript,
-	"pgSize":    pgSizeScript,
-	"mysqlDump": mysqlDumpScript,
-	"mysqlSize": mysqlSizeScript,
-	"mongoDump": mongoDumpScript,
-	"mongoSize": mongoSizeScript,
+	"pgDump":     pgDumpScript,
+	"pgSize":     pgSizeScript,
+	"pgCheck":    pgCheckScript,
+	"mysqlDump":  mysqlDumpScript,
+	"mysqlSize":  mysqlSizeScript,
+	"mysqlCheck": mysqlCheckScript,
+	"mongoDump":  mongoDumpScript,
+	"mongoSize":  mongoSizeScript,
+	"mongoCheck": mongoCheckScript,
+}
+
+// scriptTools are the clients each script may call, for fakes.
+var scriptTools = map[string][]string{
+	"pgDump":     {"psql", "pg_dump"},
+	"pgSize":     {"psql"},
+	"pgCheck":    {"psql"},
+	"mysqlDump":  {"mysqldump"},
+	"mysqlSize":  {"mysql"},
+	"mysqlCheck": {"mysql"},
+	"mongoDump":  {"mongosh", "mongodump"},
+	"mongoSize":  {"mongosh"},
+	"mongoCheck": {"mongosh"},
 }
 
 // scriptLines returns the lines of script that contain sub.
@@ -80,7 +96,7 @@ func TestMySQLDumpScriptNoPasswordOnArgvAndFlags(t *testing.T) {
 	if !strings.Contains(mysqlSizeScript, `table_schema = '$1'"`) {
 		t.Fatal("the size query does not compare table_schema with the checked name")
 	}
-	for _, s := range []string{mysqlDumpScript, mysqlSizeScript} {
+	for _, s := range []string{mysqlDumpScript, mysqlSizeScript, mysqlCheckScript} {
 		if n := len(scriptLines(s, "printf 'password=")); n != 1 {
 			t.Fatalf("password is written %d times, want once, to the defaults file", n)
 		}
@@ -95,27 +111,57 @@ func TestMongoScriptsPasswordOnlyInConfigOrEnv(t *testing.T) {
 	if strings.Contains(mongoDumpScript, "username:") || strings.Contains(mongoDumpScript, "-p ") {
 		t.Fatal("the dump puts more than the password in the config, or a password flag on argv")
 	}
-	if !strings.Contains(mongoDumpScript, `mongodump --archive --db "$1" --username "$u" --authenticationDatabase admin --config "$f" &`+"\n") {
+	if !strings.Contains(mongoDumpScript, `mongodump --archive --db "$1" --username "$u" --authenticationDatabase "$a" --config "$f" &`+"\n") {
 		t.Fatal("the authenticated dump argv changed")
 	}
 	if !strings.Contains(mongoDumpScript, `mongodump --archive --db "$1" &`+"\n") {
 		t.Fatal("the dump without a root user changed")
 	}
-	run := scriptLines(mongoSizeScript, "mongosh")
-	if len(run) != 1 || !strings.HasPrefix(strings.TrimSpace(run[0]), `U=$u P=$pw N="$1" mongosh --quiet --norc --nodb --eval '`) {
-		t.Fatalf("mongosh lines = %q, want U/P/N set for that one process", run)
+	run := scriptLines(mongoSizeScript, "mongosh --quiet")
+	if len(run) != 2 || !strings.HasPrefix(strings.TrimSpace(run[1]), `U=$u P=$pw A=$a N="$1" mongosh --quiet --norc --nodb --eval '`) {
+		t.Fatalf("mongosh lines = %q, want the probe and U/P/A/N set for that one process", run)
 	}
 	js := mongoJS
-	for _, want := range []string{"process.env.U", "process.env.P", "getSiblingDB(process.env.N)", "dataSize"} {
+	for _, want := range []string{"process.env.U", "process.env.P", "process.env.A", "getSiblingDB(process.env.N)", "dataSize"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("JS lacks %s", want)
 		}
 	}
-	if strings.ContainsAny(js, "$'`") {
-		t.Fatal("the JS holds a shell character; nothing may be spliced into it")
+	for name, j := range map[string]string{"size": mongoJS, "probe": mongoProbeJS, "check": mongoCheckJS} {
+		if strings.ContainsAny(j, "$'`") {
+			t.Errorf("the %s JS holds a shell character; nothing may be spliced into it", name)
+		}
 	}
-	if !strings.Contains(mongoSizeScript, "'"+js+"'") {
+	if !strings.Contains(mongoSizeScript, "'"+js+"'") || !strings.Contains(mongoCheckScript, "'"+mongoCheckJS+"'") {
 		t.Fatal("the JS is not passed as one single-quoted argument")
+	}
+}
+
+// The MongoDB probe finds the authentication database of custom credentials:
+// mongosh with no server of its own (--nodb), the user and password only in
+// that one process's environment, admin tried before the database itself.
+func TestMongoProbeScript(t *testing.T) {
+	for name, s := range map[string]string{"mongoDump": mongoDumpScript, "mongoSize": mongoSizeScript, "mongoCheck": mongoCheckScript} {
+		probe := scriptLines(s, "'"+mongoProbeJS+"'")
+		if len(probe) != 1 || strings.TrimSpace(probe[0]) != `a=$(U=$u P=$pw N="$1" mongosh --quiet --norc --nodb --eval '`+mongoProbeJS+`') || exit 1` {
+			t.Errorf("%s probe lines = %q", name, probe)
+		}
+		if !strings.Contains(s, mongoLogin) {
+			t.Errorf("%s does not log in through mongoLogin", name)
+		}
+	}
+	for _, want := range []string{`["admin", process.env.N]`, "process.env.U", "process.env.P", "connect(", "print(a)"} {
+		if !strings.Contains(mongoProbeJS, want) {
+			t.Errorf("probe JS lacks %s", want)
+		}
+	}
+	if !strings.Contains(mongoLogin, "\tadmin | \"$1\") ;;\n") {
+		t.Fatal("the probe's answer is not checked to be admin or the database")
+	}
+	for _, want := range []string{"listDatabases: 1", "nameOnly: true", "authorizedDatabases: true", "process.env.N", "process.env.A"} {
+		if !strings.Contains(mongoCheckJS, want) {
+			t.Errorf("check JS lacks %s", want)
+		}
 	}
 }
 
@@ -190,6 +236,9 @@ func TestScriptsReadFileTwins(t *testing.T) {
 		"mongoDump": {"MONGO_INITDB_ROOT_USERNAME", "MONGO_INITDB_ROOT_PASSWORD"},
 		"mongoSize": {"MONGO_INITDB_ROOT_USERNAME", "MONGO_INITDB_ROOT_PASSWORD"},
 	}
+	for _, c := range []string{"pg", "mysql", "mongo"} {
+		vars[c+"Check"] = vars[c+"Size"]
+	}
 	for name, vs := range vars {
 		for _, v := range vs {
 			want := "${" + v + `:-$(cat "${` + v + `_FILE:-/dev/null}" 2>/dev/null)}`
@@ -220,7 +269,7 @@ const fakeTool = `#!/bin/sh
 n=$(basename "$0")
 o=$FAKE_OUT
 { echo '--call'; printf '%s\n' "$@"; } >>"$o/$n.argv"
-env >>"$o/$n.env"
+{ echo '--call'; env; } >>"$o/$n.env"
 prev=
 for a in "$@"; do
 	case $a in
@@ -234,6 +283,7 @@ done
 if [ -n "${PGPASSFILE:-}" ]; then
 	cat "$PGPASSFILE" >>"$o/$n.file"
 fi
+[ -z "${FAKE_STDERR:-}" ] || echo "$FAKE_STDERR" >&2
 if [ "$n" = mysqldump ] && [ "${1:-}" = --version ]; then
 	if [ -n "${FAKE_VERSION_SLOW:-}" ]; then
 		echo "$$" >"$o/version.pid"
@@ -259,7 +309,16 @@ if [ -n "${FAKE_SLOW:-}" ] && [ "${1:-}" != --version ]; then
 		i=$((i + 1))
 	done
 fi
-echo "$n output"
+if [ -n "${FAKE_SAY:-}" ]; then
+	k=$(grep -c -- '^--call$' "$o/$n.argv")
+	set -- $FAKE_SAY
+	if [ "$k" -le "$#" ]; then
+		shift $((k - 1))
+		echo "$1"
+	fi
+else
+	echo "$n output"
+fi
 exit "${FAKE_EXIT:-0}"
 `
 
@@ -557,10 +616,13 @@ func TestDumpScriptsRecordTheirDumper(t *testing.T) {
 		if n := strings.Count(s, "/tmp/.scp-dump."); n != strings.Count(s, dumpPidFile)+1 {
 			t.Errorf("%s names a scp-dump path other than %s and its mktemp template", name, dumpPidFile)
 		}
-		for _, bad := range []string{"eval", "exec ", "kill -s KILL", "rm -rf"} {
+		for _, bad := range []string{"exec ", "kill -s KILL", "rm -rf"} {
 			if strings.Contains(s, bad) {
 				t.Errorf("%s contains %q", name, bad)
 			}
+		}
+		if i := strings.Index(s, `eval "`); i >= 0 && i < refuse {
+			t.Errorf("%s reads a custom variable before it refuses a second dump", name)
 		}
 	}
 	claim := "scp_claim() {\n" +
@@ -1026,4 +1088,261 @@ func TestDumpScriptExitStatusIsTheDumpers(t *testing.T) {
 	if r.code != 3 || r.stdout != "pg_dump output\n" {
 		t.Fatalf("exit %d, stdout %q", r.code, r.stdout)
 	}
+}
+
+// customEnv is a container environment with credentials under names of the
+// owner's choosing.
+var customEnv = []string{"APP_USER=app", "APP_PASSWORD=" + hostilePassword}
+
+// The variable names are checked again inside every named script, before any
+// eval or tool: a name that is not [A-Za-z_][A-Za-z0-9_]*, longer than 64, or
+// one name without the other exits 64 and runs nothing.
+func TestCheckScriptRefusesBadName(t *testing.T) {
+	bad := [][2]string{
+		{"A;rm", "X"},
+		{"X", "$(id)"},
+		{"1A", "X"},
+		{"X", "A B"},
+		{"X", "A-B"},
+		{"`id`", "X"},
+		{"X", "A\nB"},
+		{strings.Repeat("A", 65), "X"},
+		{"APP_USER", ""},
+		{"", "APP_PASSWORD"},
+	}
+	for name, script := range allScripts {
+		tools := scriptTools[name]
+		for _, b := range bad {
+			r := runScript(t, script, tools, customEnv, "shop", b[0], b[1])
+			if r.code != 64 || !strings.Contains(r.stderr, "invalid variable name") {
+				t.Errorf("%s %q %q: exit %d, stderr %q, want 64", name, b[0], b[1], r.code, r.stderr)
+			}
+			for _, tool := range tools {
+				if got := r.read(t, tool+".argv"); got != "" {
+					t.Errorf("%s %q %q ran %s: %q", name, b[0], b[1], tool, got)
+				}
+			}
+		}
+	}
+	for _, s := range []string{scriptStart, dumpStart} {
+		unset := scriptLines(s, "unset ")
+		if len(unset) != 1 || !strings.Contains(unset[0]+" ", " pf ") || !strings.Contains(unset[0]+" ", " a ") {
+			t.Errorf("unset list %q lacks pf and a", unset)
+		}
+	}
+	guard := "case \"${2:-}\" in\n[0-9]* | *[!A-Za-z0-9_]*)\n"
+	for name, s := range allScripts {
+		g := strings.Index(s, guard)
+		e := strings.Index(s, `eval "`)
+		if g < 0 || e < g || !strings.Contains(s, strings.ReplaceAll(guard, "2", "3")) || strings.Count(s, "exit 64") != 3 {
+			t.Errorf("%s does not check the variable names with case before it reads them", name)
+		}
+		for _, l := range scriptLines(s, `eval "`) {
+			switch strings.TrimSpace(l) {
+			case `eval "u=\${$2:-}"`, `eval "pw=\${$3:-}"`, `eval "pf=\${${2}_FILE:-}"`, `eval "pf=\${${3}_FILE:-}"`:
+			default:
+				t.Errorf("%s has an eval that is not a guarded read: %q", name, l)
+			}
+		}
+	}
+}
+
+// With custom variable names every script logs in with their values, read
+// from the variables or their _FILE twins, and never puts the password on argv.
+func TestScriptsReadCustomVariables(t *testing.T) {
+	t.Run("PostgreSQL", func(t *testing.T) {
+		for _, script := range []string{pgDumpScript, pgSizeScript, pgCheckScript} {
+			r := runScript(t, script, []string{"psql", "pg_dump"}, append([]string{"FAKE_PROBE_EXIT=2"}, customEnv...), "shop", "APP_USER", "APP_PASSWORD")
+			tool := "psql"
+			if script == pgDumpScript {
+				tool = "pg_dump"
+				if r.code != 0 {
+					t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+				}
+			}
+			if got, want := r.read(t, tool+".file"), `*:*:*:*:p\:a\\ss"w'o#r d;$x`+"\n"; !strings.HasPrefix(got, want) {
+				t.Fatalf("PGPASSFILE = %q, want %q", got, want)
+			}
+			if got := r.read(t, tool+".argv"); !strings.Contains(got, "\n-U\napp\n-d\nshop\n") {
+				t.Fatalf("%s argv %q", tool, got)
+			}
+			noSecretOnArgv(t, r, "psql", "pg_dump")
+		}
+	})
+	t.Run("PostgreSQL, password from file", func(t *testing.T) {
+		env := []string{"APP_USER_FILE=" + secretFile(t, "app"), "APP_PASSWORD_FILE=" + secretFile(t, hostilePassword), "FAKE_PROBE_EXIT=2"}
+		r := runScript(t, pgDumpScript, []string{"psql", "pg_dump"}, env, "shop", "APP_USER", "APP_PASSWORD")
+		if got := r.read(t, "pg_dump.file"); got != `*:*:*:*:p\:a\\ss"w'o#r d;$x`+"\n" {
+			t.Fatalf("PGPASSFILE = %q", got)
+		}
+		if got := r.read(t, "pg_dump.argv"); !strings.HasSuffix(got, "\n-U\napp\n-d\nshop\n") {
+			t.Fatalf("pg_dump argv %q", got)
+		}
+	})
+	t.Run("MySQL", func(t *testing.T) {
+		// The image's root password is set too; the custom names win.
+		env := append([]string{"MYSQL_ROOT_PASSWORD=rootpw", "FAKE_SAY=shop"}, customEnv...)
+		for _, tc := range []struct{ script, tool string }{
+			{mysqlDumpScript, "mysqldump"}, {mysqlSizeScript, "mysql"}, {mysqlCheckScript, "mysql"},
+		} {
+			r := runScript(t, tc.script, []string{tc.tool}, env, "shop", "APP_USER", "APP_PASSWORD")
+			if r.code != 0 {
+				t.Fatalf("%s: exit %d, stderr %q", tc.tool, r.code, r.stderr)
+			}
+			want := "[client]\nuser=\"app\"\npassword=\"p:a\\\\ss\\\"w'o#r d;$x\"\n"
+			if got := r.read(t, tc.tool+".file"); got != want {
+				t.Fatalf("%s defaults file = %q, want %q", tc.tool, got, want)
+			}
+			noSecretOnArgv(t, r, tc.tool)
+		}
+	})
+	t.Run("MySQL, password from file", func(t *testing.T) {
+		env := []string{"APP_USER=app", "APP_PASSWORD_FILE=" + secretFile(t, "s3cret")}
+		r := runScript(t, mysqlSizeScript, []string{"mysql"}, env, "shop", "APP_USER", "APP_PASSWORD")
+		if got := r.read(t, "mysql.file"); got != "[client]\nuser=\"app\"\npassword=\"s3cret\"\n" {
+			t.Fatalf("defaults file = %q", got)
+		}
+	})
+	t.Run("MongoDB dump", func(t *testing.T) {
+		for _, authDB := range []string{"admin", "shop"} {
+			env := append([]string{"MONGO_INITDB_ROOT_USERNAME=root", "FAKE_SAY=" + authDB}, customEnv...)
+			r := runScript(t, mongoDumpScript, []string{"mongosh", "mongodump"}, env, "shop", "APP_USER", "APP_PASSWORD")
+			if r.code != 0 {
+				t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+			}
+			probeEnv := "\n" + r.read(t, "mongosh.env")
+			for _, want := range []string{"\nU=app\n", "\nP=" + hostilePassword + "\n", "\nN=shop\n"} {
+				if !strings.Contains(probeEnv, want) {
+					t.Errorf("probe env lacks %q", want)
+				}
+			}
+			if got := r.read(t, "mongosh.argv"); got != "--call\n--quiet\n--norc\n--nodb\n--eval\n"+mongoProbeJS+"\n" {
+				t.Fatalf("probe argv %q", got)
+			}
+			if got, want := r.read(t, "mongodump.file"), `password: 'p:a\ss"w''o#r d;$x'`+"\n"; got != want {
+				t.Fatalf("config = %q, want %q", got, want)
+			}
+			if got := r.read(t, "mongodump.argv"); !strings.HasPrefix(got, "--call\n--archive\n--db\nshop\n--username\napp\n--authenticationDatabase\n"+authDB+"\n--config\n") {
+				t.Fatalf("mongodump argv %q", got)
+			}
+			noSecretOnArgv(t, r, "mongosh", "mongodump")
+		}
+	})
+	t.Run("MongoDB probe fails", func(t *testing.T) {
+		for _, env := range [][]string{
+			append([]string{"FAKE_SAY=other"}, customEnv...),
+			append([]string{"FAKE_EXIT=1"}, customEnv...),
+		} {
+			r := runScript(t, mongoDumpScript, []string{"mongosh", "mongodump"}, env, "shop", "APP_USER", "APP_PASSWORD")
+			if r.code == 0 || r.read(t, "mongodump.argv") != "" {
+				t.Errorf("%v: exit %d, the dump ran", env, r.code)
+			}
+		}
+	})
+	t.Run("MongoDB size and check", func(t *testing.T) {
+		for _, tc := range []struct{ script, say string }{{mongoSizeScript, "shop 42"}, {mongoCheckScript, "shop found"}} {
+			r := runScript(t, tc.script, []string{"mongosh"}, append([]string{"FAKE_SAY=" + tc.say}, customEnv...), "shop", "APP_USER", "APP_PASSWORD")
+			if r.code != 0 {
+				t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+			}
+			calls := strings.Split(r.read(t, "mongosh.env"), "--call\n")
+			if len(calls) != 3 {
+				t.Fatalf("mongosh ran %d times, want the probe and the read", len(calls)-1)
+			}
+			read := "\n" + calls[2]
+			for _, want := range []string{"\nU=app\n", "\nP=" + hostilePassword + "\n", "\nA=shop\n", "\nN=shop\n"} {
+				if !strings.Contains(read, want) {
+					t.Errorf("read env lacks %q", want)
+				}
+			}
+			noSecretOnArgv(t, r, "mongosh")
+		}
+	})
+	t.Run("user variable empty", func(t *testing.T) {
+		for name, script := range allScripts {
+			tools := scriptTools[name]
+			r := runScript(t, script, tools, []string{"APP_PASSWORD=x"}, "shop", "APP_USER", "APP_PASSWORD")
+			if r.code != 1 || !strings.Contains(r.stderr, "APP_USER is empty in the container's environment") {
+				t.Errorf("%s: exit %d, stderr %q", name, r.code, r.stderr)
+			}
+			for _, tool := range tools {
+				if got := r.read(t, tool+".argv"); got != "" {
+					t.Errorf("%s ran %s: %q", name, tool, got)
+				}
+			}
+		}
+	})
+}
+
+// The check scripts exit 0 when the database is there for the user, and fail
+// with the panel's words when it is not.
+func TestCheckScriptsBehaviour(t *testing.T) {
+	const words = "Database shop was not found, or the user has no access to it.\n"
+	t.Run("PostgreSQL", func(t *testing.T) {
+		r := runScript(t, pgCheckScript, []string{"psql"}, nil, "shop", "", "")
+		if r.code != 0 || r.stderr != "" {
+			t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+		}
+		if got := r.read(t, "psql.argv"); !strings.HasSuffix(got, "\n-U\npostgres\n-d\nshop\n-tAc\nselect 1\n") {
+			t.Fatalf("psql argv %q", got)
+		}
+		for stderr, want := range map[string]string{ //nolint:gosec // G101: psql's error lines, no credential
+			`psql: error: FATAL:  database "shop" does not exist`:        words,
+			`psql: error: FATAL:  permission denied for database "shop"`: words,
+			`psql: error: FATAL:  password authentication failed`:        "psql: error: FATAL:  password authentication failed\n",
+			`psql: error: FATAL:  role "app" does not exist`:             "psql: error: FATAL:  role \"app\" does not exist\n",
+		} {
+			r := runScript(t, pgCheckScript, []string{"psql"}, []string{"FAKE_PROBE_EXIT=2", "FAKE_STDERR=" + stderr}, "shop", "", "")
+			if r.code != 1 || r.stderr != want {
+				t.Errorf("%q: exit %d, stderr %q, want %q", stderr, r.code, r.stderr, want)
+			}
+		}
+	})
+	t.Run("MySQL", func(t *testing.T) {
+		r := runScript(t, mysqlCheckScript, []string{"mysql"}, []string{"FAKE_SAY=shop"}, "shop", "", "")
+		if r.code != 0 || r.stderr != "" {
+			t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+		}
+		if argv := r.read(t, "mysql.argv"); !strings.HasSuffix(argv, "\n-N\n-B\n-e\nselect schema_name from information_schema.schemata where schema_name = 'shop'\n") {
+			t.Fatalf("mysql argv %q", argv)
+		}
+		r = runScript(t, mysqlCheckScript, []string{"mysql"}, nil, "shop", "", "")
+		if r.code != 1 || r.stderr != words {
+			t.Fatalf("missing: exit %d, stderr %q", r.code, r.stderr)
+		}
+		r = runScript(t, mysqlCheckScript, []string{"mysql"}, []string{"FAKE_EXIT=1", "FAKE_STDERR=ERROR 1045 (28000): Access denied"}, "shop", "", "")
+		if r.code != 1 || r.stderr != "ERROR 1045 (28000): Access denied\n" {
+			t.Fatalf("login failed: exit %d, stderr %q", r.code, r.stderr)
+		}
+		for _, name := range []string{"", "-x", "a'b", "a b"} {
+			r := runScript(t, mysqlCheckScript, []string{"mysql"}, nil, name, "", "")
+			if r.code != 2 || r.read(t, "mysql.argv") != "" {
+				t.Errorf("%q: exit %d, a client ran", name, r.code)
+			}
+		}
+	})
+	t.Run("MongoDB", func(t *testing.T) {
+		env := []string{"MONGO_INITDB_ROOT_USERNAME=root", "MONGO_INITDB_ROOT_PASSWORD=" + hostilePassword}
+		r := runScript(t, mongoCheckScript, []string{"mongosh"}, append([]string{"FAKE_SAY=found"}, env...), "shop", "", "")
+		if r.code != 0 || r.stderr != "" {
+			t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+		}
+		got := "\n" + r.read(t, "mongosh.env")
+		for _, want := range []string{"\nU=root\n", "\nP=" + hostilePassword + "\n", "\nA=admin\n", "\nN=shop\n"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("mongosh env lacks %q", want)
+			}
+		}
+		if argv := r.read(t, "mongosh.argv"); argv != "--call\n--quiet\n--norc\n--nodb\n--eval\n"+mongoCheckJS+"\n" {
+			t.Fatalf("mongosh argv %q", argv)
+		}
+		r = runScript(t, mongoCheckScript, []string{"mongosh"}, append([]string{"FAKE_SAY=missing"}, env...), "shop", "", "")
+		if r.code != 1 || r.stderr != words {
+			t.Fatalf("missing: exit %d, stderr %q", r.code, r.stderr)
+		}
+		r = runScript(t, mongoCheckScript, []string{"mongosh"}, append([]string{"FAKE_EXIT=1", "FAKE_STDERR=MongoServerError: Authentication failed."}, env...), "shop", "", "")
+		if r.code != 1 || r.stderr != "MongoServerError: Authentication failed.\n" {
+			t.Fatalf("login failed: exit %d, stderr %q", r.code, r.stderr)
+		}
+	})
 }

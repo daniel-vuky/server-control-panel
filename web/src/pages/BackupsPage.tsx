@@ -9,12 +9,13 @@ import { BackupSteps } from '../components/BackupProgress'
 import CloudUploadIcon from '../components/CloudUploadIcon'
 import EmptyState, { EmptyStateButton } from '../components/EmptyState'
 import PageHeader from '../components/PageHeader'
+import Stale from '../components/Stale'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
 import { backupChanges } from '../lib/backupChanges'
 import { formatClock } from '../lib/time'
 import { useBackup } from '../lib/useBackup'
-import { useLoad } from '../lib/useLoad'
 import { usePageRestore } from '../lib/usePageRestore'
+import { errorMessage, useRead } from '../lib/useRead'
 import { BackUpAllButton, type BackupAll, BackupAllBar, useBackupAll } from './backups/BackupAllBar'
 import BackupSummaryCards from './backups/BackupSummaryCards'
 import BackupsTable, {
@@ -36,7 +37,7 @@ const byQueue = (a: Backup, b: Backup) =>
 /**
  * useSummary is GET /api/backups/summary, read once `ready` (the first live
  * state arrived) and again whenever `changed` changes; a failed re-read keeps
- * the last summary.
+ * the last summary, and its error stays until a read succeeds.
  */
 function useSummary(changed: string, ready: boolean) {
   const [summary, setSummary] = useState<BackupSummary | null>(null)
@@ -47,14 +48,14 @@ function useSummary(changed: string, ready: boolean) {
     ctl.current?.abort()
     const c = new AbortController()
     ctl.current = c
-    setError('')
     getBackupSummary(c.signal).then(
       (s) => {
-        if (!c.signal.aborted) setSummary(s)
+        if (c.signal.aborted) return
+        setSummary(s)
+        setError('')
       },
       (err: unknown) => {
-        if (c.signal.aborted) return
-        setError(err instanceof Error && err.message ? err.message : 'Something went wrong.')
+        if (!c.signal.aborted) setError(errorMessage(err))
       },
     )
   }, [])
@@ -81,7 +82,7 @@ export default function BackupsPage() {
   const active = [...live.backups].sort(byQueue)
   const flow = useBackup()
   const all = useBackupAll()
-  const zone = useLoad(getBackupSettings).load
+  const zone = useRead(getBackupSettings, 'zone')
   const [params, setParams] = useSearchParams()
   const filters = filtersOf(params)
 
@@ -92,7 +93,7 @@ export default function BackupsPage() {
   const ready = live.projects !== null
   const summary = useSummary(changed, ready)
   const table = useAllBackups(filters, changed, ready)
-  const timeZone = zone.state === 'ok' ? zone.data.timeZone : null
+  const timeZone = zone.data?.timeZone ?? null
 
   const setFilter = (key: 'project' | 'result' | 'from' | 'to', value: string) => {
     const next = new URLSearchParams(params)
@@ -101,8 +102,8 @@ export default function BackupsPage() {
     setParams(next, { replace: true })
   }
 
-  const empty =
-    table.loaded && table.error === '' && table.rows.length === 0 && !isFiltered(filters)
+  // No backup at all (a later failed re-read keeps it, dimmed under the banner).
+  const empty = table.loaded && table.rows.length === 0 && !isFiltered(filters)
 
   return (
     <div className="flex flex-col gap-5">
@@ -138,7 +139,9 @@ export default function BackupsPage() {
         ))}
 
         {empty ? (
-          <NoBackups all={all} />
+          <Stale error={table.error} onRetry={table.readNewest} title="Could not load the backups.">
+            <NoBackups all={all} />
+          </Stale>
         ) : (
           <>
             <BackupFilters

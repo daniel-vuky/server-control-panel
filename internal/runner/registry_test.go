@@ -335,20 +335,23 @@ func TestValidDBName(t *testing.T) {
 }
 
 // dbExecArgs is the argv of a database script action: the compose head, then
-// exec -T {service} sh -c <script> sh, then the name when there is one.
+// exec -T {service} sh -c <script> sh, then the name and the two variable
+// names when there are some.
 func dbExecArgs(head []string, script string, name ...string) []string {
 	return cat(cat(head, "exec", "-T", "db", "sh", "-c", script, "sh"), name...)
 }
 
 // checkDBArgv checks the plain and override variants of a database action.
-// named says whether the action takes the {dbname} slot.
+// named says whether the action takes the {dbname}, {uservar} and {passvar}
+// slots; they are given as "shop" and two empty names.
 func checkDBArgv(t *testing.T, plain, over Action, script string, named bool) {
 	t.Helper()
 	pv, ov := with(plainVals, "service", "db"), with(overVals, "service", "db")
 	var name []string
 	if named {
-		pv, ov = with(pv, "dbname", "shop"), with(ov, "dbname", "shop")
-		name = []string{"shop"}
+		pv = with(pv, "dbname", "shop", "uservar", "", "passvar", "")
+		ov = with(ov, "dbname", "shop", "uservar", "", "passvar", "")
+		name = []string{"shop", "", ""}
 	}
 	for _, tc := range []struct {
 		a    Action
@@ -427,20 +430,140 @@ func TestArgvDBMongoSize(t *testing.T) {
 	}
 }
 
-// namedDBActions are the database actions that take {dbname}.
+// namedDBActions are the database actions that take {dbname}, {uservar} and
+// {passvar}.
 var namedDBActions = []Action{
 	DBPgDump, DBPgDumpOverride, DBPgSize, DBPgSizeOverride,
 	DBMySQLDump, DBMySQLDumpOverride, DBMySQLSize, DBMySQLSizeOverride,
 	DBMongoDump, DBMongoDumpOverride, DBMongoSize, DBMongoSizeOverride,
+	DBPgCheck, DBPgCheckOverride, DBMySQLCheck, DBMySQLCheckOverride,
+	DBMongoCheck, DBMongoCheckOverride,
 }
 
-// dbVals fills every slot of database action a.
+// isNamedDB says whether a is one of namedDBActions.
+func isNamedDB(a Action) bool {
+	for _, n := range namedDBActions {
+		if n == a {
+			return true
+		}
+	}
+	return false
+}
+
+// dbVals fills every slot of database action a: the name, and for a named
+// action two empty variable names.
 func dbVals(a Action, name string) Values {
 	v := with(plainVals, "service", "db", "dbname", name)
+	if isNamedDB(a) {
+		v = with(v, "uservar", "", "passvar", "")
+	}
 	if strings.HasSuffix(string(a), ".override") {
 		v = with(v, "override", "/w/shop/compose.override.yaml")
 	}
 	return v
+}
+
+// The {uservar} and {passvar} slots take a variable name or nothing: never a
+// value that could be shell syntax or a flag.
+func TestEnvNameKind(t *testing.T) {
+	for _, ok := range []string{"", "APP_PASSWORD", "_X1", "a", strings.Repeat("A", 64)} {
+		if !ValidEnvName(ok) {
+			t.Errorf("ValidEnvName(%q) = false", ok)
+		}
+		for _, slot := range []string{"uservar", "passvar"} {
+			if _, err := argv(StackCompose, DBMySQLCheck, with(dbVals(DBMySQLCheck, "shop"), slot, ok)); err != nil {
+				t.Errorf("{%s} %q: %v", slot, ok, err)
+			}
+		}
+	}
+	for _, bad := range []string{"1X", "A-B", "A B", "$X", "X;rm", "$(id)", "A\nB", "-x", "é", "A\x00", strings.Repeat("A", 65)} {
+		if ValidEnvName(bad) {
+			t.Errorf("ValidEnvName(%q) = true", bad)
+		}
+		for _, a := range namedDBActions {
+			for _, slot := range []string{"uservar", "passvar"} {
+				if _, err := argv(StackCompose, a, with(dbVals(a, "shop"), slot, bad)); !errors.Is(err, ErrBadValue) {
+					t.Errorf("%s {%s} %q: err = %v, want ErrBadValue", a, slot, bad, err)
+				}
+			}
+		}
+	}
+}
+
+// Every named action ends sh <name> <uservar> <passvar>, an empty name being
+// one empty element, and needs both slots.
+func TestNamedDBActionsTakeVarSlots(t *testing.T) {
+	for _, a := range namedDBActions {
+		got, err := argv(StackCompose, a, with(dbVals(a, "shop"), "uservar", "APP_USER", "passvar", "APP_PASSWORD"))
+		if err != nil {
+			t.Fatalf("%s: %v", a, err)
+		}
+		if tail := got[len(got)-4:]; !equal(tail, []string{"sh", "shop", "APP_USER", "APP_PASSWORD"}) {
+			t.Errorf("%s argv ends %q", a, tail)
+		}
+		got, err = argv(StackCompose, a, dbVals(a, "shop"))
+		if err != nil {
+			t.Fatalf("%s: %v", a, err)
+		}
+		if tail := got[len(got)-4:]; !equal(tail, []string{"sh", "shop", "", ""}) {
+			t.Errorf("%s argv with empty names ends %q", a, tail)
+		}
+		for _, slot := range []string{"uservar", "passvar"} {
+			v := dbVals(a, "shop")
+			delete(v, slot)
+			if _, err := argv(StackCompose, a, v); !errors.Is(err, ErrBadValue) {
+				t.Errorf("%s without {%s}: err = %v, want ErrBadValue", a, slot, err)
+			}
+		}
+	}
+}
+
+// The PostgreSQL default actions and the stop action keep no variable slots.
+func TestDefaultAndStopTakeNoSlots(t *testing.T) {
+	for _, a := range []Action{DBPgDumpDefault, DBPgDumpDefaultOverride, DBPgSizeDefault, DBPgSizeDefaultOverride, DBDumpStop, DBDumpStopOverride} {
+		for _, el := range registry[key{StackCompose, a}] {
+			if el.slot == "uservar" || el.slot == "passvar" {
+				t.Errorf("%s has a {%s} slot", a, el.slot)
+			}
+		}
+		v := dbVals(a, "shop")
+		delete(v, "dbname")
+		if _, err := argv(StackCompose, a, v); err != nil {
+			t.Fatalf("%s: %v", a, err)
+		}
+		for _, slot := range []string{"uservar", "passvar"} {
+			if _, err := argv(StackCompose, a, with(v, slot, "")); !errors.Is(err, ErrBadValue) {
+				t.Errorf("%s with {%s}: err = %v, want ErrBadValue", a, slot, err)
+			}
+		}
+	}
+}
+
+// The check actions run their fixed script with the three named slots. They
+// are reads: Run runs them with the read timeout; RunTo and Stream refuse them.
+func TestCheckActionsArgv(t *testing.T) {
+	for _, tc := range []struct {
+		plain, over Action
+		name        string
+		script      string
+	}{
+		{DBPgCheck, DBPgCheckOverride, "db.pg.check", pgCheckScript},
+		{DBMySQLCheck, DBMySQLCheckOverride, "db.mysql.check", mysqlCheckScript},
+		{DBMongoCheck, DBMongoCheckOverride, "db.mongo.check", mongoCheckScript},
+	} {
+		if string(tc.plain) != tc.name {
+			t.Errorf("%s is named %s", tc.name, tc.plain)
+		}
+		checkDBArgv(t, tc.plain, tc.over, tc.script, true)
+		for _, a := range []Action{tc.plain, tc.over} {
+			if isDump(a) || isFollow(a) {
+				t.Errorf("%s is a dump or a follow", a)
+			}
+			if got := timeoutFor(a, 15*time.Second); got != 15*time.Second {
+				t.Errorf("timeoutFor(%s) = %v, want the read timeout", a, got)
+			}
+		}
+	}
 }
 
 func TestDBNameSlotRejects(t *testing.T) {

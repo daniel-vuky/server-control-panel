@@ -455,11 +455,14 @@ func exitedByItself(err error) bool {
 }
 
 // stopCall is the stop action for the plan's dump: db.dump.stop, or its
-// override variant, with the dump's compose values but not its database name.
+// override variant, with the dump's compose values but not its database name
+// or variable names.
 func stopCall(p plan) (runner.Action, runner.Values) {
 	v := runner.Values{}
 	for k, val := range p.values {
-		if k != "dbname" {
+		switch k {
+		case "dbname", "uservar", "passvar":
+		default:
 			v[k] = val
 		}
 	}
@@ -521,7 +524,7 @@ func (m *Manager) dumpError(j *job, err error, stderr []byte, stopped bool) (msg
 		if msg == "" {
 			msg = p.tool + " exited with status " + strconv.Itoa(exit.Code) + "."
 		}
-		return msg, Hint(j.db.Type, p.image, j.db.Name, p.service, masked, j.db.Sources)
+		return msg, Hint(j.db.Type, p.image, j.db.Name, p.service, masked, j.db.Sources, j.db.UserVar, j.db.PasswordVar)
 	}
 	return cut(runner.Mask(err.Error(), p.secrets), maxErrorLine), ""
 }

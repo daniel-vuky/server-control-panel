@@ -126,6 +126,9 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/projects/{id}/backups", protect(requireJSON(http.HandlerFunc(s.enqueueBackup))))
 	mux.Handle("GET /api/projects/{id}/backups", protect(http.HandlerFunc(s.projectBackups)))
 	mux.Handle("POST /api/projects/{id}/backup-schedule", protect(requireJSON(http.HandlerFunc(s.backupSchedule))))
+	// The literal databases segment wins over {action} as well.
+	mux.Handle("POST /api/projects/{id}/databases", protect(requireJSON(http.HandlerFunc(s.addDatabase))))
+	mux.Handle("POST /api/projects/{id}/databases/{dbId}/remove", protect(requireJSON(http.HandlerFunc(s.removeDatabase))))
 	// GET only, so a POST to metrics reaches {action} and is its 404.
 	mux.Handle("GET /api/projects/{id}/metrics", protect(http.HandlerFunc(s.projectMetrics)))
 	mux.Handle("POST /api/projects/{id}/{action}", protect(requireJSON(http.HandlerFunc(s.projectAction))))

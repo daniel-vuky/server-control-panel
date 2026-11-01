@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LatestBackup } from '../api/types.gen'
 import { FakeEventSource } from '../test/fakeEventSource'
@@ -133,5 +133,111 @@ describe('brand line', () => {
     ready()
     const calls = vi.mocked(fetch).mock.calls.filter((c) => c[0] === '/api/server')
     expect(calls.length).toBe(1)
+  })
+})
+
+describe('phone menu', () => {
+  const opener = () => screen.getByRole('button', { name: 'Open menu' })
+
+  it('has a 44 by 44 Open menu button that shows below 768 px, and hides the sidebar there', () => {
+    stub([])
+    renderApp('/')
+    expect(opener()).toHaveClass('size-11')
+    expect(opener().parentElement).toHaveClass('md:hidden')
+    expect(nav()).toHaveClass('max-md:hidden')
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+  })
+
+  it('opens the same links in a drawer dialog', async () => {
+    stub([])
+    renderApp('/')
+    fireEvent.click(opener())
+    const drawer = screen.getByRole('dialog', { name: 'Menu' })
+    const wide = within(nav())
+      .getAllByRole('link')
+      .map((a) => [a.textContent, a.getAttribute('href')])
+    const links = within(drawer)
+      .getAllByRole('link')
+      .map((a) => [a.textContent, a.getAttribute('href')])
+    expect(links).toEqual(wide)
+    expect(drawer).toHaveAttribute('aria-modal', 'true')
+    await act(async () => {})
+  })
+
+  it('closes on Escape, on the overlay and on a link click', async () => {
+    stub([])
+    renderApp('/')
+    fireEvent.click(opener())
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Menu' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+
+    fireEvent.click(opener())
+    fireEvent.click(screen.getByTestId('confirm-overlay'))
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+
+    fireEvent.click(opener())
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Menu' })).getByRole('link', { name: /^Backups/ }),
+    )
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+    await act(async () => {})
+  })
+
+  it('reads /api/me once: opening the drawer shows the same user without a new read', async () => {
+    stub([])
+    const base = vi.mocked(fetch).getMockImplementation()
+    vi.mocked(fetch).mockImplementation(async (url, init) =>
+      url === '/api/me'
+        ? new Response('{"email":"admin@company.vn"}', { status: 200 })
+        : (base as typeof fetch)(url, init),
+    )
+    renderApp('/')
+    await within(nav()).findByText('admin@company.vn')
+    fireEvent.click(opener())
+    const drawer = screen.getByRole('dialog', { name: 'Menu' })
+    expect(within(drawer).getByText('admin@company.vn')).toBeInTheDocument()
+    fireEvent.keyDown(drawer, { key: 'Escape' })
+    fireEvent.click(opener())
+    await act(async () => {})
+    expect(vi.mocked(fetch).mock.calls.filter((c) => c[0] === '/api/me')).toHaveLength(1)
+  })
+
+  it('closes when the window is widened to 768 px or more', async () => {
+    const listeners = new Set<() => void>()
+    let wide = false
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        get matches() {
+          return query === '(min-width: 768px)' && wide
+        },
+        media: query,
+        addEventListener: (_: string, fn: () => void) => {
+          if (query === '(min-width: 768px)') listeners.add(fn)
+        },
+        removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+      })),
+    )
+    stub([])
+    renderApp('/')
+    fireEvent.click(opener())
+    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+    act(() => {
+      wide = true
+      for (const fn of listeners) fn()
+    })
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+    expect(listeners.size).toBe(0)
+    await act(async () => {})
+  })
+
+  it('closes when the location changes by other means', async () => {
+    stub([])
+    const { router } = renderApp('/')
+    fireEvent.click(opener())
+    await act(async () => {
+      await router.navigate('/server')
+    })
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
   })
 })

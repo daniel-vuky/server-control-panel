@@ -37,6 +37,8 @@ const (
 	ActBackupDefaults   = "backup.defaults"
 	ActBackupAll        = "backup.all"
 	ActMetricsRetention = "metrics.retention"
+	ActDatabaseAdd      = "database.add"
+	ActDatabaseRemove   = "database.remove"
 
 	// Alert settings are actions of a person; the alert.* ones are the system's.
 	ActAlertsChannel    = "alerts.channel"

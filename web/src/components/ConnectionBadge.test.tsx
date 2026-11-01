@@ -171,9 +171,11 @@ describe('app shell connection state', () => {
     expectNotDimmed()
   })
 
-  it('shows the badge on the onboarding page, in the brand row beside the card title', () => {
+  it('shows the badge on the onboarding page, in the brand row beside the card title', async () => {
     renderApp('/onboarding')
     ready()
+    // The page's workspace read ends here, not after the test.
+    await act(() => new Promise<void>((r) => setTimeout(r, 0)))
     expect(screen.getByRole('main')).toContainElement(screen.getByText('Realtime'))
     expect(content()).not.toContainElement(screen.getByText('Realtime'))
     expect(

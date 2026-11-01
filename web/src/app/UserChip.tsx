@@ -1,22 +1,14 @@
-import { useEffect, useState } from 'react'
-import { fetchMe } from '../api/me'
-
 export function initials(email: string): string {
   const local = email.split('@')[0] ?? ''
   return local === '' ? '?' : local.slice(0, 2).toUpperCase()
 }
 
-export default function UserChip() {
-  const [email, setEmail] = useState<string | null>(null)
-
-  useEffect(() => {
-    const ctrl = new AbortController()
-    fetchMe(ctrl.signal).then((me) => {
-      if (me && !ctrl.signal.aborted) setEmail(me.email)
-    })
-    return () => ctrl.abort()
-  }, [])
-
+/**
+ * UserChip is the signed-in user at the foot of the nav: initials, email and
+ * "Via Cloudflare Access". The shell reads /api/me once and passes the email;
+ * null (not read yet, or the read failed) shows nothing.
+ */
+export default function UserChip({ email }: { email: string | null }) {
   if (email === null) return null
 
   return (

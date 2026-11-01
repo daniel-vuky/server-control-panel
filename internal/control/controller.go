@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -88,6 +87,8 @@ const (
 	readTimeout = 15 * time.Second
 	// rereadTimeout bounds the docker.containers read after the command.
 	rereadTimeout = 10 * time.Second
+	// storeTimeout bounds each store call Do makes once the lock is taken.
+	storeTimeout = 10 * time.Second
 	// maxReason is the most characters of stderr kept as a failure reason.
 	maxReason = 300
 
@@ -191,9 +192,10 @@ func (c *Controller) Wait(ctx context.Context) error {
 // now missing.
 //
 // The checks and the lock take run on ctx. Once the lock is taken, the
-// command, the re-read and the release run on their own, detached from ctx's
-// cancellation: when ctx ends first, Do returns ctx.Err() and the command
-// still finishes, records its outcome and releases the lock.
+// re-read of the project, the activity row, the command, the re-read of
+// Docker and the release run on their own, detached from ctx's cancellation:
+// when ctx ends first, Do returns ctx.Err() and the command still finishes,
+// records its outcome and releases the lock.
 func (c *Controller) Do(ctx context.Context, id int64, a project.Action, actor string) (Result, error) {
 	act, verb, ok := describe(a)
 	if !ok {
@@ -230,21 +232,26 @@ func (c *Controller) Do(ctx context.Context, id int64, a project.Action, actor s
 	c.gen++
 	c.mu.Unlock()
 
+	// From here on the lock is visible, so the store calls run detached from
+	// ctx: a client that goes away now must not drop the action half-taken.
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
+
 	// Re-read under the lock: an untrack, a workspace removal or a rescan may
 	// have committed since the first read.
-	if t, err = c.st.TrackedProject(ctx, id); err != nil || t.MissingSince != nil {
+	if t, err = c.st.TrackedProject(sctx, id); err != nil || t.MissingSince != nil {
 		c.unlock(id)
 		c.notify(nil)
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{}, c.refuse(ctx, rec, &Refusal{
+		return Result{}, c.refuse(sctx, rec, &Refusal{
 			Code: CodeNotAllowed, Status: project.StatusNotFound, ProjectID: t.ID,
 			Message: verb + " is not allowed while " + t.DisplayName + " is " + project.Word(project.StatusNotFound) + ".",
 		})
 	}
 
-	activityID, err := c.st.StartActivity(ctx, rec)
+	activityID, err := c.st.StartActivity(sctx, rec)
 	if err != nil {
 		c.unlock(id)
 		c.notify(nil)
@@ -485,7 +492,8 @@ func (c *Controller) execute(ctx context.Context, t store.Tracked, a project.Act
 	if !ok {
 		return Result{Outcome: OutcomeFailed, Status: project.StatusUnknown, Message: "The project has no compose file."}, nil
 	}
-	secrets := scan.SecretValues(scan.ReadDotenv(filepath.Join(t.Path, ".env")))
+	// The masks read runs on the same detached context as the command.
+	secrets := scan.ReadProjectSecrets(ctx, c.cmd, t, c.log)
 	_, runErr := c.cmd.Run(ctx, runner.StackCompose, composeAction(a, override, t.StopTemplate), values, secrets)
 
 	rctx, cancel := context.WithTimeout(ctx, rereadTimeout)
