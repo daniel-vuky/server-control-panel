@@ -344,6 +344,8 @@ func TestRemoveDatabase(t *testing.T) {
 	if b := waitBackup(t, h, bid); b.State != backup.StateOK {
 		t.Fatalf("backup = %+v", b)
 	}
+	// The row reads ok a moment before the worker lets the job go.
+	waitFor(t, "the backup to end", func() bool { return !d.Backups.Busy(alpha, db.Key) })
 
 	rec = doJSON(h, http.MethodPost, removeDatabaseURL(alpha, db.ManualID), "")
 	if rec.Code != http.StatusOK {
