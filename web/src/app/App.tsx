@@ -1,12 +1,11 @@
 import type { ReactNode } from 'react'
-import { createBrowserRouter, type RouteObject, RouterProvider } from 'react-router'
+import { createBrowserRouter, Navigate, type RouteObject, RouterProvider } from 'react-router'
 import { ToastProvider } from '../components/Toast'
 import ActivityPage from '../pages/ActivityPage'
 import BackupsPage from '../pages/BackupsPage'
 import DashboardPage from '../pages/DashboardPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import OnboardingPage from '../pages/onboarding/OnboardingPage'
-import PlaceholderPage from '../pages/PlaceholderPage'
 import ProjectDatabase from '../pages/project/ProjectDatabase'
 import ProjectLogs from '../pages/project/ProjectLogs'
 import ProjectOverview from '../pages/project/ProjectOverview'
@@ -18,9 +17,13 @@ import ServerPage from '../pages/server/ServerPage'
 import AppShell from './AppShell'
 import { appRoutes } from './routes'
 
-/** The pages built so far; every other route shows its placeholder. */
+/**
+ * The page of every route but the project detail. Projects is the Dashboard's
+ * table view: the list of tracked projects lives there, filters included.
+ */
 const pages: Record<string, ReactNode> = {
   '/': <DashboardPage />,
+  '/projects': <Navigate to="/?view=table" replace />,
   '/activity': <ActivityPage />,
   '/backups': <BackupsPage />,
   '/onboarding': <OnboardingPage />,
@@ -56,7 +59,7 @@ export const routeObjects: RouteObject[] = [
       ...appRoutes.map((route) =>
         route.path === projectRoute.path
           ? projectRoute
-          : { path: route.path, element: pages[route.path] ?? <PlaceholderPage route={route} /> },
+          : { path: route.path, element: pages[route.path] },
       ),
       { path: '*', element: <NotFoundPage /> },
     ],

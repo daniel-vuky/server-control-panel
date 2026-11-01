@@ -17,7 +17,6 @@ describe('app shell', () => {
 
   it.each([
     ['/', 'Dashboard'],
-    ['/projects', 'Projects'],
     ['/onboarding', 'Add project folder'],
     ['/backups', 'Backups'],
     ['/server', 'Server'],
@@ -85,9 +84,12 @@ describe('app shell', () => {
     expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 
-  it('keeps the other routes as placeholders', () => {
-    renderAt('/projects')
-    expect(screen.getByText(/Coming in/)).toBeInTheDocument()
+  it('opens Projects as the Dashboard table view', async () => {
+    const { router } = renderAt('/projects')
+    await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+    expect(router.state.location.search).toBe('?view=table')
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument()
+    expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 
   it('marks the current page in the nav', () => {
