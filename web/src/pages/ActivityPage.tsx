@@ -9,6 +9,7 @@ import EmptyState, { EmptyStateButton } from '../components/EmptyState'
 import LoadError from '../components/LoadError'
 import PageHeader from '../components/PageHeader'
 import { SkeletonCard } from '../components/Skeleton'
+import Stale from '../components/Stale'
 import { useNow } from '../lib/useNow'
 import { errorMessage, useRead } from '../lib/useRead'
 import { useVisibleInterval } from '../lib/useVisibleInterval'
@@ -237,21 +238,17 @@ export default function ActivityPage() {
   } else {
     body = (
       <>
-        {timeline.error !== '' && (
-          <LoadError
-            title="Could not load the activity."
-            message={timeline.error}
-            onRetry={timeline.readNewest}
-          />
-        )}
-        <div
-          data-testid="activity-days"
-          className={`flex flex-col gap-5 ${timeline.error !== '' ? 'opacity-55 saturate-[0.6]' : ''}`}
+        <Stale
+          error={timeline.error}
+          onRetry={timeline.readNewest}
+          title="Could not load the activity."
         >
-          {days.map((d) => (
-            <DaySection key={d.date} day={d} />
-          ))}
-        </div>
+          <div data-testid="activity-days" className="flex flex-col gap-5">
+            {days.map((d) => (
+              <DaySection key={d.date} day={d} />
+            ))}
+          </div>
+        </Stale>
         {timeline.more && (
           <div className="flex flex-wrap items-center gap-3">
             <button

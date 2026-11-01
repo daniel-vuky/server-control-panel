@@ -13,8 +13,8 @@ import Skeleton from '../components/Skeleton'
 import { projectRule } from '../lib/backup'
 import { formatLastScan } from '../lib/time'
 import { useBackup } from '../lib/useBackup'
-import { useLoad } from '../lib/useLoad'
 import { useProjectActions } from '../lib/useProjectActions'
+import { useRead } from '../lib/useRead'
 import { useRescan } from '../lib/useRescan'
 import {
   countByStatus,
@@ -73,25 +73,25 @@ function useScrollMemory(ready: boolean) {
  * (`status`, `q`, `view`; with no `view`, the remembered one).
  */
 export default function DashboardPage() {
-  const { load, retry } = useLoad(listProjects)
+  const projects = useRead(listProjects, 'projects')
   const live = useLive()
   const actions = useProjectActions()
   const backup = useBackup()
   const latest = useLatestBackups()
   const navigate = useNavigate()
-  const workspaces = useLoad(listWorkspaces).load
+  const workspaces = useRead(listWorkspaces, 'workspaces').data
   const [params, setParams] = useSearchParams()
   const filters = filtersOf(params, params.has('view') ? null : readStoredView())
 
   // No workspace is the first screen: setup. A failed load shows the Dashboard
   // as it is, so there is no redirect loop.
-  const noWorkspace = workspaces.state === 'ok' && workspaces.data.length === 0
+  const noWorkspace = workspaces !== null && workspaces.length === 0
   useEffect(() => {
     if (noWorkspace) navigate('/onboarding', { replace: true })
   }, [noWorkspace, navigate])
 
   const dockerDown = live.dockerUp === false
-  const base = live.projects ?? (load.state === 'ok' ? load.data : null)
+  const base = live.projects ?? projects.data
   const rows = base?.filter((p) => !actions.removedIds.has(p.id)).map(actions.overlay)
 
   useScrollMemory(rows !== undefined && rows.length > 0)
@@ -156,13 +156,17 @@ export default function DashboardPage() {
 
   return (
     <section className="flex flex-col gap-[18px]">
-      <Header workspaces={workspaces.state === 'ok' ? workspaces.data : null} />
+      <Header workspaces={workspaces} />
 
       <LiveDim className="flex flex-col gap-[18px]">
         <ServerSummary />
-        {rows === undefined && load.state === 'loading' && <Loading view={filters.view} />}
-        {rows === undefined && load.state === 'error' && (
-          <LoadError title="Could not load projects." message={load.message} onRetry={retry} />
+        {rows === undefined && projects.error === '' && <Loading view={filters.view} />}
+        {rows === undefined && projects.error !== '' && (
+          <LoadError
+            title="Could not load projects."
+            message={projects.error}
+            onRetry={projects.refresh}
+          />
         )}
         {rows !== undefined && counts !== null && (
           <>
@@ -256,22 +260,27 @@ function Header({ workspaces }: { workspaces: Workspace[] | null }) {
  */
 function Loading({ view }: { view: View }) {
   return (
-    <div role="status" className="flex flex-col gap-[18px]">
-      <span className="sr-only">Loading projects…</span>
-      <div
-        data-skeleton-bar=""
-        aria-hidden="true"
-        className="h-9 w-3/5 animate-scp-pulse rounded-lg bg-surface-2"
-      />
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Loading projects"
+      className="flex flex-col gap-[18px]"
+    >
+      <div data-skeleton-bar="">
+        <Skeleton className="h-9 w-3/5" />
+      </div>
       {view === 'table' ? (
         <div className="flex flex-col gap-2">
           {[0, 1, 2].map((i) => (
             <div
               key={i}
               data-skeleton-row=""
-              aria-hidden="true"
-              className="h-12 animate-scp-pulse rounded-lg border border-border bg-surface"
-            />
+              className="flex h-12 items-center gap-4 rounded-lg border border-border bg-surface px-4"
+            >
+              <Skeleton className="h-3.5 w-1/4" />
+              <Skeleton className="h-3.5 w-1/6" />
+              <Skeleton className="ml-auto h-3.5 w-1/5" />
+            </div>
           ))}
         </div>
       ) : (
@@ -280,13 +289,15 @@ function Loading({ view }: { view: View }) {
             <div
               key={i}
               data-skeleton-card=""
-              aria-hidden="true"
               className="box-border flex h-[210px] flex-col gap-3.5 rounded-xl border border-border bg-surface p-[18px]"
             >
               <Skeleton className="h-3.5 w-2/5" />
               <Skeleton className="h-[22px] w-[65%]" />
               <Skeleton className="h-3 w-1/2" />
-              <div className="mt-auto h-8 animate-scp-pulse rounded-md bg-nav-active" />
+              <div
+                aria-hidden="true"
+                className="mt-auto h-8 animate-scp-pulse rounded-md bg-nav-active"
+              />
             </div>
           ))}
         </div>

@@ -5,15 +5,32 @@ export const errorMessage = (err: unknown) =>
   err instanceof Error && err.message ? err.message : 'Something went wrong.'
 
 /**
+ * Read is what useRead gives: the data (null until the first answer), the
+ * error while there is no data, staleError (why the last refresh failed while
+ * the data on screen is kept) and refresh.
+ */
+export type Read<T> = {
+  data: T | null
+  error: string
+  staleError: string
+  refresh(): void
+}
+
+/**
  * useRead reads with fetcher at mount and whenever key changes (starting
  * over from nothing), and again on refresh, which keeps what it has until
- * the answer comes: a failed refresh keeps the last data, and the error is
- * reported only while there is no data to show. A null key reads nothing
+ * the answer comes: a failed refresh keeps the last data. `error` is reported
+ * only while there is no data to show; with data, the same error is
+ * `staleError` (a `Stale` wrapper shows it above the kept data), and a
+ * successful read clears both. A null key reads nothing
  * (and refresh does nothing) until it is set. It aborts the read it
  * supersedes and the one running at unmount. The fetcher may be an inline
  * function: the latest one is used, and a new identity does not re-read.
  */
-export function useRead<T>(fetcher: (signal: AbortSignal) => Promise<T>, key: string | null) {
+export function useRead<T>(
+  fetcher: (signal: AbortSignal) => Promise<T>,
+  key: string | null,
+): Read<T> {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
   const fetcherRef = useRef(fetcher)
@@ -47,5 +64,10 @@ export function useRead<T>(fetcher: (signal: AbortSignal) => Promise<T>, key: st
   }, [key, refresh])
   useEffect(() => () => ctl.current?.abort(), [])
 
-  return { data, error: data === null ? error : '', refresh }
+  return {
+    data,
+    error: data === null ? error : '',
+    staleError: data === null ? '' : error,
+    refresh,
+  }
 }

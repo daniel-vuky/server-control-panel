@@ -1,6 +1,7 @@
 import { getServer, getServerMetrics } from '../../api/metrics'
 import Skeleton from '../../components/Skeleton'
 import Sparkline from '../../components/Sparkline'
+import Stale from '../../components/Stale'
 import { useRead } from '../../lib/useRead'
 import { useVisibleInterval } from '../../lib/useVisibleInterval'
 import { summaryTiles, type Tile, tileFill } from './summary'
@@ -18,7 +19,8 @@ const FLAG = {
  * RAM, Disk, Load avg, Uptime and CF Tunnel, each with its last-hour chart. It
  * reads /api/server and the last hour of /api/server/metrics, shows skeletons
  * until both have answered once (or either has failed), and re-reads both
- * every 30 s while the tab is visible. A failed read leaves its tiles at "—".
+ * every 30 s while the tab is visible. A failed first read leaves its tiles
+ * at "—"; a failed re-read keeps the tiles, dimmed under the error banner.
  */
 export default function ServerSummary() {
   const server = useRead(getServer, 'server')
@@ -31,18 +33,30 @@ export default function ServerSummary() {
 
   const failed = server.error !== '' || series.error !== ''
   const loading = !failed && (server.data === null || series.data === null)
+  const stale = server.staleError || series.staleError
+  const retry = () => {
+    if (server.staleError) server.refresh()
+    if (series.staleError) series.refresh()
+  }
 
   return (
     <section
       aria-label="Server summary"
       aria-busy={loading ? 'true' : undefined}
-      className="grid grid-cols-[repeat(auto-fit,minmax(min(180px,100%),1fr))] gap-3"
+      className="flex flex-col gap-3"
     >
-      {loading
-        ? [0, 1, 2, 3, 4, 5].map((i) => <TileSkeleton key={i} />)
-        : summaryTiles(server.data, series.data, new Date()).map((t) => (
-            <TileView key={t.key} tile={t} />
-          ))}
+      <Stale
+        error={stale}
+        onRetry={retry}
+        title="Could not refresh the server summary."
+        className="grid grid-cols-[repeat(auto-fit,minmax(min(180px,100%),1fr))] gap-3"
+      >
+        {loading
+          ? [0, 1, 2, 3, 4, 5].map((i) => <TileSkeleton key={i} />)
+          : summaryTiles(server.data, series.data, new Date()).map((t) => (
+              <TileView key={t.key} tile={t} />
+            ))}
+      </Stale>
     </section>
   )
 }

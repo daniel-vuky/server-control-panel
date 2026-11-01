@@ -54,6 +54,49 @@ describe('useRead', () => {
     expect(result.current.error).toBe('')
   })
 
+  it('reports a failed refresh as staleError while it keeps the data, and clears it on success', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce('one')
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValueOnce('two')
+    const { result } = renderHook(() => useRead(fetcher, 'k'))
+    await waitFor(() => expect(result.current.data).toBe('one'))
+    expect(result.current.staleError).toBe('')
+
+    await act(async () => result.current.refresh())
+    expect(result.current.data).toBe('one')
+    expect(result.current.staleError).toBe('down')
+    expect(result.current.error).toBe('')
+
+    await act(async () => result.current.refresh())
+    expect(result.current.data).toBe('two')
+    expect(result.current.staleError).toBe('')
+  })
+
+  it('has no staleError while there is no data', async () => {
+    const { result } = renderHook(() => useRead(() => Promise.reject(new Error('boom')), 'k'))
+    await waitFor(() => expect(result.current.error).toBe('boom'))
+    expect(result.current.staleError).toBe('')
+  })
+
+  it('drops the staleError when the key changes', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce('one')
+      .mockRejectedValueOnce(new Error('down'))
+      .mockReturnValueOnce(new Promise(() => {}))
+    const { result, rerender } = renderHook(({ k }) => useRead(fetcher, k), {
+      initialProps: { k: 'a' },
+    })
+    await waitFor(() => expect(result.current.data).toBe('one'))
+    await act(async () => result.current.refresh())
+    expect(result.current.staleError).toBe('down')
+    rerender({ k: 'b' })
+    expect(result.current.staleError).toBe('')
+    expect(result.current.error).toBe('')
+  })
+
   it('starts over when the key changes', async () => {
     const fetcher = vi.fn(async (_s: AbortSignal) => 'x')
     const { result, rerender } = renderHook(({ k }) => useRead(fetcher, k), {

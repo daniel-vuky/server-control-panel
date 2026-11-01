@@ -2,10 +2,9 @@ import { type FormEvent, useEffect, useId, useRef, useState } from 'react'
 import { ApiError, isFieldError } from '../../api/client'
 import { getMetricsSettings, saveMetricsSettings } from '../../api/metrics'
 import FieldMessage from '../../components/FieldMessage'
-import LoadError from '../../components/LoadError'
 import { useToast } from '../../components/Toast'
-import { useLoad } from '../../lib/useLoad'
-import { errorMessage } from '../../lib/useRead'
+import { errorMessage, useRead } from '../../lib/useRead'
+import CardRead from './CardRead'
 
 const MIN_DAYS = 7
 const MAX_DAYS = 30
@@ -25,7 +24,7 @@ function parseDays(draft: string): number | null {
  * deletes the older samples at once.
  */
 export default function MetricsHistoryCard() {
-  const { load, retry } = useLoad(getMetricsSettings)
+  const read = useRead(getMetricsSettings, 'metrics-settings')
 
   return (
     <section aria-labelledby="mh-title" className="rounded-[10px] border border-border bg-surface">
@@ -37,21 +36,9 @@ export default function MetricsHistoryCard() {
           Older samples are deleted every hour. Charts of 24 hours and 7 days use 5-minute averages.
         </span>
       </div>
-      {load.state === 'loading' && (
-        <p role="status" className="px-[18px] py-3.5 text-[13px] text-muted">
-          Loading metrics history…
-        </p>
-      )}
-      {load.state === 'error' && (
-        <div className="p-3.5">
-          <LoadError
-            title="Could not load metrics history."
-            message={load.message}
-            onRetry={retry}
-          />
-        </div>
-      )}
-      {load.state === 'ok' && <RetentionForm days={load.data.retentionDays} />}
+      <CardRead read={read} what="metrics history" lines={2}>
+        {(settings) => <RetentionForm days={settings.retentionDays} />}
+      </CardRead>
     </section>
   )
 }

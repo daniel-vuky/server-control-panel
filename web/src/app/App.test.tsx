@@ -59,7 +59,7 @@ describe('app shell', () => {
   it('maps /projects/:id to the project page, not its placeholder', () => {
     renderAt('/projects/1')
     // No live state arrives here (no EventSource), so the page waits for it.
-    expect(screen.getByText('Loading project…')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading project' })).toBeInTheDocument()
     expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 

@@ -65,14 +65,20 @@ afterEach(() => {
 })
 
 describe('ServerPage', () => {
-  it('shows the heading and loading before the answers', () => {
+  it('shows the heading and skeletons before the answers, never a Loading line', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => new Promise(() => {})),
     )
     renderPage()
     expect(screen.getByRole('heading', { level: 1, name: 'Server' })).toBeInTheDocument()
-    expect(screen.getByText('Loading the server…')).toBeInTheDocument()
+    // The header facts, the four charts, the usage table and the two system cards.
+    const facts = screen.getByRole('status', { name: 'Loading the server' })
+    expect(facts.querySelector('.animate-scp-pulse')).not.toBeNull()
+    const charts = screen.getByRole('region', { name: 'Resource charts' })
+    expect(within(charts).getAllByRole('status', { name: 'Loading' })).toHaveLength(4)
+    expect(screen.getAllByRole('status', { name: 'Loading' })).toHaveLength(7)
+    expect(screen.queryByText(/Loading/)).toBeNull()
   })
 
   it("holds the charts' place with skeleton cards while a period loads", async () => {
@@ -85,7 +91,7 @@ describe('ServerPage', () => {
   it("holds the usage table's place with a skeleton card while it loads", async () => {
     const stub = serve({ usage: () => new Promise<Response>(() => {}) as unknown as Response })
     renderPage()
-    await screen.findByRole('region', { name: 'Resource charts' })
+    await screen.findByRole('img', { name: 'CPU chart, last 24 hours' })
     expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
     expect(calls(stub, '/api/server/usage')).toHaveLength(1)
   })
@@ -176,7 +182,8 @@ describe('ServerPage', () => {
   it('shows the charts, usage, system info and services', async () => {
     serve()
     renderPage()
-    expect(await screen.findByRole('region', { name: 'Resource charts' })).toBeInTheDocument()
+    await screen.findByRole('img', { name: 'CPU chart, last 24 hours' })
+    expect(screen.getByRole('region', { name: 'Resource charts' })).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Usage by app' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'System info' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'System services' })).toBeInTheDocument()
@@ -285,19 +292,35 @@ describe('ServerPage', () => {
     })
   })
 
-  it('keeps the last values when a refresh fails', async () => {
+  it('keeps the last values dimmed under the banner when a refresh fails, and Retry reads again', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let n = 0
     serve({
-      usage: () => (++n === 1 ? json(200, makeUsage([makeUsageRow()])) : json(500, { error: 'x' })),
+      usage: () =>
+        ++n === 2
+          ? json(500, { error: 'docker df failed' })
+          : json(200, makeUsage([makeUsageRow()])),
     })
     renderPage()
     expect(await screen.findByRole('link', { name: 'shop' })).toBeInTheDocument()
     act(() => {
       vi.advanceTimersByTime(30_000)
     })
-    await waitFor(() => expect(n).toBe(2))
+    const banner = await screen.findByRole('alert')
+    expect(banner).toHaveTextContent('Could not refresh the usage by app.')
+    expect(banner).toHaveTextContent('docker df failed')
     expect(screen.getByRole('link', { name: 'shop' })).toBeInTheDocument()
     expect(screen.queryByText('Could not load the usage by app.')).toBeNull()
+    const box = screen.getByRole('table').closest('[data-stale]') as HTMLElement
+    expect(box).not.toBeNull()
+    expect(box.style.opacity).toBe('0.55')
+    expect(box.style.filter).toBe('saturate(0.6)')
+    // Only the usage read failed: the charts and the system cards are not dimmed.
+    expect(screen.getByRole('region', { name: 'System info' }).closest('[data-stale]')).toBeNull()
+
+    fireEvent.click(within(banner).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(n).toBe(3)
+    expect(screen.getByRole('table').closest('[data-stale]')).toBeNull()
   })
 })

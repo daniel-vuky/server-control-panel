@@ -14,9 +14,9 @@ import {
 import type { AlertChannel, AlertsConfig, AlertThresholds } from '../../api/types.gen'
 import Dialog, { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../../components/Dialog'
 import FieldMessage from '../../components/FieldMessage'
-import LoadError from '../../components/LoadError'
 import { useToast } from '../../components/Toast'
-import { useLoad } from '../../lib/useLoad'
+import { useRead } from '../../lib/useRead'
+import CardRead from './CardRead'
 
 const rowButton =
   'flex h-8 cursor-pointer items-center gap-2 rounded-md border border-border-strong bg-transparent px-3 text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
@@ -38,7 +38,7 @@ function Spinner() {
  * on/off switch, and the server-wide thresholds.
  */
 export default function AlertsCard() {
-  const { load, retry } = useLoad(getAlerts)
+  const read = useRead(getAlerts, 'alerts')
 
   return (
     <section
@@ -54,21 +54,9 @@ export default function AlertsCard() {
           backup fails, a threshold is exceeded for the set time, or the Tunnel disconnects.
         </span>
       </div>
-      {load.state === 'loading' && (
-        <p role="status" className="px-[18px] py-3.5 text-[13px] text-muted">
-          Loading alert settings…
-        </p>
-      )}
-      {load.state === 'error' && (
-        <div className="p-3.5">
-          <LoadError
-            title="Could not load alert settings."
-            message={load.message}
-            onRetry={retry}
-          />
-        </div>
-      )}
-      {load.state === 'ok' && <AlertsBody initial={load.data} />}
+      <CardRead read={read} what="alert settings" lines={4}>
+        {(config) => <AlertsBody initial={config} />}
+      </CardRead>
     </section>
   )
 }

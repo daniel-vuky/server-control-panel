@@ -94,7 +94,13 @@ beforeEach(() => {
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(async () => {
+  // Let the reads a synchronous test left open (the zone, the history) land inside act.
+  await act(async () => {
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0))
+  })
+  vi.unstubAllGlobals()
+})
 
 describe('backup schedule card', () => {
   it('edits the one database without a Database select', async () => {
@@ -273,6 +279,21 @@ describe('backup schedule card', () => {
     )
     // The same instant in the runner's zone (UTC) is Sat Oct 31, 19:00.
     expect(card()).not.toHaveTextContent('19:00')
+  })
+
+  it('shows a skeleton for the next run while the zone is read, never the browser zone', async () => {
+    let answer: (r: Response) => void = () => {}
+    serve({ [`GET ${SETTINGS}`]: () => new Promise<Response>((r) => (answer = r)) })
+    open([shopDb])
+    expect(card()).toHaveTextContent('Next run:')
+    const skeleton = within(card()).getByRole('status', { name: 'Loading the next run' })
+    expect(skeleton.querySelector('.animate-scp-pulse')).not.toBeNull()
+    expect(card()).not.toHaveTextContent('02:00 (')
+    await act(async () => answer(json(200, settings)))
+    await waitFor(() =>
+      expect(card()).toHaveTextContent('Next run: Sun Nov 1, 02:00 (Asia/Ho_Chi_Minh, UTC+07:00)'),
+    )
+    expect(within(card()).queryByRole('status', { name: 'Loading the next run' })).toBeNull()
   })
 
   it('reads the next run at the offset the server wrote while the zone is not known', async () => {

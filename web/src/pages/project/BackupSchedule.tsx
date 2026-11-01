@@ -6,6 +6,7 @@ import type { Database, DatabaseSchedule, Project, TimeZone } from '../../api/ty
 import ConfirmDialog from '../../components/ConfirmDialog'
 import FieldMessage from '../../components/FieldMessage'
 import ScheduleForm from '../../components/ScheduleForm'
+import Skeleton from '../../components/Skeleton'
 import { useToast } from '../../components/Toast'
 import { databaseRule } from '../../lib/backup'
 import {
@@ -18,7 +19,7 @@ import {
   sameDraft,
   zoneLabel,
 } from '../../lib/schedule'
-import { useLoad } from '../../lib/useLoad'
+import { useRead } from '../../lib/useRead'
 import type { Stored } from './BackupHistory'
 import { useProjectOutlet } from './projectContext'
 
@@ -109,8 +110,11 @@ function ScheduleCard({
   const refs = useRef<Partial<Record<ScheduleField, HTMLElement | null>>>({})
   const selectRef = useRef<HTMLSelectElement | null>(null)
 
-  const { load } = useLoad(getBackupSettings)
-  const zone = load.state === 'ok' ? load.data.timeZone : null
+  // The server zone: while it is read the next run is a skeleton; a failed
+  // read words the run at the offset the server wrote into it.
+  const zoneRead = useRead(getBackupSettings, 'zone')
+  const zone = zoneRead.data?.timeZone ?? null
+  const zonePending = zoneRead.data === null && zoneRead.error === ''
 
   const schedulable = project.databases.filter(canSchedule)
   const unsupported = project.databases.filter((d) => !canSchedule(d))
@@ -280,7 +284,13 @@ function ScheduleCard({
               ) : saved.next !== null ? (
                 <>
                   Next run:{' '}
-                  <span className="font-mono text-text-2">{nextRunText(saved.next, zone)}</span>
+                  {zonePending ? (
+                    <span role="status" aria-busy="true" aria-label="Loading the next run">
+                      <Skeleton inline className="h-3 w-52" />
+                    </span>
+                  ) : (
+                    <span className="font-mono text-text-2">{nextRunText(saved.next, zone)}</span>
+                  )}
                 </>
               ) : null}
             </span>

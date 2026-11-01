@@ -12,6 +12,7 @@ import {
 import type { DriveStatus } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import ConfirmDialog from '../../components/ConfirmDialog'
+import { SkeletonLines } from '../../components/Skeleton'
 import { useToast } from '../../components/Toast'
 import { usePageRestore } from '../../lib/usePageRestore'
 import FolderPicker, { Issue } from './FolderPicker'
@@ -56,9 +57,7 @@ export default function DriveCard() {
         </span>
       </div>
       {status === null ? (
-        <p role="status" className="px-[18px] py-3.5 text-[13px] text-muted">
-          Loading Google Drive…
-        </p>
+        <SkeletonLines lines={2} label="Loading Google Drive" className="px-[18px] py-4" />
       ) : status.state === 'not_configured' ? (
         <NotConfigured status={status} />
       ) : status.state === 'connected' ? (

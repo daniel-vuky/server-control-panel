@@ -1,19 +1,20 @@
-import { Plus } from 'lucide-react'
+import { FolderPlus, Plus } from 'lucide-react'
 import { type ReactNode, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { Workspace } from '../api/types.gen'
 import { listWorkspaces, removeWorkspace } from '../api/workspaces'
 import { LiveDim } from '../app/live'
 import ConfirmDialog from '../components/ConfirmDialog'
-import LoadError from '../components/LoadError'
+import EmptyState, { EmptyStateLink } from '../components/EmptyState'
 import PageHeader from '../components/PageHeader'
 import { useToast } from '../components/Toast'
 import { plural } from '../lib/plural'
 import { formatLastScan } from '../lib/time'
-import { useLoad } from '../lib/useLoad'
+import { useRead } from '../lib/useRead'
 import { useRescan } from '../lib/useRescan'
 import AlertsCard from './settings/AlertsCard'
 import BackupDefaultsCard from './settings/BackupDefaultsCard'
+import CardRead from './settings/CardRead'
 import DriveCard from './settings/DriveCard'
 import MetricsHistoryCard from './settings/MetricsHistoryCard'
 
@@ -45,7 +46,7 @@ export default function SettingsPage() {
 }
 
 function WorkspacesCard() {
-  const { load, retry } = useLoad(listWorkspaces)
+  const read = useRead(listWorkspaces, 'workspaces')
   const toast = useToast()
   const [confirm, setConfirm] = useState<Workspace | null>(null)
   // Ids whose removal is out, so a second confirm cannot post it again.
@@ -63,7 +64,7 @@ function WorkspacesCard() {
     } finally {
       removing.current.delete(w.id)
     }
-    retry()
+    read.refresh()
     toast.success(<>Removed {mono(w.path)}</>)
   }
 
@@ -88,26 +89,27 @@ function WorkspacesCard() {
         </Link>
       </div>
 
-      {load.state === 'loading' && (
-        <p role="status" className="px-[18px] py-3.5 text-[13px] text-muted">
-          Loading workspaces…
-        </p>
-      )}
-      {load.state === 'error' && (
-        <div className="p-3.5">
-          <LoadError title="Could not load workspaces." message={load.message} onRetry={retry} />
-        </div>
-      )}
-      {load.state === 'ok' &&
-        (load.data.length === 0 ? (
-          <p className="px-[18px] py-3.5 text-[13px] text-muted">No workspace yet</p>
-        ) : (
-          <ul>
-            {load.data.map((w) => (
-              <WorkspaceRow key={w.id} workspace={w} onRemove={() => setConfirm(w)} />
-            ))}
-          </ul>
-        ))}
+      <CardRead read={read} what="workspaces" lines={2}>
+        {(list) =>
+          list.length === 0 ? (
+            <div className="p-3.5">
+              <EmptyState
+                icon={FolderPlus}
+                title="No workspace has been added"
+                action={<EmptyStateLink to="/onboarding">Add project folder</EmptyStateLink>}
+              >
+                The panel finds compose projects only inside the folders added here.
+              </EmptyState>
+            </div>
+          ) : (
+            <ul>
+              {list.map((w) => (
+                <WorkspaceRow key={w.id} workspace={w} onRemove={() => setConfirm(w)} />
+              ))}
+            </ul>
+          )
+        }
+      </CardRead>
 
       {confirm && (
         <ConfirmDialog

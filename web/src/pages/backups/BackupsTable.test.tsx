@@ -248,6 +248,33 @@ describe('BackupsTable rows', () => {
     await waitFor(async () => expect(bodyRows(await table())[0]).toHaveTextContent('Succeeded'))
   })
 
+  it('keeps the rows dimmed under the banner when a re-read fails, and Retry reads again', async () => {
+    const running = makeBackup({ id: 11, state: 'running', queuePosition: 0 })
+    let list = () => json(200, { backups: [running, ok(10)], more: false })
+    const stub = serveBackups([], { list: () => list() })
+    openBackups(connected, { projects, backups: [running] })
+    await table()
+    list = () => json(503, { error: 'database is locked' })
+    push(connected, { projects, backups: [] })
+
+    const banner = await screen.findByRole('alert')
+    expect(banner).toHaveTextContent('Could not load the backups.')
+    expect(banner).toHaveTextContent('database is locked')
+    const t = await table()
+    expect(bodyRows(t)).toHaveLength(2)
+    const box = t.closest('[data-stale]') as HTMLElement
+    expect(box).not.toBeNull()
+    expect(box.style.opacity).toBe('0.55')
+    expect(box.style.filter).toBe('saturate(0.6)')
+
+    list = () => json(200, { backups: [ok(11), ok(10)], more: false })
+    const before = listCalls(stub).length
+    fireEvent.click(within(banner).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(listCalls(stub)).toHaveLength(before + 1)
+    expect((await table()).closest('[data-stale]')).toBeNull()
+  })
+
   it('opens a row progress dialog from its status', async () => {
     serveBackups([ok(10)], {
       other: (url) => (url === '/api/backups/10' ? json(200, ok(10)) : undefined),

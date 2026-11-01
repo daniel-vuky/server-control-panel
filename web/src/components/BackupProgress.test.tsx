@@ -429,6 +429,23 @@ describe('the progress dialog', () => {
     ).toHaveLength(0)
   })
 
+  it('holds the steps with skeleton lines, not a Loading line, while the backup is read', async () => {
+    let answer: (r: Response) => void = () => {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((r) => (answer = r))),
+    )
+    setup([])
+    const dialog = screen.getByRole('dialog', { name: /Backup/ })
+    const skeleton = within(dialog).getByRole('status', { name: 'Loading the backup' })
+    expect(skeleton.querySelectorAll('.animate-scp-pulse')).toHaveLength(4)
+    expect(dialog).not.toHaveTextContent('Loading')
+    await act(async () => answer(json(200, makeBackup({ state: 'ok', queuePosition: 0 }))))
+    await waitFor(() =>
+      expect(within(dialog).queryByRole('status', { name: 'Loading the backup' })).toBeNull(),
+    )
+  })
+
   it('says when the backup cannot be read', async () => {
     serve({ 'GET /api/backups/7': () => json(404, { error: 'This backup does not exist.' }) })
     setup([])

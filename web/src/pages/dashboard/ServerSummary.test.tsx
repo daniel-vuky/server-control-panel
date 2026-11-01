@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeSeries, makeServerInfo } from '../../test/server'
 import ServerSummary from './ServerSummary'
@@ -90,6 +90,45 @@ describe('ServerSummary', () => {
     const cpu = await screen.findByRole('article', { name: 'CPU' })
     expect(within(cpu).getByText('Over threshold')).toBeTruthy()
     expect(cpu.className).toContain('border-error-border')
+  })
+
+  it('keeps the tiles dimmed under the banner when a re-read fails, and Retry reads again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let n = 0
+    const stub = serve({
+      series: () => {
+        n++
+        return n === 2
+          ? json(500, { error: 'metrics are down' })
+          : json(200, makeSeries({ range: '1h' }))
+      },
+    })
+    render(<ServerSummary />)
+    const cpu = await screen.findByRole('article', { name: 'CPU' })
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+    const banner = await screen.findByRole('alert')
+    expect(banner).toHaveTextContent('Could not refresh the server summary.')
+    expect(banner).toHaveTextContent('metrics are down')
+    // The tiles stay, with their last values, dimmed.
+    expect(within(screen.getByRole('article', { name: 'CPU' })).getByText('34%')).toBeTruthy()
+    const box = cpu.parentElement as HTMLElement
+    expect(box).toHaveAttribute('data-stale')
+    expect(box.style.opacity).toBe('0.55')
+
+    const before = stub.mock.calls.length
+    await act(async () => {
+      fireEvent.click(within(banner).getByRole('button', { name: 'Retry' }))
+    })
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    // Only the read that failed is read again.
+    expect(stub.mock.calls.slice(before).map((c) => c[0])).toEqual(['/api/server/metrics?range=1h'])
+    expect(screen.getByRole('article', { name: 'CPU' }).parentElement).not.toHaveAttribute(
+      'data-stale',
+    )
   })
 
   it('re-reads both every 30 seconds while visible', async () => {

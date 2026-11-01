@@ -5,6 +5,8 @@ import type { Backup, Project } from '../../api/types.gen'
 import { useLive } from '../../app/live'
 import { BackupRow, byNewest, HEAD, mergeNewest, ROW_BUTTON } from '../../components/BackupRow'
 import LoadError from '../../components/LoadError'
+import Skeleton from '../../components/Skeleton'
+import Stale from '../../components/Stale'
 import type { BackupFlow } from '../../lib/useBackup'
 import BackUpButton from './BackUpButton'
 
@@ -162,93 +164,120 @@ export default function BackupHistory({ project, flow, history: h }: Props & { h
         </h2>
       </div>
 
-      {h.error !== '' && (
-        <div className="px-4 py-3.5">
-          <LoadError
-            title="Could not load the backup history."
-            message={h.error}
-            onRetry={h.readNewest}
-          />
-        </div>
-      )}
-
       {!h.loaded ? (
-        h.error === '' && (
-          <p role="status" className="m-0 px-4 py-5 text-[13px] text-muted">
-            Loading backups…
-          </p>
-        )
-      ) : h.rows.length === 0 ? (
-        <NoBackups project={project} flow={flow} />
-      ) : (
-        <>
-          <div className="overflow-x-auto">
-            <table
-              aria-labelledby={titleId}
-              className="w-full min-w-[640px] border-collapse text-left"
-            >
-              <thead>
-                <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
-                  <th scope="col" className={HEAD}>
-                    Time
-                  </th>
-                  {several && (
-                    <th scope="col" className={HEAD}>
-                      Database
-                    </th>
-                  )}
-                  <th scope="col" className={HEAD}>
-                    Size
-                  </th>
-                  <th scope="col" className={HEAD}>
-                    Duration
-                  </th>
-                  <th scope="col" className={HEAD}>
-                    Status
-                  </th>
-                  <th scope="col" className={HEAD}>
-                    Triggered by
-                  </th>
-                  <th scope="col" className={`${HEAD} text-right`}>
-                    File
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="font-mono text-[13px] tabular-nums">
-                {h.rows.map((b) => (
-                  <BackupRow
-                    key={b.id}
-                    backup={b}
-                    several={several}
-                    flow={flow}
-                    keep={keepOf(b.database.key)}
-                  />
-                ))}
-              </tbody>
-            </table>
+        h.error !== '' ? (
+          <div className="px-4 py-3.5">
+            <LoadError
+              title="Could not load the backup history."
+              message={h.error}
+              onRetry={h.readNewest}
+            />
           </div>
-          {h.more && (
-            <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
-              <button
-                type="button"
-                disabled={h.older.busy}
-                aria-busy={h.older.busy || undefined}
-                onClick={() => {
-                  const last = h.rows.at(-1)
-                  if (last) h.readOlder(last.id)
-                }}
-                className={`${ROW_BUTTON} h-8 px-3 text-[13px]`}
-              >
-                Show older
-              </button>
-              {h.older.error !== '' && (
-                <span className="text-[13px] text-danger">{h.older.error}</span>
+        ) : (
+          <HistorySkeleton />
+        )
+      ) : (
+        <Stale
+          error={h.error}
+          onRetry={h.readNewest}
+          title="Could not load the backup history."
+          bannerClassName="px-4 pt-3.5"
+        >
+          {h.rows.length === 0 ? (
+            <NoBackups project={project} flow={flow} />
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table
+                  aria-labelledby={titleId}
+                  className="w-full min-w-[640px] border-collapse text-left"
+                >
+                  <thead>
+                    <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
+                      <th scope="col" className={HEAD}>
+                        Time
+                      </th>
+                      {several && (
+                        <th scope="col" className={HEAD}>
+                          Database
+                        </th>
+                      )}
+                      <th scope="col" className={HEAD}>
+                        Size
+                      </th>
+                      <th scope="col" className={HEAD}>
+                        Duration
+                      </th>
+                      <th scope="col" className={HEAD}>
+                        Status
+                      </th>
+                      <th scope="col" className={HEAD}>
+                        Triggered by
+                      </th>
+                      <th scope="col" className={`${HEAD} text-right`}>
+                        File
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono text-[13px] tabular-nums">
+                    {h.rows.map((b) => (
+                      <BackupRow
+                        key={b.id}
+                        backup={b}
+                        several={several}
+                        flow={flow}
+                        keep={keepOf(b.database.key)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {h.more && (
+                <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
+                  <button
+                    type="button"
+                    disabled={h.older.busy}
+                    aria-busy={h.older.busy || undefined}
+                    onClick={() => {
+                      const last = h.rows.at(-1)
+                      if (last) h.readOlder(last.id)
+                    }}
+                    className={`${ROW_BUTTON} h-8 px-3 text-[13px]`}
+                  >
+                    Show older
+                  </button>
+                  {h.older.error !== '' && (
+                    <span className="text-[13px] text-danger">{h.older.error}</span>
+                  )}
+                </div>
               )}
-            </div>
+            </>
           )}
-        </>
+        </Stale>
       )}
     </section>
+  )
+}
+
+/** HistorySkeleton holds the table's place until the first page answers: a header row and three rows. */
+function HistorySkeleton() {
+  return (
+    <div role="status" aria-busy="true" aria-label="Loading the backup history">
+      <div className="flex gap-6 border-b border-border px-4 py-3">
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-3 w-12" />
+        <Skeleton className="h-3 w-14" />
+        <Skeleton className="ml-auto h-3 w-10" />
+      </div>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex gap-6 border-b border-divider px-4 py-3.5 last:border-b-0">
+          <Skeleton className="h-3.5 w-28" />
+          <Skeleton className="h-3.5 w-14" />
+          <Skeleton className="h-3.5 w-20" />
+          <Skeleton className="ml-auto h-3.5 w-24" />
+        </div>
+      ))}
+    </div>
   )
 }
 

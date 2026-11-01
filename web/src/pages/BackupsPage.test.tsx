@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Backup, BackupStep } from '../api/types.gen'
 import {
@@ -6,6 +6,7 @@ import {
   callsTo,
   connected,
   drive,
+  emptySummary,
   json,
   listCalls,
   openBackups,
@@ -63,7 +64,11 @@ beforeEach(() => {
   }
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // Let the reads a test left open (the zone, the summary, the table) land inside act.
+  await act(async () => {
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0))
+  })
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -211,6 +216,7 @@ describe('Back up all now', () => {
     })
     expect(batchStatus()).toHaveTextContent('Back up all: 2 of 6 done · backing up crm · crm_db')
     expect(allButton()).toBeDisabled()
+    await screen.findByRole('table', { name: 'All backups' })
   })
 
   it('shows the result when the batch ends, with the skipped line, until dismissed', async () => {
@@ -334,17 +340,46 @@ describe('summary and active backups', () => {
     await waitFor(() => expect(callsTo(stub, '/api/backups/summary')).toHaveLength(3))
   })
 
+  it('keeps the summary dimmed under the banner when its re-read fails, and Retry reads again', async () => {
+    let summary = () => json(200, emptySummary())
+    const stub = serveBackups([okRow(1)], { summary: () => summary() })
+    openBackups(connected)
+    await screen.findByRole('region', { name: 'Drive usage' })
+
+    summary = () => json(503, { error: 'database is locked' })
+    push(connected, { backups: [runningCrm] })
+    const region = screen.getByRole('region', { name: 'Backup summary' })
+    const banner = await within(region).findByRole('alert')
+    expect(banner).toHaveTextContent('Could not load the backup summary.')
+    expect(banner).toHaveTextContent('database is locked')
+    const box = screen.getByRole('region', { name: 'Drive usage' }).parentElement as HTMLElement
+    expect(box).toHaveAttribute('data-stale')
+    expect(box.style.opacity).toBe('0.55')
+
+    summary = () => json(200, emptySummary())
+    fireEvent.click(within(banner).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(within(region).queryByRole('alert')).toBeNull())
+    expect(callsTo(stub, '/api/backups/summary')).toHaveLength(3)
+    expect(screen.getByRole('region', { name: 'Drive usage' }).parentElement).not.toHaveAttribute(
+      'data-stale',
+    )
+  })
+
   it('reads the summary and the table once, after the first live state', async () => {
     const stub = serveBackups([okRow(1)])
     openBackups(null)
-    await new Promise((r) => setTimeout(r, 20))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
     expect(callsTo(stub, '/api/backups/summary')).toHaveLength(0)
     expect(listCalls(stub)).toHaveLength(0)
 
     push(connected, { backups: [runningCrm], batch: batch({ done: 1 }) })
     await screen.findByRole('table', { name: 'All backups' })
     await screen.findByRole('region', { name: 'Drive usage' })
-    await new Promise((r) => setTimeout(r, 20))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
     expect(callsTo(stub, '/api/backups/summary')).toHaveLength(1)
     expect(listCalls(stub)).toHaveLength(1)
   })

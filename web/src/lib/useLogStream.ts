@@ -100,7 +100,8 @@ function newPart(held: HeldLine[], backlog: LogLine[]): LogLine[] {
  * source silent for STALE_MS (no lines, no ping) reopens the same way. A new
  * selection clears the lines. `too_many_log_streams` and `error` wait for
  * retry(). newCount counts the lines added after the selection's first
- * backlog (it keeps counting past the cap).
+ * backlog (it keeps counting past the cap). loaded says the selection's first
+ * `lines` event (the backlog) arrived; until then the view has nothing to show.
  */
 export function useLogStream(project: Project, service: string, opts: Options = {}) {
   const { dockerUp } = useLive()
@@ -108,6 +109,7 @@ export function useLogStream(project: Project, service: string, opts: Options = 
   const [state, setState] = useState<LogStreamState>('live')
   const [message, setMessage] = useState('')
   const [newCount, setNewCount] = useState(0)
+  const [loaded, setLoaded] = useState(false)
   const [wait, setWait] = useState<Wait>(null)
   // opens counts the sources opened for this selection; a bump opens the next one.
   const [opens, setOpens] = useState(0)
@@ -143,6 +145,7 @@ export function useLogStream(project: Project, service: string, opts: Options = 
       waitRetries.current = 0
       setLines([])
       setNewCount(0)
+      setLoaded(false)
       setState('live')
       setMessage('')
       setWait(null)
@@ -198,6 +201,7 @@ export function useLogStream(project: Project, service: string, opts: Options = 
       setMessage('')
       if (!backlogSeen.current) {
         backlogSeen.current = true
+        setLoaded(true)
         optsRef.current.onBacklog?.(held.current)
       }
     })
@@ -285,5 +289,5 @@ export function useLogStream(project: Project, service: string, opts: Options = 
     setOpens((n) => n + 1)
   }, [])
 
-  return { lines, state, message, newCount, retry }
+  return { lines, state, message, newCount, loaded, retry }
 }

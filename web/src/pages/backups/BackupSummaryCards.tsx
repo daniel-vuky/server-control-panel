@@ -1,6 +1,8 @@
 import { type ReactNode, useId } from 'react'
 import type { BackupSummary, SummaryDay, TimeZone } from '../../api/types.gen'
 import LoadError from '../../components/LoadError'
+import Skeleton from '../../components/Skeleton'
+import Stale from '../../components/Stale'
 import { formatBytes } from '../../lib/format'
 import { plural } from '../../lib/plural'
 import { zoneLabel, zoneParts } from '../../lib/schedule'
@@ -10,7 +12,7 @@ type Props = {
   summary: BackupSummary | null
   /** The server zone; null until /api/backup-settings answers (the run's own offset is used meanwhile). */
   zone: TimeZone | null
-  /** Why the summary could not be read; shown only while there is none to show. */
+  /** Why the summary could not be read: the banner alone while there is none to show, else above the kept cards, dimmed. */
   error: string
   onRetry(): void
 }
@@ -55,9 +57,9 @@ export default function BackupSummaryCards({ summary, zone, error, onRetry }: Pr
       <section aria-label="Backup summary" aria-busy="true" className={GRID}>
         {[0, 1, 2, 3].map((i) => (
           <div key={i} className={`${CARD} border-border`}>
-            <div className="h-3 w-2/5 rounded bg-border motion-safe:animate-pulse" />
-            <div className="h-6 w-3/5 rounded bg-border motion-safe:animate-pulse" />
-            <div className="h-3 w-1/2 rounded bg-border motion-safe:animate-pulse" />
+            <Skeleton className="h-3 w-2/5" />
+            <Skeleton className="h-6 w-3/5" />
+            <Skeleton className="h-3 w-1/2" />
           </div>
         ))}
       </section>
@@ -75,25 +77,32 @@ export default function BackupSummaryCards({ summary, zone, error, onRetry }: Pr
     .join(', ')
 
   return (
-    <section aria-label="Backup summary" className={GRID}>
-      <Card label="Drive usage" title="Stored by the panel">
-        <span className={VALUE}>{formatBytes(summary.driveBytes)}</span>
-        <span className={SUB}>
-          {plural(summary.driveFiles, 'file', 'files')} ·{' '}
-          {plural(summary.driveProjects, 'project', 'projects')}
-        </span>
-      </Card>
-      <Card label="Succeeded · 7 days">
-        <span className={`${VALUE} text-success`}>{summary.ok7d}</span>
-        <DayStrip days={summary.days} />
-      </Card>
-      <Card label="Failed · 7 days" alarm={summary.failed7d > 0}>
-        <span className={`${VALUE} ${summary.failed7d > 0 ? 'text-danger-text' : ''}`}>
-          {summary.failed7d}
-        </span>
-        <span className={SUB}>{failures === '' ? 'No failures' : failures}</span>
-      </Card>
-      <NextRun summary={summary} zone={zone} today={today} />
+    <section aria-label="Backup summary" className="flex flex-col gap-3">
+      <Stale
+        error={error}
+        onRetry={onRetry}
+        title="Could not load the backup summary."
+        className={GRID}
+      >
+        <Card label="Drive usage" title="Stored by the panel">
+          <span className={VALUE}>{formatBytes(summary.driveBytes)}</span>
+          <span className={SUB}>
+            {plural(summary.driveFiles, 'file', 'files')} ·{' '}
+            {plural(summary.driveProjects, 'project', 'projects')}
+          </span>
+        </Card>
+        <Card label="Succeeded · 7 days">
+          <span className={`${VALUE} text-success`}>{summary.ok7d}</span>
+          <DayStrip days={summary.days} />
+        </Card>
+        <Card label="Failed · 7 days" alarm={summary.failed7d > 0}>
+          <span className={`${VALUE} ${summary.failed7d > 0 ? 'text-danger-text' : ''}`}>
+            {summary.failed7d}
+          </span>
+          <span className={SUB}>{failures === '' ? 'No failures' : failures}</span>
+        </Card>
+        <NextRun summary={summary} zone={zone} today={today} />
+      </Stale>
     </section>
   )
 }

@@ -122,14 +122,22 @@ const renderPage = () =>
 afterEach(() => vi.unstubAllGlobals())
 
 describe('SettingsPage', () => {
-  it('shows the heading, and loading before the answer', () => {
+  it('shows the heading, and skeletons in every card before the answers, never a Loading line', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => new Promise(() => {})),
     )
     renderPage()
     expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument()
-    expect(screen.getByText('Loading workspaces…')).toBeInTheDocument()
+    const card = screen.getByRole('region', { name: 'Workspaces' })
+    const skeleton = within(card).getByRole('status', { name: 'Loading workspaces' })
+    expect(skeleton.querySelectorAll('.animate-scp-pulse').length).toBeGreaterThan(0)
+    for (const name of ['Alerts', 'Backup defaults', 'Metrics history']) {
+      expect(
+        within(screen.getByRole('region', { name })).getByRole('status', { busy: true }),
+      ).toBeInTheDocument()
+    }
+    expect(screen.queryByText(/Loading/)).toBeNull()
   })
 
   it('lists each workspace with its path and summary line', async () => {
@@ -167,11 +175,17 @@ describe('SettingsPage', () => {
     }
   })
 
-  it('shows the empty state, still with Add workspace', async () => {
+  it('shows the empty state with Add project folder, still with Add workspace', async () => {
     serve([200, []])
     renderPage()
     const card = screen.getByRole('region', { name: 'Workspaces' })
-    expect(await within(card).findByText('No workspace yet')).toBeInTheDocument()
+    const title = await within(card).findByRole('heading', { name: 'No workspace has been added' })
+    // design 10's dashed empty card
+    expect(title.parentElement).toHaveClass('border-dashed')
+    expect(within(card).getByRole('link', { name: 'Add project folder' })).toHaveAttribute(
+      'href',
+      '/onboarding',
+    )
     expect(within(card).getByRole('link', { name: 'Add workspace' })).toHaveAttribute(
       'href',
       '/onboarding',
@@ -203,7 +217,7 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('region', { name: 'Backup defaults' })).not.toHaveTextContent(
       'Coming in',
     )
-    await screen.findByText('No workspace yet')
+    await screen.findByText('No workspace has been added')
   })
 
   describe('Rescan', () => {
@@ -324,6 +338,38 @@ describe('SettingsPage', () => {
       const toast = await screen.findByText(/Removed/)
       expect(toast).toHaveTextContent('Removed /home/deploy/projects')
       expect(posts(stub)).toHaveLength(1)
+    })
+
+    it('keeps the list dimmed under the banner when the reload fails, and Retry reads again', async () => {
+      const stub = route({
+        'GET /api/workspaces': [
+          () => json(200, workspaces),
+          () => json(500, { error: 'database is locked' }),
+          () => json(200, [workspaces[1]]),
+        ],
+        'POST /api/workspaces/1/remove': () => json(200, { removed: 2 }),
+      })
+      renderPage()
+      const dialog = await open()
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
+      const card = screen.getByRole('region', { name: 'Workspaces' })
+      const banner = await within(card).findByRole('alert')
+      expect(banner).toHaveTextContent('Could not load workspaces.')
+      expect(banner).toHaveTextContent('database is locked')
+      // The old list stays, dimmed under the banner.
+      const list = within(card).getByText('/home/deploy/projects').closest('ul') as HTMLElement
+      const box = list.parentElement as HTMLElement
+      expect(box).toHaveAttribute('data-stale')
+      expect(box.style.opacity).toBe('0.55')
+      expect(box.style.filter).toBe('saturate(0.6)')
+
+      fireEvent.click(within(banner).getByRole('button', { name: 'Retry' }))
+      await waitFor(() => expect(within(card).queryByText('/home/deploy/projects')).toBeNull())
+      expect(within(card).getByText('/srv/solo')).toBeInTheDocument()
+      expect(within(card).queryByRole('alert')).toBeNull()
+      expect(within(card).getByText('/srv/solo').closest('[data-stale]')).toBeNull()
+      expect(stub.mock.calls.filter((c) => c[0] === '/api/workspaces')).toHaveLength(3)
     })
 
     it('shows the server text in an error toast on a 409 and keeps the list', async () => {

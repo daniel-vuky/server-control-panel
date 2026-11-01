@@ -6,6 +6,7 @@ import LoadError from '../../components/LoadError'
 import MetricChart from '../../components/MetricChart'
 import RangeSwitch from '../../components/RangeSwitch'
 import { SkeletonCard } from '../../components/Skeleton'
+import Stale from '../../components/Stale'
 import { formatBytes, formatCpu, formatMem, formatRate } from '../../lib/format'
 import { isRangeKey, type RangeKey, useRangeParam } from '../../lib/range'
 import { useRead } from '../../lib/useRead'
@@ -30,8 +31,9 @@ const percentLabel = (v: number) => `${Math.round(v)}%`
  * project over that period, CPU (Docker's %, 100 = one core), RAM and Network
  * in and out (spec decisions 20 to 23). CPU and RAM read now from the live
  * project, the same numbers as the Dashboard; Network from the newest sample.
- * It re-reads every 30 s while the tab is visible; "History begins" is worded
- * in the server zone.
+ * It re-reads every 30 s while the tab is visible (a failed re-read keeps
+ * the charts, dimmed under the error banner); "History begins" is worded in
+ * the server zone.
  */
 export default function ProjectCharts({ project }: { project: Project }) {
   const [range, setRange] = useRangeParam('1h')
@@ -53,13 +55,19 @@ export default function ProjectCharts({ project }: { project: Project }) {
   let body: ReactNode
   if (series.data && zone.data) {
     body = (
-      <Charts
-        series={series.data}
-        range={range}
-        zone={zone.data.timeZone}
-        cpu={project.cpuPercent}
-        mem={project.memBytes}
-      />
+      <Stale
+        error={series.staleError}
+        onRetry={series.refresh}
+        title="Could not refresh the charts."
+      >
+        <Charts
+          series={series.data}
+          range={range}
+          zone={zone.data.timeZone}
+          cpu={project.cpuPercent}
+          mem={project.memBytes}
+        />
+      </Stale>
     )
   } else if (error !== '') {
     body = <LoadError title="Could not load the charts." message={error} onRetry={retry} />
@@ -153,7 +161,6 @@ function Slot({ title, children }: { title: string; children: ReactNode }) {
 function ChartsLoading() {
   return (
     <div aria-busy="true" className={GRID}>
-      <span className="sr-only">Loading the charts…</span>
       {[0, 1, 2].map((i) => (
         <SkeletonCard key={i} />
       ))}

@@ -50,6 +50,12 @@ const rows = (...entries: ActivityEntry[]) => entries
 
 const E = (id: number, more: Partial<ActivityEntry> = {}) => makeEntry({ id, ...more })
 
+/** dim is the Stale box's opacity and filter around the days (both empty when not dimmed). */
+const dim = () => {
+  const box = screen.getByTestId('activity-days').parentElement as HTMLElement
+  return { opacity: box.style.opacity, filter: box.style.filter }
+}
+
 beforeEach(() => {
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
@@ -323,12 +329,12 @@ describe('ActivityPage error then Show older', () => {
       vi.advanceTimersByTime(30_000)
     })
     await screen.findByRole('alert')
-    expect(screen.getByTestId('activity-days').className).toMatch(/opacity-55/)
+    expect(dim()).toEqual({ opacity: '0.55', filter: 'saturate(0.6)' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
     await screen.findByText('older')
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    expect(screen.getByTestId('activity-days').className).not.toMatch(/opacity-55/)
+    expect(dim()).toEqual({ opacity: '', filter: '' })
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
   })
 })
@@ -388,11 +394,11 @@ describe('ActivityPage empty and error states', () => {
     })
     const alert = await screen.findByRole('alert')
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
-    expect(screen.getByTestId('activity-days').className).toMatch(/opacity-55/)
+    expect(dim()).toEqual({ opacity: '0.55', filter: 'saturate(0.6)' })
 
     fail = false
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    expect(screen.getByTestId('activity-days').className).not.toMatch(/opacity-55/)
+    expect(dim()).toEqual({ opacity: '', filter: '' })
   })
 })

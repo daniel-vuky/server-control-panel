@@ -5,6 +5,7 @@ import { useLive } from '../../app/live'
 import { BackupRow, byNewest, HEAD, mergeNewest, ROW_BUTTON } from '../../components/BackupRow'
 import LoadError from '../../components/LoadError'
 import { SkeletonCard } from '../../components/Skeleton'
+import Stale from '../../components/Stale'
 import { zoneLabel } from '../../lib/schedule'
 import type { BackupFlow } from '../../lib/useBackup'
 
@@ -302,57 +303,61 @@ export default function BackupsTable({ all: h, flow, projects }: TableProps) {
   }
   return (
     <section className="rounded-[10px] border border-border bg-surface">
-      {h.error !== '' && (
-        <div className="px-4 py-3.5">
-          <LoadError title="Could not load the backups." message={h.error} onRetry={h.readNewest} />
-        </div>
-      )}
-      <div className="overflow-x-auto">
-        <table
-          aria-label="All backups"
-          className="w-full min-w-[980px] table-fixed border-collapse text-left"
-        >
-          <colgroup>
-            {COLUMN_WIDTHS.map((width, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of eight columns.
-              <col key={i} style={{ width }} />
-            ))}
-          </colgroup>
-          <thead>
-            <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
-              {['Time', 'Project', 'Database', 'Size', 'Duration', 'Status', 'Triggered by'].map(
-                (name) => (
-                  <th key={name} scope="col" className={HEAD}>
-                    {name}
-                  </th>
-                ),
-              )}
-              <th scope="col" className={`${HEAD} text-right`}>
-                File
-              </th>
-            </tr>
-          </thead>
-          <tbody className="font-mono text-[13px] tabular-nums">
-            {h.rows.map((b) => (
-              <BackupRow key={b.id} backup={b} several withProject flow={flow} keep={keepOf(b)} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {h.more && (
-        <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
-          <button
-            type="button"
-            disabled={h.older.busy}
-            aria-busy={h.older.busy || undefined}
-            onClick={h.readOlder}
-            className={`${ROW_BUTTON} h-8 px-3 text-[13px]`}
+      <Stale
+        error={h.error}
+        onRetry={h.readNewest}
+        title="Could not load the backups."
+        bannerClassName="px-4 pt-3.5"
+      >
+        <div className="overflow-x-auto">
+          <table
+            aria-label="All backups"
+            className="w-full min-w-[980px] table-fixed border-collapse text-left"
           >
-            Show older
-          </button>
-          {h.older.error !== '' && <span className="text-[13px] text-danger">{h.older.error}</span>}
+            <colgroup>
+              {COLUMN_WIDTHS.map((width, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of eight columns.
+                <col key={i} style={{ width }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr className="border-b border-border text-xs tracking-[0.05em] text-muted uppercase">
+                {['Time', 'Project', 'Database', 'Size', 'Duration', 'Status', 'Triggered by'].map(
+                  (name) => (
+                    <th key={name} scope="col" className={HEAD}>
+                      {name}
+                    </th>
+                  ),
+                )}
+                <th scope="col" className={`${HEAD} text-right`}>
+                  File
+                </th>
+              </tr>
+            </thead>
+            <tbody className="font-mono text-[13px] tabular-nums">
+              {h.rows.map((b) => (
+                <BackupRow key={b.id} backup={b} several withProject flow={flow} keep={keepOf(b)} />
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
+        {h.more && (
+          <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
+            <button
+              type="button"
+              disabled={h.older.busy}
+              aria-busy={h.older.busy || undefined}
+              onClick={h.readOlder}
+              className={`${ROW_BUTTON} h-8 px-3 text-[13px]`}
+            >
+              Show older
+            </button>
+            {h.older.error !== '' && (
+              <span className="text-[13px] text-danger">{h.older.error}</span>
+            )}
+          </div>
+        )}
+      </Stale>
     </section>
   )
 }
