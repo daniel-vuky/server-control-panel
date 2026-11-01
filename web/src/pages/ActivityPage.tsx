@@ -147,7 +147,7 @@ function Filters({
   const chips: [Kind | '', string][] = [['', 'All'], ...KINDS]
   return (
     <>
-      <fieldset className="m-0 flex rounded-lg border border-border-strong bg-surface p-[3px]">
+      <fieldset className="m-0 flex min-w-0 flex-wrap rounded-lg border border-border-strong bg-surface p-[3px]">
         <legend className="sr-only">Filter by event type</legend>
         {chips.map(([value, label]) => {
           const on = (kind ?? '') === value

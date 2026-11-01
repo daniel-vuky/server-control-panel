@@ -49,7 +49,7 @@ export default function ServerSummary() {
         error={stale}
         onRetry={retry}
         title="Could not refresh the server summary."
-        className="grid grid-cols-[repeat(auto-fit,minmax(min(180px,100%),1fr))] gap-3"
+        className="grid grid-cols-[repeat(auto-fit,minmax(min(180px,100%),1fr))] gap-3 max-sm:grid-cols-2"
       >
         {loading
           ? [0, 1, 2, 3, 4, 5].map((i) => <TileSkeleton key={i} />)

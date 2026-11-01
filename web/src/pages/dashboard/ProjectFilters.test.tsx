@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { stubPhone } from '../../test/phone'
 import type { Filters } from './filters'
 import ProjectFilters from './ProjectFilters'
 
@@ -61,5 +62,22 @@ describe('ProjectFilters', () => {
     )
     fireEvent.click(within(group).getByRole('button', { name: 'Cards' }))
     expect(onChange).toHaveBeenCalledWith({ view: 'cards' })
+  })
+})
+
+describe('ProjectFilters on a phone', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('hides the Cards/Table switch', () => {
+    stubPhone(true)
+    setup()
+    expect(screen.queryByRole('group', { name: 'View mode' })).toBeNull()
+    expect(screen.getByRole('group', { name: 'Filter by status' })).toBeInTheDocument()
+  })
+
+  it('shows the switch on wider screens', () => {
+    stubPhone(false)
+    setup()
+    expect(screen.getByRole('group', { name: 'View mode' })).toBeInTheDocument()
   })
 })

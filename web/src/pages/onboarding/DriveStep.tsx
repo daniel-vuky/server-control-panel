@@ -32,7 +32,7 @@ export default function DriveStep({ added, onFinish }: Props) {
   return (
     <section
       aria-labelledby="drive-step-title"
-      className="flex w-full max-w-[640px] flex-col gap-[22px] rounded-[14px] border border-border bg-surface p-8"
+      className="flex w-full max-w-[640px] flex-col gap-[22px] rounded-[14px] border border-border bg-surface p-8 max-sm:p-5"
     >
       <div className="flex flex-col gap-2">
         <h1 id="drive-step-title" className="m-0 text-[22px] font-semibold tracking-tight">

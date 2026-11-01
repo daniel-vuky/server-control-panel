@@ -206,7 +206,7 @@ export default function MetricChart({
       y1={y}
       x2={WIDTH}
       y2={y}
-      className={className}
+      className={`${className} max-sm:hidden`}
       vectorEffect="non-scaling-stroke"
     />
   )
@@ -320,11 +320,12 @@ export default function MetricChart({
         <Legend series={series} className="ml-auto flex gap-3 text-xs text-muted" />
       </div>
       {/* A two-column grid, so the time axis starts where the drawing does
-          however wide the scale labels are. */}
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-2.5">
+          however wide the scale labels are; on a phone the scale is hidden
+          and the grid has one column. */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-2.5 max-sm:grid-cols-1">
         <div
           aria-hidden="true"
-          className="flex min-w-10 flex-col justify-between text-right font-mono text-[11px] text-muted"
+          className="flex min-w-10 flex-col justify-between text-right font-mono text-[11px] text-muted max-sm:hidden"
           style={{ height }}
         >
           <span>{formatValue(top)}</span>
@@ -332,10 +333,10 @@ export default function MetricChart({
           <span>0</span>
         </div>
         {drawing}
-        <span aria-hidden="true" />
+        <span aria-hidden="true" className="max-sm:hidden" />
         <div className="flex justify-between font-mono text-[11px] text-muted">
           <span>{info.start}</span>
-          <span>{info.mid}</span>
+          <span className="max-sm:hidden">{info.mid}</span>
           <span>now</span>
         </div>
       </div>

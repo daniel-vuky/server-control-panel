@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LatestBackup } from '../api/types.gen'
 import { FakeEventSource } from '../test/fakeEventSource'
@@ -133,5 +133,63 @@ describe('brand line', () => {
     ready()
     const calls = vi.mocked(fetch).mock.calls.filter((c) => c[0] === '/api/server')
     expect(calls.length).toBe(1)
+  })
+})
+
+describe('phone menu', () => {
+  const opener = () => screen.getByRole('button', { name: 'Open menu' })
+
+  it('has a 44 by 44 Open menu button that shows below 768 px, and hides the sidebar there', () => {
+    stub([])
+    renderApp('/')
+    expect(opener()).toHaveClass('size-11')
+    expect(opener().parentElement).toHaveClass('md:hidden')
+    expect(nav()).toHaveClass('max-md:hidden')
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+  })
+
+  it('opens the same links in a drawer dialog', async () => {
+    stub([])
+    renderApp('/')
+    fireEvent.click(opener())
+    const drawer = screen.getByRole('dialog', { name: 'Menu' })
+    const wide = within(nav())
+      .getAllByRole('link')
+      .map((a) => [a.textContent, a.getAttribute('href')])
+    const links = within(drawer)
+      .getAllByRole('link')
+      .map((a) => [a.textContent, a.getAttribute('href')])
+    expect(links).toEqual(wide)
+    expect(drawer).toHaveAttribute('aria-modal', 'true')
+    await act(async () => {})
+  })
+
+  it('closes on Escape, on the overlay and on a link click', async () => {
+    stub([])
+    renderApp('/')
+    fireEvent.click(opener())
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Menu' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+
+    fireEvent.click(opener())
+    fireEvent.click(screen.getByTestId('confirm-overlay'))
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+
+    fireEvent.click(opener())
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Menu' })).getByRole('link', { name: /^Backups/ }),
+    )
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+    await act(async () => {})
+  })
+
+  it('closes when the location changes by other means', async () => {
+    stub([])
+    const { router } = renderApp('/')
+    fireEvent.click(opener())
+    await act(async () => {
+      await router.navigate('/server')
+    })
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
   })
 })

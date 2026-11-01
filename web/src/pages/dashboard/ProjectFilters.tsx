@@ -1,3 +1,4 @@
+import { usePhone } from '../../lib/usePhone'
 import { type Filters, STATUS_FILTERS, type StatusFilter, type View } from './filters'
 
 const WORDS: Record<StatusFilter, string> = {
@@ -34,6 +35,8 @@ export default function ProjectFilters({
   counts: Record<StatusFilter, number>
   onChange(next: Partial<Filters>): void
 }) {
+  // The table is for wide screens; a phone shows cards only (no switch).
+  const phone = usePhone()
   return (
     <div className="flex flex-wrap items-center gap-2.5">
       <fieldset
@@ -82,26 +85,28 @@ export default function ProjectFilters({
           className="min-w-0 flex-1 border-0 bg-transparent font-sans text-[13px] text-text outline-none placeholder:text-muted"
         />
       </label>
-      <fieldset
-        aria-label="View mode"
-        className="m-0 ml-auto flex rounded-lg border border-border-strong bg-surface p-[3px]"
-      >
-        <ViewButton view="cards" current={filters.view} onChange={onChange}>
-          <svg aria-hidden="true" {...ICON}>
-            <rect x="3" y="3" width="7" height="7" rx="1" />
-            <rect x="14" y="3" width="7" height="7" rx="1" />
-            <rect x="3" y="14" width="7" height="7" rx="1" />
-            <rect x="14" y="14" width="7" height="7" rx="1" />
-          </svg>
-          Cards
-        </ViewButton>
-        <ViewButton view="table" current={filters.view} onChange={onChange}>
-          <svg aria-hidden="true" {...ICON} strokeLinecap="round">
-            <path d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-          Table
-        </ViewButton>
-      </fieldset>
+      {!phone && (
+        <fieldset
+          aria-label="View mode"
+          className="m-0 ml-auto flex rounded-lg border border-border-strong bg-surface p-[3px]"
+        >
+          <ViewButton view="cards" current={filters.view} onChange={onChange}>
+            <svg aria-hidden="true" {...ICON}>
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <rect x="14" y="14" width="7" height="7" rx="1" />
+            </svg>
+            Cards
+          </ViewButton>
+          <ViewButton view="table" current={filters.view} onChange={onChange}>
+            <svg aria-hidden="true" {...ICON} strokeLinecap="round">
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+            Table
+          </ViewButton>
+        </fieldset>
+      )}
     </div>
   )
 }

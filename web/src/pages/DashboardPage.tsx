@@ -13,6 +13,7 @@ import Skeleton from '../components/Skeleton'
 import { projectRule } from '../lib/backup'
 import { formatLastScan } from '../lib/time'
 import { useBackup } from '../lib/useBackup'
+import { usePhone } from '../lib/usePhone'
 import { useProjectActions } from '../lib/useProjectActions'
 import { useRead } from '../lib/useRead'
 import { useRescan } from '../lib/useRescan'
@@ -82,6 +83,9 @@ export default function DashboardPage() {
   const workspaces = useRead(listWorkspaces, 'workspaces').data
   const [params, setParams] = useSearchParams()
   const filters = filtersOf(params, params.has('view') ? null : readStoredView())
+  // A phone shows cards only, whatever the URL or the remembered view says.
+  const phone = usePhone()
+  const view: View = phone ? 'cards' : filters.view
 
   // No workspace is the first screen: setup. A failed load shows the Dashboard
   // as it is, so there is no redirect loop.
@@ -160,7 +164,7 @@ export default function DashboardPage() {
 
       <LiveDim className="flex flex-col gap-[18px]">
         <ServerSummary />
-        {rows === undefined && projects.error === '' && <Loading view={filters.view} />}
+        {rows === undefined && projects.error === '' && <Loading view={view} />}
         {rows === undefined && projects.error !== '' && (
           <LoadError
             title="Could not load projects."
@@ -178,7 +182,7 @@ export default function DashboardPage() {
                 <ProjectFilters filters={filters} counts={counts} onChange={change} />
                 {shown === undefined || shown.length === 0 ? (
                   <NothingMatches onClear={clear} />
-                ) : filters.view === 'table' ? (
+                ) : view === 'table' ? (
                   <ProjectRows items={shown.map(item)} />
                 ) : (
                   <ProjectCards items={shown.map(item)} />

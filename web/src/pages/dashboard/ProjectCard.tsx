@@ -7,7 +7,7 @@ import MonitorOnlyTag from '../../components/MonitorOnlyTag'
 import ProjectSwitch from '../../components/ProjectSwitch'
 import StatusBadge from '../../components/StatusBadge'
 import { formatCpu, formatMem, formatUptime } from '../../lib/format'
-import type { Status } from '../../lib/status'
+import { isInFlight, type Status } from '../../lib/status'
 import { folderMissing } from '../../lib/time'
 import { issueOf } from './issue'
 import type { LastBackup } from './lastBackup'
@@ -85,6 +85,72 @@ export function ItemSwitch({ item }: { item: ProjectItem }) {
   )
 }
 
+type Phone = { label: string; run?(): void }
+
+/**
+ * phoneAction is what the phone button of a card does (design 08): Stop for a
+ * project that is up, Start for a stopped one, Restart for an Error one that
+ * allows it (else Start), the in-flight word, disabled, while a command runs;
+ * null when the server allows none of them. Which actions exist is the
+ * server's `actions`, never derived here.
+ */
+function phoneAction(item: ProjectItem): Phone | null {
+  const p = item.project
+  switch (p.status) {
+    case 'starting':
+      return { label: 'Starting…' }
+    case 'stopping':
+      return { label: 'Stopping…' }
+    case 'restarting':
+      return { label: 'Restarting…' }
+    case 'running':
+    case 'partial':
+      return p.actions.includes('stop') ? { label: 'Stop', run: item.onStop } : null
+    case 'stopped':
+      return p.actions.includes('start') ? { label: 'Start', run: item.onStart } : null
+    case 'error':
+      if (p.actions.includes('restart')) return { label: 'Restart', run: item.onRestart }
+      return p.actions.includes('start') ? { label: 'Start', run: item.onStart } : null
+    default:
+      return null
+  }
+}
+
+/** PHONE_BUTTON is design 08's 48 px button per look: Stop red outline, busy blue, else light. */
+const PHONE_BUTTON = {
+  Stop: 'border border-danger-border bg-error-deep text-danger-text',
+  busy: 'border border-info-border bg-info-surface text-accent-text',
+  light: 'border-0 bg-text text-bg',
+} as const
+
+/**
+ * PhoneAction is the full-width button that replaces the switch on a phone
+ * (below 640 px). It runs the same flow as the switch, so Stop and Restart
+ * still ask first.
+ */
+export function PhoneAction({ item }: { item: ProjectItem }) {
+  const action = phoneAction(item)
+  if (action === null) return null
+  const busy = isInFlight(item.project.status)
+  const look = busy
+    ? PHONE_BUTTON.busy
+    : action.label === 'Stop'
+      ? PHONE_BUTTON.Stop
+      : PHONE_BUTTON.light
+  return (
+    <button
+      type="button"
+      aria-label={busy ? undefined : `${action.label} ${item.project.displayName}`}
+      disabled={busy}
+      aria-busy={busy || undefined}
+      onClick={action.run}
+      className={`hidden h-12 w-full cursor-pointer items-center justify-center rounded-[10px] text-[15px] font-semibold max-sm:flex disabled:cursor-default ${FOCUS} ${look}`}
+    >
+      {action.label}
+    </button>
+  )
+}
+
 /**
  * Domain is the project's public domain as a link in a new tab (D15), muted
  * "No public domain" without one, or the folder-missing words for a Not found
@@ -141,8 +207,8 @@ export function LastBackupLine({ latest }: { latest: LastBackup | null }) {
 /**
  * ProjectCard is one project of the Dashboard's card view (design 01, D13):
  * status, stack chip and ⋯ menu; the name and domain; CPU, RAM and the uptime
- * (or an Error card's issue); then the last backup and the switch. An Error
- * card has the red edge.
+ * (or an Error card's issue); then the last backup and the switch (a phone
+ * swaps the switch for a full-width button). An Error card has the red edge.
  */
 export default function ProjectCard(item: ProjectItem) {
   const p = item.project
@@ -164,7 +230,7 @@ export default function ProjectCard(item: ProjectItem) {
         <StatusBadge status={p.status} />
         <span
           data-testid="stack-chip"
-          className="flex h-[22px] items-center gap-1.5 rounded-[5px] border border-border-strong px-2 text-xs whitespace-nowrap text-text-2"
+          className="flex h-[22px] min-w-0 items-center gap-1.5 overflow-hidden rounded-[5px] border border-border-strong px-2 text-xs whitespace-nowrap text-text-2"
         >
           {stack}
           {note.length > 0 && (
@@ -231,10 +297,11 @@ export default function ProjectCard(item: ProjectItem) {
           <span className="text-[11.5px] text-muted">Last backup</span>
           <LastBackupLine latest={item.latest} />
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto max-sm:hidden">
           <ItemSwitch item={item} />
         </div>
       </div>
+      <PhoneAction item={item} />
     </article>
   )
 }

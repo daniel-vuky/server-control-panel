@@ -5,6 +5,7 @@ import type { Project, Workspace } from '../api/types.gen'
 import { LatestBackupsProvider } from '../app/latestBackups'
 import { formatLastScan } from '../lib/time'
 import { FakeEventSource } from '../test/fakeEventSource'
+import { stubPhone } from '../test/phone'
 import { makeBackup, makeDatabase } from '../test/projects'
 import { renderApp } from '../test/renderApp'
 import { makeSeries, makeServerInfo } from '../test/server'
@@ -363,6 +364,18 @@ describe('DashboardPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Unexpected response')
   })
 
+  describe('on a phone', () => {
+    it('forces the cards view, whatever the URL or the remembered choice says, and hides the switch', async () => {
+      stubPhone(true)
+      localStorage.setItem('dashboard.view', 'table')
+      serve([200, projects])
+      renderPage('/?view=table')
+      expect(await screen.findByRole('article', { name: 'shop' })).toBeInTheDocument()
+      expect(screen.queryByRole('table')).toBeNull()
+      expect(screen.queryByRole('group', { name: 'View mode' })).toBeNull()
+    })
+  })
+
   describe('table view', () => {
     const row = (name: RegExp) => screen.getByRole('row', { name })
 
@@ -536,7 +549,8 @@ describe('DashboardPage', () => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }))
 
       // The overlay's Stopping… row is still one of the rows the filter sees.
-      expect(within(card('shop')).getByText('Stopping…')).toBeInTheDocument()
+      // the status badge, and the phone button (hidden above 640 px)
+      expect(within(card('shop')).getAllByText('Stopping…')).toHaveLength(2)
       expect(screen.getByRole('region', { name: 'Quick counts' })).toHaveTextContent('0 running')
 
       await act(async () =>
@@ -604,7 +618,8 @@ describe('DashboardPage', () => {
       expect(url).toBe('/api/projects/1/stop')
       expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' })
 
-      expect(within(card('shop')).getByText('Stopping…')).toBeInTheDocument()
+      // the status badge, and the phone button (hidden above 640 px)
+      expect(within(card('shop')).getAllByText('Stopping…')).toHaveLength(2)
       expect(within(card('shop')).getByRole('switch')).toBeDisabled()
 
       await act(async () => release(ok('stopped')))
@@ -752,7 +767,8 @@ describe('DashboardPage', () => {
         })
       })
       const shop = card('shop')
-      expect(within(shop).getByText('Stopping…')).toBeInTheDocument()
+      // the status badge, and the phone button (hidden above 640 px)
+      expect(within(shop).getAllByText('Stopping…')).toHaveLength(2)
       expect(within(shop).getByRole('switch')).toBeDisabled()
       fireEvent.click(within(shop).getByRole('button', { name: 'More actions for shop' }))
       for (const name of ['Start', 'Restart']) {

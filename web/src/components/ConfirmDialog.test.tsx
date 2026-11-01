@@ -144,3 +144,26 @@ describe('ConfirmDialog', () => {
     expect(opener).toHaveFocus()
   })
 })
+
+describe('ConfirmDialog on a phone', () => {
+  it('is a bottom sheet with a grab handle', () => {
+    setup()
+    expect(screen.getByRole('dialog').parentElement).toHaveClass('max-sm:items-end')
+    expect(screen.getByTestId('sheet-handle')).toBeInTheDocument()
+  })
+
+  it('stacks the buttons full width and 50 px with Stop above Cancel, Cancel still first in tab order', () => {
+    setup()
+    const stop = screen.getByRole('button', { name: 'Stop' })
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    for (const b of [stop, cancel]) expect(b).toHaveClass('max-sm:h-[50px]', 'max-sm:w-full')
+    expect(stop.parentElement).toBe(cancel.parentElement)
+    expect(stop.parentElement).toHaveClass('max-sm:flex-col-reverse')
+    expect(cancel).toHaveFocus()
+  })
+
+  it('drops the command box on phones', () => {
+    setup()
+    expect(screen.getByText('$ docker compose stop · timeout 60s')).toHaveClass('max-sm:hidden')
+  })
+})

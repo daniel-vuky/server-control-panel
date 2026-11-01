@@ -146,3 +146,13 @@ describe('ServerSummary', () => {
     expect(urls.filter((u) => u === '/api/server/metrics?range=1h').length).toBe(2)
   })
 })
+
+describe('ServerSummary on a phone', () => {
+  it('lays the tiles out in two columns below 640 px', async () => {
+    serve()
+    render(<ServerSummary />)
+    const section = screen.getByRole('region', { name: 'Server summary' })
+    expect(section.querySelector('.grid')).toHaveClass('max-sm:grid-cols-2')
+    await waitFor(() => expect(screen.getByText('Load avg')).toBeTruthy())
+  })
+})
