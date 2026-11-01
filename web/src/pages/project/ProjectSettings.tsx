@@ -241,7 +241,7 @@ function SettingsForm({ project, raw, actions }: ProjectOutlet) {
 
         <Field
           id={idOf('alertCpuPercent')}
-          label="CPU alert threshold (%)"
+          label="CPU alert threshold (% of server)"
           error={error('alertCpuPercent')}
         >
           <input
@@ -272,7 +272,8 @@ function SettingsForm({ project, raw, actions }: ProjectOutlet) {
         </Field>
 
         <p id={alertsNote} className="col-span-full -mt-2 mb-0 text-xs text-muted">
-          Alerts are not sent yet. The alerts flow will use these.
+          Empty uses the server-wide threshold (Settings → Alerts). CPU is a share of the whole
+          server.
         </p>
 
         <div className="col-span-full flex gap-2.5">

@@ -5,7 +5,6 @@ import type { Workspace } from '../api/types.gen'
 import { listWorkspaces, removeWorkspace } from '../api/workspaces'
 import { LiveDim } from '../app/live'
 import ConfirmDialog from '../components/ConfirmDialog'
-import IssueLinks from '../components/IssueLinks'
 import LoadError from '../components/LoadError'
 import PageHeader from '../components/PageHeader'
 import { useToast } from '../components/Toast'
@@ -13,6 +12,7 @@ import { plural } from '../lib/plural'
 import { formatLastScan } from '../lib/time'
 import { useLoad } from '../lib/useLoad'
 import { useRescan } from '../lib/useRescan'
+import AlertsCard from './settings/AlertsCard'
 import BackupDefaultsCard from './settings/BackupDefaultsCard'
 import DriveCard from './settings/DriveCard'
 import MetricsHistoryCard from './settings/MetricsHistoryCard'
@@ -22,8 +22,6 @@ const rowButton =
   'h-8 cursor-pointer rounded-md border bg-transparent px-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60'
 
 const mono = (text: string): ReactNode => <span className="font-mono">{text}</span>
-
-const head = 'flex flex-col gap-1 border-b border-border px-[18px] py-4'
 
 /** SettingsPage is /settings: workspaces, Google Drive, alerts (still to come), backup defaults and metrics history. */
 export default function SettingsPage() {
@@ -38,9 +36,7 @@ export default function SettingsPage() {
         <WorkspacesCard />
 
         <DriveCard />
-        <Soon id="alert-title" title="Alerts" issues={[8]}>
-          Where the panel sends alerts.
-        </Soon>
+        <AlertsCard />
         <BackupDefaultsCard />
         <MetricsHistoryCard />
       </LiveDim>
@@ -159,31 +155,5 @@ function WorkspaceRow({ workspace: w, onRemove }: { workspace: Workspace; onRemo
         </button>
       </div>
     </li>
-  )
-}
-
-function Soon({
-  id,
-  title,
-  issues,
-  children,
-}: {
-  id: string
-  title: string
-  issues: number[]
-  children: ReactNode
-}) {
-  return (
-    <section aria-labelledby={id} className={card}>
-      <div className={head}>
-        <h2 id={id} className="text-[15px] font-semibold">
-          {title}
-        </h2>
-        <span className="text-[12.5px] text-muted">{children}</span>
-      </div>
-      <p className="px-[18px] py-3.5 text-[13px] text-muted">
-        Coming in <IssueLinks issues={issues} />
-      </p>
-    </section>
   )
 }

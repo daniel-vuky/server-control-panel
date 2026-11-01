@@ -1,7 +1,8 @@
 import { type KeyboardEvent, type ReactNode, type RefObject, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), a[href], select:not([disabled])'
+const FOCUSABLE =
+  'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], select:not([disabled])'
 
 type Props = {
   /** labelledBy is the id of the dialog's title. */

@@ -52,7 +52,7 @@ const displayName = () => field('Display name')
 const domain = () => field('Public domain')
 const template = () =>
   screen.getByLabelText('Start/stop command (from template)') as HTMLSelectElement
-const cpu = () => field('CPU alert threshold (%)')
+const cpu = () => field('CPU alert threshold (% of server)')
 const ram = () => field('RAM alert threshold (MB)')
 const save = () => screen.getByRole('button', { name: 'Save changes' })
 const toasts = () => screen.getByTestId('toast-region')
@@ -92,7 +92,9 @@ describe('settings tab', () => {
     expect(cpu()).toHaveAttribute('placeholder', 'Server default')
     expect(ram()).toHaveAttribute('placeholder', 'Server default')
     expect(
-      screen.getByText('Alerts are not sent yet. The alerts flow will use these.'),
+      screen.getByText(
+        'Empty uses the server-wide threshold (Settings → Alerts). CPU is a share of the whole server.',
+      ),
     ).toBeInTheDocument()
     expect(screen.queryByText("The panel's own project always stops with stop.")).toBeNull()
 
