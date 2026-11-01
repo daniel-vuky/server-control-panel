@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackupStep, DatabaseSchedule, DriveStatus } from '../../api/types.gen'
 import { FakeEventSource } from '../../test/fakeEventSource'
@@ -111,14 +111,17 @@ describe('database and backup tab', () => {
     expect(card).toHaveTextContent('Stored in Drive/server-backups/shop-from-server/')
   })
 
-  it('says when no database was detected', () => {
+  it('shows the empty state with Add database manually when none was detected', async () => {
+    serve({ [`GET ${HISTORY}`]: () => json(200, { backups: [], more: false }) })
     renderProject('/projects/1/database')
     pushState([makeProject()])
-    const card = screen.getByRole('region', { name: 'Detected databases' })
-    expect(card).toHaveTextContent('No databases detected in this project.')
+    await act(async () => {})
+    const card = screen.getByRole('region', { name: 'No database detected' })
+    expect(card).toHaveTextContent('No DB variables found in .env and no DB service in compose.')
     expect(within(card).queryByRole('listitem')).toBeNull()
+    expect(within(card).getByRole('button', { name: 'Add database manually' })).toBeEnabled()
     // Without a connected folder there is no Drive path to show.
-    expect(card).not.toHaveTextContent('Stored in')
+    expect(screen.queryByText(/Stored in/)).toBeNull()
   })
 
   it('backs up the database whose button was pressed', async () => {
@@ -184,6 +187,108 @@ describe('database and backup tab', () => {
     expect(within(card).getByRole('radiogroup', { name: 'Frequency' })).toBeInTheDocument()
     expect(card).not.toHaveTextContent('Schedules arrive with the next backup flow.')
     expect(card).not.toHaveTextContent(/Coming in/)
+  })
+})
+
+describe('adding a database by hand', () => {
+  const empty = () => json(200, { backups: [], more: false })
+  const manualDb = makeDatabase({
+    key: 'manual:4',
+    manual: true,
+    manualId: 4,
+    name: 'ledger',
+    sources: ['added by hand'],
+    backup: allowed,
+  })
+
+  const openDialog = () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Add database manually' }))
+    return screen.findByRole('dialog', { name: 'Add database manually' })
+  }
+  const fill = (dialog: HTMLElement, name = 'ledger') => {
+    fireEvent.change(within(dialog).getByLabelText('Database name'), { target: { value: name } })
+  }
+  const submit = (dialog: HTMLElement) =>
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check and add' }))
+  const postsTo = (stub: ReturnType<typeof serve>, url: string) =>
+    stub.mock.calls.filter(
+      (c) => c[0] === url && (c[1] as RequestInit | undefined)?.method === 'POST',
+    )
+
+  function setup(
+    routes: Record<string, (init?: RequestInit) => Response> = {},
+    dbs = [] as ReturnType<typeof makeDatabase>[],
+  ) {
+    const stub = serve({ [`GET ${HISTORY}`]: empty, ...routes })
+    renderProject('/projects/1/database')
+    pushState([makeProject({ serviceNames: ['db', 'cache'], databases: dbs })], true, {
+      drive: connected,
+    })
+    return stub
+  }
+
+  it('adds a database: the dialog closes and the list shows it as added by hand', async () => {
+    const stub = setup({
+      'POST /api/projects/1/databases': () => json(201, makeProject({ databases: [manualDb] })),
+    })
+    const dialog = await openDialog()
+    fill(dialog)
+    submit(dialog)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(postsTo(stub, '/api/projects/1/databases')).toHaveLength(1)
+    // The live state is the page's source: the server pushes it after the write.
+    pushState([makeProject({ serviceNames: ['db', 'cache'], databases: [manualDb] })], true, {
+      drive: connected,
+    })
+    const item = within(screen.getByRole('region', { name: 'Detected databases' })).getByRole(
+      'listitem',
+    )
+    expect(item).toHaveTextContent('ledger')
+    expect(within(item).getByText('Added by hand')).toBeInTheDocument()
+    expect(item).not.toHaveTextContent('from added by hand')
+    expect(within(item).getByRole('button', { name: 'Remove ledger' })).toBeInTheDocument()
+  })
+
+  it('has a secondary Add database manually under the list', async () => {
+    setup({}, [makeDatabase({ name: 'shop', backup: allowed })])
+    await act(async () => {})
+    const card = screen.getByRole('region', { name: 'Detected databases' })
+    expect(within(card).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(card).getByRole('button', { name: 'Add database manually' })).toBeInTheDocument()
+    // A detected database has no Remove and no tag.
+    expect(within(card).queryByText('Added by hand')).toBeNull()
+    expect(within(card).queryByRole('button', { name: /^Remove/ })).toBeNull()
+  })
+
+  it('confirms before removing, then posts', async () => {
+    const stub = setup(
+      {
+        'POST /api/projects/1/databases/4/remove': () => json(200, makeProject({ databases: [] })),
+      },
+      [manualDb],
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove ledger' }))
+    const confirm = await screen.findByRole('dialog')
+    expect(confirm).toHaveTextContent('Remove ledger? Its backups on Drive are kept.')
+    expect(postsTo(stub, '/api/projects/1/databases/4/remove')).toHaveLength(0)
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove' }))
+    await waitFor(() => expect(postsTo(stub, '/api/projects/1/databases/4/remove')).toHaveLength(1))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('toasts the message when a backup of it is running', async () => {
+    setup(
+      {
+        'POST /api/projects/1/databases/4/remove': () =>
+          json(409, { error: 'busy', message: 'A backup of ledger is running.' }),
+      },
+      [manualDb],
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove ledger' }))
+    const confirm = await screen.findByRole('dialog')
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove' }))
+    expect(await screen.findByText('A backup of ledger is running.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 })
 

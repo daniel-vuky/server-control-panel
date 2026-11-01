@@ -170,7 +170,7 @@ describe('backup schedule card', () => {
   it('says when there is no database to schedule', () => {
     serve()
     open([])
-    expect(card()).toHaveTextContent('No databases detected in this project.')
+    expect(card()).toHaveTextContent('No database detected. Add one with Add database manually.')
     expect(within(card()).queryByRole('radiogroup')).toBeNull()
   })
 

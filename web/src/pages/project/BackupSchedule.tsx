@@ -218,7 +218,9 @@ function ScheduleCard({
       </h2>
 
       {project.databases.length === 0 && (
-        <p className="m-0 text-[13px] text-muted">No databases detected in this project.</p>
+        <p className="m-0 text-[13px] text-muted">
+          No database detected. Add one with Add database manually.
+        </p>
       )}
 
       {db && (
