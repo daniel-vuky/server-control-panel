@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,10 +80,7 @@ func TestSaveTelegramSealsAndHints(t *testing.T) {
 	if changes != "set up · chat -100••••4821" {
 		t.Errorf("changes = %q", changes)
 	}
-	rows, err := st.AlertChannels(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rows := channelsOf(t, st)
 	sealed := rows[store.ChannelTelegram].SealedToken
 	if !strings.HasPrefix(sealed, "v1:") || strings.Contains(sealed, svcToken) {
 		t.Errorf("sealed_token = %q", sealed)
@@ -112,12 +110,11 @@ func TestSaveTelegramKeepsTokenWhenEmpty(t *testing.T) {
 	if _, err := svc.SaveTelegram(ctx, svcToken, svcChat); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := st.AlertChannels(ctx)
-
-	same, err := svc.SaveTelegram(ctx, svcToken, svcChat)
-	if err != nil || same != "" {
-		t.Fatalf("same token and chat: changes %q err %v", same, err)
+	again, err := svc.SaveTelegram(ctx, svcToken, svcChat)
+	if err != nil || again != "token changed" {
+		t.Fatalf("token given again: changes %q err %v", again, err)
 	}
+	before := channelsOf(t, st)
 	changes, err := svc.SaveTelegram(ctx, "", "-1001234561177")
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +122,7 @@ func TestSaveTelegramKeepsTokenWhenEmpty(t *testing.T) {
 	if changes != "chat -100••••4821 → -100••••1177" {
 		t.Errorf("changes = %q", changes)
 	}
-	after, _ := st.AlertChannels(ctx)
+	after := channelsOf(t, st)
 	if after[store.ChannelTelegram].SealedToken != before[store.ChannelTelegram].SealedToken {
 		t.Error("the sealed token changed")
 	}
@@ -148,7 +145,7 @@ func TestSaveTelegramNoKey(t *testing.T) {
 	if _, err := svc.SaveTelegram(ctx, svcToken, svcChat); !errors.Is(err, ErrNoSecretKey) {
 		t.Fatalf("err = %v, want ErrNoSecretKey", err)
 	}
-	if rows, _ := st.AlertChannels(ctx); len(rows) != 0 {
+	if rows := channelsOf(t, st); len(rows) != 0 {
 		t.Errorf("stored %v", rows)
 	}
 	v := svc.View()
@@ -160,19 +157,19 @@ func TestSaveTelegramNoKey(t *testing.T) {
 func TestSaveTelegramFieldErrors(t *testing.T) {
 	ctx := context.Background()
 	svc, st, _ := newTestService(t, testKey, "")
-	for _, tc := range []struct{ token, chat, field string }{
-		{"abc", svcChat, "token"},
-		{"", svcChat, "token"}, // nothing stored to keep
-		{svcToken, "@chan", "chatId"},
-		{svcToken, "", "chatId"},
-		{svcToken, "12ab", "chatId"},
+	for _, tc := range []struct{ token, chat, field, code string }{
+		{"abc", svcChat, "token", FieldInvalid},
+		{"", svcChat, "token", FieldRequired}, // nothing stored to keep
+		{svcToken, "@chan", "chatId", FieldInvalid},
+		{svcToken, "", "chatId", FieldRequired},
+		{svcToken, "12ab", "chatId", FieldInvalid},
 	} {
 		_, err := svc.SaveTelegram(ctx, tc.token, tc.chat)
-		if fe := fieldOf(t, err); fe.Field != tc.field {
-			t.Errorf("token %q chat %q: field = %q, want %q", tc.token, tc.chat, fe.Field, tc.field)
+		if fe := fieldOf(t, err); fe.Field != tc.field || fe.Code != tc.code {
+			t.Errorf("token %q chat %q: got %s/%s, want %s/%s", tc.token, tc.chat, fe.Field, fe.Code, tc.field, tc.code)
 		}
 	}
-	if rows, _ := st.AlertChannels(ctx); len(rows) != 0 {
+	if rows := channelsOf(t, st); len(rows) != 0 {
 		t.Errorf("stored %v", rows)
 	}
 }
@@ -187,7 +184,7 @@ func TestSaveEmailRecipients(t *testing.T) {
 	if want := "set up · a@x.io, b@x.io, c@x.io"; changes != want {
 		t.Errorf("changes = %q, want %q", changes, want)
 	}
-	rows, _ := st.AlertChannels(ctx)
+	rows := channelsOf(t, st)
 	if got := rows[store.ChannelEmail].Recipients; len(got) != 3 {
 		t.Errorf("stored %v", got)
 	}
@@ -218,6 +215,24 @@ func TestSaveEmailRecipients(t *testing.T) {
 	if v := unset.View(); v.Email.Available || v.Email.Reason == "" {
 		t.Errorf("view = %+v", v.Email)
 	}
+}
+
+func channelsOf(t *testing.T, st *store.Store) map[string]store.AlertChannel {
+	t.Helper()
+	rows, err := st.AlertChannels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+func settingsOf(t *testing.T, st *store.Store) store.AlertSettings {
+	t.Helper()
+	a, err := st.AlertSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }
 
 func errOf(_ string, err error) error { return err }
@@ -300,7 +315,7 @@ func TestSetThresholdsRanges(t *testing.T) {
 			t.Errorf("%+v: got %+v", tc, *fe)
 		}
 	}
-	if got, _ := st.AlertSettings(ctx); got.CPUPercent != 90 || got.SustainedMinutes != 5 {
+	if got := settingsOf(t, st); got.CPUPercent != 90 || got.SustainedMinutes != 5 {
 		t.Errorf("a refused save wrote %+v", got)
 	}
 
@@ -314,7 +329,7 @@ func TestSetThresholdsRanges(t *testing.T) {
 	if v := svc.View(); v.Thresholds.CPUPercent != 80 || v.SustainedMinutes != 10 {
 		t.Errorf("view = %+v", v)
 	}
-	if got, _ := st.AlertSettings(ctx); got.CPUPercent != 80 || got.SustainedMinutes != 10 {
+	if got := settingsOf(t, st); got.CPUPercent != 80 || got.SustainedMinutes != 10 {
 		t.Errorf("stored %+v", got)
 	}
 	if again, err := svc.SetThresholds(ctx, 80, 90, 85, 10); err != nil || again != "" {
@@ -362,8 +377,59 @@ func TestTargetsLeaveOutUnopenableToken(t *testing.T) {
 	if len(targets) != 0 || configured != 1 {
 		t.Errorf("targets = %v configured = %d", targets, configured)
 	}
-	if res, err := other.Test(ctx, ChannelTelegram); err != nil || res.OK || res.Message == "" {
+	if res, err := other.Test(ctx, ChannelTelegram); err != nil || res.OK || res.Message != "The stored bot token cannot be opened. Enter it again." {
 		t.Errorf("test = %+v %v", res, err)
+	}
+
+	// With no key at all the words say to set it.
+	nokey, err := NewService(st, f, nil, discardLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := nokey.Test(ctx, ChannelTelegram); err != nil || res.OK || res.Message != "Set PANEL_SECRET_KEY in panel.env first." {
+		t.Errorf("no key: test = %+v %v", res, err)
+	}
+	if v := nokey.View(); !v.Telegram.Configured || v.Telegram.Available {
+		t.Errorf("no key: view = %+v", v.Telegram)
+	}
+}
+
+// SetEnabled(false) racing a save must never lose the off, and the cache and
+// the store must agree afterwards.
+func TestWritersAreSerialised(t *testing.T) {
+	ctx := context.Background()
+	svc, st, _ := newTestService(t, testKey, "")
+	if _, err := svc.SaveTelegram(ctx, svcToken, svcChat); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 30 {
+		if _, err := svc.SetEnabled(ctx, ChannelTelegram, true); err != nil {
+			t.Fatal(err)
+		}
+		chatA, chatB := fmt.Sprintf("-100123456%04d", i), fmt.Sprintf("-100654321%04d", i)
+		var wg sync.WaitGroup
+		for _, fn := range []func() error{
+			func() error { _, err := svc.SetEnabled(ctx, ChannelTelegram, false); return err },
+			func() error { _, err := svc.SaveTelegram(ctx, "", chatA); return err },
+			func() error { _, err := svc.SaveTelegram(ctx, "", chatB); return err },
+		} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := fn(); err != nil {
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		row := channelsOf(t, st)[store.ChannelTelegram]
+		v := svc.View().Telegram
+		if row.Enabled || v.Enabled {
+			t.Fatalf("round %d: the off was lost: store %v cache %v", i, row.Enabled, v.Enabled)
+		}
+		if v.ChatID != maskChat(row.ChatID) || (row.ChatID != chatA && row.ChatID != chatB) {
+			t.Fatalf("round %d: cache chat %q, store chat %q", i, v.ChatID, row.ChatID)
+		}
 	}
 }
 

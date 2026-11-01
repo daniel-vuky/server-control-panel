@@ -94,14 +94,20 @@ type chanState struct {
 
 // Service holds the channel configuration and the thresholds: it reads both
 // from the store at start, caches them and writes through on a save. The
-// plain Telegram token exists only inside one call. It writes no activity;
-// the API records what Save* and SetThresholds return. Its mutex guards the
-// cache only, never a store or network call.
+// plain Telegram token is never kept: the sealed one is stored, and the hint
+// is derived by opening the seal once at load (there is no hint column). It
+// writes no activity; the API records what Save* and SetThresholds return.
+// writeMu serialises the writers (Save*, SetEnabled, SetThresholds) from their
+// cache read to their cache write, so a save never builds on a stale copy; it
+// is taken by nothing outside the service, and held across store calls. mu
+// guards the cache only, never a store or network call.
 type Service struct {
 	st  *store.Store
 	f   Factory
 	key []byte
 	log *slog.Logger
+
+	writeMu sync.Mutex
 
 	mu         sync.RWMutex
 	chans      map[string]chanState
@@ -227,7 +233,8 @@ func (s *Service) Sustained() time.Duration {
 }
 
 // SaveTelegram stores the bot token (sealed) and the chat id. An empty token
-// keeps the stored one. A new channel starts on. changes is "" when nothing
+// keeps the stored one; a given one is always sealed again and reads "token
+// changed". A new channel starts on. changes is "" when nothing
 // changed (nothing is written), else the reason text for activity; it never
 // holds the token.
 func (s *Service) SaveTelegram(ctx context.Context, token, chatID string) (string, error) {
@@ -235,6 +242,8 @@ func (s *Service) SaveTelegram(ctx context.Context, token, chatID string) (strin
 		return "", ErrNoSecretKey
 	}
 	token, chatID = strings.TrimSpace(token), strings.TrimSpace(chatID)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	cur := s.state(store.ChannelTelegram)
 	switch {
 	case token != "" && !tokenPattern.MatchString(token):
@@ -256,15 +265,11 @@ func (s *Service) SaveTelegram(ctx context.Context, token, chatID string) (strin
 	hint, tokenChanged := cur.hint, false
 	if token != "" {
 		hint = tokenHint(token)
-		// The same token again keeps the stored seal (a new one has a new
-		// nonce), so saving nothing new writes nothing.
-		if old, err := secret.Open(s.key, cur.ch.SealedToken); cur.ch.SealedToken == "" || err != nil || old != token {
-			sealed, err := secret.Seal(s.key, token)
-			if err != nil {
-				return "", errors.New("alerts: seal the bot token failed")
-			}
-			next.SealedToken, tokenChanged = sealed, true
+		sealed, err := secret.Seal(s.key, token)
+		if err != nil {
+			return "", errors.New("alerts: seal the bot token failed")
 		}
+		next.SealedToken, tokenChanged = sealed, true
 	}
 	before, existed, changed, err := s.st.SetAlertChannel(ctx, next)
 	if err != nil {
@@ -325,6 +330,8 @@ func (s *Service) SaveEmail(ctx context.Context, recipients string) (string, err
 	if err != nil {
 		return "", err
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	cur := s.state(store.ChannelEmail)
 	next := store.AlertChannel{Kind: store.ChannelEmail, Enabled: true, Recipients: list}
 	if cur.exists {
@@ -350,6 +357,8 @@ func (s *Service) SetEnabled(ctx context.Context, kind string, on bool) (string,
 	if kind != store.ChannelTelegram && kind != store.ChannelEmail {
 		return "", ErrNotConfigured
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	cur := s.state(kind)
 	if !cur.exists {
 		return "", ErrNotConfigured
@@ -385,6 +394,8 @@ func (s *Service) SetThresholds(ctx context.Context, cpu, ram, disk, sustained i
 	if sustained < 1 || sustained > 60 {
 		return "", &FieldError{Field: "sustainedMinutes", Code: FieldRange, Message: wordsMinutes}
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	before, changed, err := s.st.SetAlertThresholds(ctx, store.AlertSettings{
 		CPUPercent: cpu, RAMPercent: ram, DiskPercent: disk, SustainedMinutes: sustained,
 	})
@@ -470,6 +481,9 @@ func (s *Service) Test(ctx context.Context, kind string) (TestResult, error) {
 	}
 	snd, ok := s.sender(kind, st.ch)
 	if !ok {
+		if kind == store.ChannelTelegram && !s.canSeal() {
+			return TestResult{Message: wordsNoSecretKey}, nil
+		}
 		return TestResult{Message: "The stored bot token cannot be opened. Enter it again."}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, testTimeout)
