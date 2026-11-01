@@ -25,3 +25,9 @@ func devBackupMinFree(getenv func(string) string) (int64, error) {
 	}
 	return n, nil
 }
+
+// devRealAlerts reads PANEL_DEV_REAL_ALERTS: only "1" turns it on. A release
+// build never reads it.
+func devRealAlerts(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("PANEL_DEV_REAL_ALERTS")) == "1"
+}
