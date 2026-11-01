@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ScanJob, ScanResult, ScanRow } from '../../api/types.gen'
+import type { DriveStatus, ScanJob, ScanResult, ScanRow, Workspace } from '../../api/types.gen'
 import { makeDatabase } from '../../test/projects'
 import { renderApp } from '../../test/renderApp'
 
@@ -8,6 +8,8 @@ type Listener = (e: MessageEvent) => void
 
 class StubEventSource {
   static instances: StubEventSource[] = []
+  /** The app shell's live-state stream, to push a state onto. */
+  static live: StubEventSource | null = null
   url: string
   closed = false
   readyState = 0
@@ -15,7 +17,8 @@ class StubEventSource {
   constructor(url: string) {
     this.url = url
     // The app shell's live-state stream is not the scan stream under test.
-    if (url !== '/api/events') StubEventSource.instances.push(this)
+    if (url === '/api/events') StubEventSource.live = this
+    else StubEventSource.instances.push(this)
   }
   addEventListener(type: string, fn: Listener) {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn])
@@ -140,6 +143,9 @@ const scanRoute =
 
 const renderPage = () => renderApp('/onboarding')
 
+/** settled lets the page's workspace read finish, so its update is not left outside the test. */
+const settled = () => act(() => new Promise<void>((r) => setTimeout(r, 0)))
+
 const pathInput = () => screen.getByLabelText('Root folder path')
 
 const startScan = (path = '/srv') => {
@@ -179,6 +185,7 @@ const addButton = () => screen.getByRole('button', { name: /^Add \d+ project/ })
 
 beforeEach(() => {
   StubEventSource.instances = []
+  StubEventSource.live = null
   vi.stubGlobal('EventSource', StubEventSource)
 })
 
@@ -187,8 +194,10 @@ afterEach(() => {
 })
 
 describe('onboarding, step 1', () => {
-  it('renders the card title as the h1 under the brand row, and the two steps', () => {
+  it('renders the card title as the h1 under the brand row, and the two steps', async () => {
+    api(() => undefined)
     renderPage()
+    await settled()
     expect(
       screen.getByRole('heading', { level: 1, name: 'Add project folder' }),
     ).toBeInTheDocument()
@@ -202,8 +211,10 @@ describe('onboarding, step 1', () => {
     expect(screen.getByText('Detects: docker compose')).toBeInTheDocument()
   })
 
-  it('draws the path field and the depth control on the field colour, the selected depth on selected', () => {
+  it('draws the path field and the depth control on the field colour, the selected depth on selected', async () => {
+    api(() => undefined)
     renderPage()
+    await settled()
     expect(pathInput().parentElement).toHaveClass('bg-field')
     const selected = screen.getByText('1 level')
     expect(selected).toHaveClass('peer-checked:bg-selected')
@@ -449,10 +460,10 @@ describe('onboarding, step 2', () => {
     fireEvent.click(checkbox('/srv/broken'))
     fireEvent.click(addButton())
     expect(await screen.findByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument()
-    expect(screen.getByText('2 projects added')).toBeInTheDocument()
+    expect(screen.getByText('Added 2 projects')).toBeInTheDocument()
   })
 
-  it('says 1 project added for one', async () => {
+  it('says Added 1 project for one', async () => {
     await scanToResults(job(), (c) =>
       c.method === 'POST' && c.url === '/api/scans/7/track'
         ? [200, { workspaceId: 1, added: 1 }]
@@ -461,7 +472,7 @@ describe('onboarding, step 2', () => {
     fireEvent.click(checkbox('/srv/broken'))
     fireEvent.click(checkbox('/srv/panel'))
     fireEvent.click(addButton())
-    expect(await screen.findByText('1 project added')).toBeInTheDocument()
+    expect(await screen.findByText('Added 1 project')).toBeInTheDocument()
   })
 
   it('shows a track error and stays on the page', async () => {
@@ -501,12 +512,19 @@ describe('onboarding, step 2', () => {
     expect(w).toHaveClass('whitespace-pre-line')
   })
 
-  it('Rescan posts the same path and depth', async () => {
+  it('Rescan goes back to the Workspace step with the path and depth kept, and starts no scan', async () => {
     await scanToResults(job({ depth: 2 }))
     fireEvent.click(screen.getByRole('button', { name: 'Rescan' }))
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Add project folder' }),
+    ).toBeInTheDocument()
+    expect(pathInput()).toHaveValue('/srv')
+    expect(screen.getByRole('radio', { name: '2 levels' })).toBeChecked()
+    expect(posts('/api/scans')).toHaveLength(1)
+    // Scan repeats it.
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }))
     await waitFor(() => expect(posts('/api/scans')).toHaveLength(2))
     expect(posts('/api/scans')[1].body).toEqual({ path: '/srv', depth: 2 })
-    expect(await screen.findByText(/^Scanning…/)).toBeInTheDocument()
   })
 })
 
@@ -600,5 +618,224 @@ describe('onboarding, hand-off from the rescan page and the dashboard', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Rescan' })).toBeInTheDocument()
     const es = await eventSource()
     expect(es.url).toBe('/api/scans/4/events')
+  })
+})
+
+describe('onboarding, first-run setup', () => {
+  const workspace: Workspace = {
+    id: 1,
+    name: 'srv',
+    path: '/srv',
+    depth: 1,
+    lastScanAt: '',
+    tracked: 3,
+    ignored: 0,
+  }
+  const drive = (over: Partial<DriveStatus> = {}): DriveStatus => ({
+    state: 'not_connected',
+    email: '',
+    folder: null,
+    reason: '',
+    ...over,
+  })
+  const connected = drive({
+    state: 'connected',
+    email: 'ops.backup@gmail.com',
+    folder: { id: 'f1', name: 'server-backups' },
+  })
+  const folders = [
+    { id: 'f1', name: 'server-backups' },
+    { id: 'f2', name: 'archive' },
+  ]
+
+  /** setup is the routes of the first run (or of a page with workspaces) plus the track answer. */
+  const setup =
+    (ws: Workspace[], extra?: Route): Route =>
+    (c) => {
+      if (c.method === 'GET' && c.url === '/api/workspaces') return [200, ws]
+      if (c.method === 'POST' && c.url === '/api/scans/7/track')
+        return [200, { workspaceId: 1, added: 3 }]
+      if (c.method === 'GET' && c.url === '/api/drive/folders') return [200, folders]
+      return scanRoute(job(), extra)(c)
+    }
+
+  /** pushDrive sends a live state with this Drive status on the app's event stream. */
+  async function pushDrive(d: DriveStatus) {
+    await waitFor(() => expect(StubEventSource.live).not.toBeNull())
+    StubEventSource.live?.emit('state', {
+      dockerUp: true,
+      projects: [],
+      backups: [],
+      batch: null,
+      drive: d,
+    })
+  }
+
+  const steps = () => within(screen.getByRole('list', { name: 'Setup steps' }))
+
+  /** firstRunAdd renders the first run, scans /srv and presses Add on the results. */
+  async function firstRunAdd(d?: DriveStatus) {
+    api(setup([]))
+    const r = renderPage()
+    await screen.findByText('· First-time setup')
+    if (d) await pushDrive(d)
+    startScan('/srv')
+    const es = await eventSource()
+    es.emit('end', { state: 'done' })
+    await screen.findByRole('heading', { name: /^Found / })
+    fireEvent.click(addButton())
+    return r
+  }
+
+  const assign = vi.fn()
+  beforeEach(() => {
+    assign.mockReset()
+    vi.stubGlobal('location', { ...window.location, assign })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('the first run has the First-time setup header and four steps', async () => {
+    api(setup([]))
+    renderPage()
+    expect(await screen.findByText('· First-time setup')).toBeInTheDocument()
+    expect(screen.getByText('· First-time setup').parentElement).toHaveTextContent(
+      'Server Control Panel · First-time setup',
+    )
+    for (const label of ['Workspace', 'Scan results', 'Google Drive', 'Done']) {
+      expect(steps().getByText(label)).toBeInTheDocument()
+    }
+  })
+
+  it('with a workspace it is Add a workspace with two steps, and Add toasts and goes to the Dashboard', async () => {
+    api(setup([workspace]))
+    renderPage()
+    startScan('/srv')
+    const es = await eventSource()
+    es.emit('end', { state: 'done' })
+    await screen.findByRole('heading', { name: /^Found / })
+    expect(screen.getByText('· Add a workspace')).toBeInTheDocument()
+    expect(steps().queryByText('Google Drive')).toBeNull()
+    expect(steps().getAllByRole('listitem')).toHaveLength(2)
+    fireEvent.click(addButton())
+    expect(await screen.findByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument()
+    expect(screen.getByText('Added 3 projects')).toBeInTheDocument()
+  })
+
+  it('first run Add with Drive connected and a folder goes to Done, the Drive step done', async () => {
+    const { router } = await firstRunAdd(connected)
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Added 3 projects' }),
+    ).toBeInTheDocument()
+    expect(router.state.location.search).toBe('?step=done&added=3')
+    expect(screen.getByText(/Schedule backups in each project/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to Dashboard' })).toHaveAttribute('href', '/')
+    // Steps 1 to 3 are done; Done is the current one. No toast on first run.
+    expect(steps().getAllByText('✓')).toHaveLength(3)
+    expect(screen.queryByTestId('toast-success')).toBeNull()
+  })
+
+  it('first run Add with Drive not connected goes to the Drive step; Connect posts the return to it', async () => {
+    const { router } = await firstRunAdd(drive())
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Connect Google Drive' }),
+    ).toBeInTheDocument()
+    expect(router.state.location.search).toBe('?step=drive&added=3')
+    expect(steps().getAllByText('✓')).toHaveLength(2)
+    api((c) =>
+      c.method === 'POST' && c.url === '/api/drive/connect'
+        ? [200, { url: 'https://accounts.google.com/o/oauth2/auth?x=1' }]
+        : undefined,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Google Drive' }))
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/auth?x=1'),
+    )
+    expect(posts('/api/drive/connect')[0].body).toEqual({
+      returnTo: '/onboarding?step=drive&added=3',
+    })
+  })
+
+  it('a Drive that is not set up shows the reason and Later only', async () => {
+    await firstRunAdd(drive({ state: 'not_configured', reason: 'GOOGLE_CLIENT_ID is not set.' }))
+    expect(await screen.findByText('GOOGLE_CLIENT_ID is not set.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'How to set up Google Drive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Later' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Connect Google Drive' })).toBeNull()
+  })
+
+  it('connected without a folder shows the folder select; Continue waits for a folder', async () => {
+    const withFolder = connected
+    await firstRunAdd(drive({ state: 'connected', email: 'ops.backup@gmail.com' }))
+    const select = await screen.findByLabelText('Destination folder')
+    expect(screen.getByText('ops.backup@gmail.com')).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: 'My Drive / archive' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '+ Create new folder…' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
+    api((c) =>
+      c.method === 'POST' && c.url === '/api/drive/folder' ? [200, withFolder] : undefined,
+    )
+    fireEvent.change(select, { target: { value: 'f1' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled())
+    expect(posts('/api/drive/folder')[0].body).toEqual({ id: 'f1' })
+  })
+
+  it('Later goes to Done and keeps it in the URL', async () => {
+    const { router } = await firstRunAdd(drive())
+    fireEvent.click(await screen.findByRole('button', { name: 'Later' }))
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Added 3 projects' }),
+    ).toBeInTheDocument()
+    expect(router.state.location.search).toBe('?step=done&added=3')
+  })
+
+  it('Continue goes to Done once a folder is chosen', async () => {
+    const { router } = await firstRunAdd(drive())
+    await screen.findByRole('heading', { level: 1, name: 'Connect Google Drive' })
+    await pushDrive(connected)
+    const cont = await screen.findByRole('button', { name: 'Continue' })
+    await waitFor(() => expect(cont).toBeEnabled())
+    fireEvent.click(cont)
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Added 3 projects' }),
+    ).toBeInTheDocument()
+    expect(router.state.location.search).toBe('?step=done&added=3')
+  })
+
+  it('returns to the Drive step from Google, with steps 1 and 2 done, even with workspaces', async () => {
+    api(setup([workspace]))
+    renderApp('/onboarding?step=drive&added=3')
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Connect Google Drive' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('· First-time setup')).toBeInTheDocument()
+    expect(steps().getAllByText('✓')).toHaveLength(2)
+    await pushDrive(connected)
+    expect(await screen.findByText('ops.backup@gmail.com')).toBeInTheDocument()
+  })
+
+  it('a bare ?step=done&added=N shows Done', async () => {
+    api(setup([workspace]))
+    renderApp('/onboarding?step=done&added=1')
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Added 1 project' }),
+    ).toBeInTheDocument()
+  })
+
+  it.each([
+    '?step=drive',
+    '?step=drive&added=0',
+    '?step=drive&added=-2',
+    '?step=drive&added=abc',
+    '?step=drive&added=2.5',
+    '?step=elsewhere&added=3',
+    '?added=3',
+  ])('falls back to the form for %s', async (query) => {
+    api(setup([workspace]))
+    renderApp(`/onboarding${query}`)
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Add project folder' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('· Add a workspace')).toBeInTheDocument()
   })
 })

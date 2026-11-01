@@ -1,11 +1,16 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { ApiError, isFieldError } from '../../api/client'
 import { getScan, isScanBusy, startScan, trackScan, watchScan } from '../../api/scans'
 import type { ScanJob, ScanProgress, ScanResult, TrackItem } from '../../api/types.gen'
-import { LiveDim } from '../../app/live'
+import { listWorkspaces } from '../../api/workspaces'
+import { LiveDim, useLive } from '../../app/live'
 import { BrandRow } from '../../components/PageHeader'
 import { useToast } from '../../components/Toast'
+import { plural } from '../../lib/plural'
+import { useRead } from '../../lib/useRead'
+import DoneStep from './DoneStep'
+import DriveStep from './DriveStep'
 import ScanFailed from './ScanFailed'
 import ScanProgressView from './ScanProgressView'
 import ScanResults, { NothingFound } from './ScanResults'
@@ -24,7 +29,20 @@ type Phase =
   | { kind: 'empty'; job: DoneJob }
   | { kind: 'failed'; path: string; depth: number; error: string }
 
-const STEPS = ['Workspace', 'Scan results'] as const
+/** The steps of adding a workspace, and the four of the first run (design 03). */
+const ADD_STEPS = ['Workspace', 'Scan results'] as const
+const FIRST_RUN_STEPS = ['Workspace', 'Scan results', 'Google Drive', 'Done'] as const
+
+/** SetupStep is the step the URL names: ?step=drive|done&added=N with N a positive integer. */
+type SetupStep = { step: 'drive' | 'done'; added: number }
+
+/** setupStep reads the URL's step; a missing or bad one gives null, so the form shows. */
+function setupStep(params: URLSearchParams): SetupStep | null {
+  const step = params.get('step')
+  const added = params.get('added') ?? ''
+  if ((step !== 'drive' && step !== 'done') || !/^[1-9]\d{0,8}$/.test(added)) return null
+  return { step, added: Number(added) }
+}
 
 const NOT_FINISHED = 'The scan did not finish.'
 
@@ -45,10 +63,23 @@ const emptyProgress: ScanProgress = {
   workspaces: 0,
 }
 
-/** OnboardingPage is /onboarding: design 03 steps 1–2. */
+/**
+ * OnboardingPage is /onboarding: design 03. The first run (no workspace yet)
+ * has four steps, Workspace, Scan results, Google Drive and Done; adding a
+ * workspace from Settings has the first two. The URL decides first: ?step=
+ * names the Drive and Done steps and means the first run whatever the
+ * workspace count (after Add a workspace exists, so a return from Google or a
+ * reload of Done cannot ask the list). Only a bare /onboarding reads the list.
+ */
 export default function OnboardingPage() {
   const navigate = useNavigate()
   const toast = useToast()
+  const { drive } = useLive()
+  const [params, setParams] = useSearchParams()
+  const urlStep = setupStep(params)
+  // Until the list answers, and when it fails, the page is the two-step Add a workspace.
+  const workspaces = useRead(listWorkspaces, 'workspaces').data
+  const firstRun = urlStep !== null || workspaces?.length === 0
   // The Dashboard sends the id of a first scan that already runs.
   const location = useLocation()
   const [handedOff] = useState(() => handedOffScan(location.state))
@@ -183,7 +214,15 @@ export default function OnboardingPage() {
     setTrackError('')
     try {
       const res = await trackScan(job.id, { projects })
-      toast.show(res.added === 1 ? '1 project added' : `${res.added} projects added`)
+      if (firstRun && res.added > 0) {
+        // The Drive step is skipped when Drive is ready: connected with a folder.
+        const ready = drive?.state === 'connected' && drive.folder !== null
+        setParams({ step: ready ? 'done' : 'drive', added: String(res.added) }, { replace: true })
+        setPhase({ kind: 'form' })
+        setAdding(false)
+        return
+      }
+      toast.show(`Added ${plural(res.added, 'project', 'projects')}`)
       navigate('/')
     } catch (err) {
       setTrackError(message(err))
@@ -191,10 +230,38 @@ export default function OnboardingPage() {
     }
   }
 
-  const step = phase.kind === 'results' || phase.kind === 'empty' ? 1 : 0
+  // Rescan goes back to the Workspace step, path and depth kept; Scan repeats it.
+  const rescan = (job: DoneJob) => {
+    setPath(job.path)
+    setDepth(job.depth)
+    setErrors({})
+    setFormError('')
+    setTrackError('')
+    setPhase({ kind: 'form' })
+    setFocusPath((n) => n + 1)
+  }
+
+  const step = urlStep
+    ? urlStep.step === 'drive'
+      ? 2
+      : 3
+    : phase.kind === 'results' || phase.kind === 'empty'
+      ? 1
+      : 0
 
   let body: ReactNode
-  if (phase.kind === 'results') {
+  if (urlStep?.step === 'drive') {
+    body = (
+      <DriveStep
+        added={urlStep.added}
+        onFinish={() =>
+          setParams({ step: 'done', added: String(urlStep.added) }, { replace: true })
+        }
+      />
+    )
+  } else if (urlStep?.step === 'done') {
+    body = <DoneStep added={urlStep.added} />
+  } else if (phase.kind === 'results') {
     const job = phase.job
     body = (
       <ScanResults
@@ -202,7 +269,7 @@ export default function OnboardingPage() {
         job={job}
         busy={starting || adding}
         error={trackError}
-        onRescan={() => scan(job.path, job.depth)}
+        onRescan={() => rescan(job)}
         onAdd={(projects) => add(job, projects)}
       />
     )
@@ -261,18 +328,18 @@ export default function OnboardingPage() {
 
   return (
     <div className="flex flex-col items-center gap-8">
-      <BrandRow label="Add a workspace">
-        <Stepper current={step} />
+      <BrandRow label={firstRun ? 'First-time setup' : 'Add a workspace'}>
+        <Stepper steps={firstRun ? FIRST_RUN_STEPS : ADD_STEPS} current={step} />
       </BrandRow>
       <LiveDim className="flex w-full flex-col items-center gap-8">{body}</LiveDim>
     </div>
   )
 }
 
-function Stepper({ current }: { current: number }) {
+function Stepper({ steps, current }: { steps: readonly string[]; current: number }) {
   return (
     <ol aria-label="Setup steps" className="flex flex-wrap items-center gap-2">
-      {STEPS.map((label, i) => {
+      {steps.map((label, i) => {
         const done = i < current
         const cur = i === current
         return (
@@ -296,7 +363,7 @@ function Stepper({ current }: { current: number }) {
             <span className={`text-[13px] ${cur ? 'font-semibold text-white' : 'text-muted'}`}>
               {label}
             </span>
-            {i < STEPS.length - 1 && (
+            {i < steps.length - 1 && (
               <span aria-hidden="true" className="h-px w-7 bg-border-strong" />
             )}
           </li>
