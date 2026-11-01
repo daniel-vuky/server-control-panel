@@ -408,12 +408,6 @@ func TestProbeCloudflared(t *testing.T) {
 	})
 }
 
-func TestThresholds(t *testing.T) {
-	if (New(Options{})).Thresholds() != (Thresholds{CPUPercent: 90, RAMPercent: 90, DiskPercent: 85}) {
-		t.Fatal("Thresholds are not 90, 90, 85")
-	}
-}
-
 func TestMonitorLoadAndBootTime(t *testing.T) {
 	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	m := New(Options{Host: testHost(), Now: func() time.Time { return now }})

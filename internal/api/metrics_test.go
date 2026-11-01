@@ -83,8 +83,6 @@ func (f *fakeMonitor) Prune(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeMonitor) Thresholds() metrics.Thresholds { return metrics.DefaultThresholds }
-
 // set runs fn with the fake locked, to change its answers.
 func (f *fakeMonitor) set(fn func(f *fakeMonitor)) {
 	f.mu.Lock()

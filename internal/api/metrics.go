@@ -90,7 +90,7 @@ func (s *server) historyStart(ctx context.Context, projectID int64) (*string, er
 }
 
 // serverInfo is GET /api/server: the System info and System services cards,
-// the thresholds, the sampling interval, the retention, the server zone and
+// the thresholds (as saved in Settings → Alerts), the sampling interval, the retention, the server zone and
 // the load averages and boot time, read now.
 func (s *server) serverInfo(w http.ResponseWriter, r *http.Request) {
 	sys := s.Metrics.System(r.Context())
@@ -99,7 +99,7 @@ func (s *server) serverInfo(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	th := s.Metrics.Thresholds()
+	th := s.Alerts.Thresholds()
 	info := ServerInfo{
 		Available: sys.Available,
 		Hostname:  sys.Hostname, OS: sys.OS, Kernel: sys.Kernel, Cores: sys.Cores, RAMBytes: sys.RAMBytes,

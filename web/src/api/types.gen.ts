@@ -5,6 +5,14 @@
 
 
 //////////
+// source: activity.go
+
+
+//////////
+// source: alerts.go
+
+
+//////////
 // source: backups.go
 
 
@@ -980,4 +988,124 @@ export interface LatestBackup {
   database: string;
   state: string;
   at: string;
+}
+/**
+ * AlertChannel is one alert channel of GET /api/alerts. Available is false,
+ * with Reason the words to show, when the channel cannot be set up on this
+ * server (email without SMTP_HOST and SMTP_FROM, Telegram without
+ * PANEL_SECRET_KEY). The bot token is never sent: TokenHint is "••••••:" and
+ * its first 3 characters after the colon, and ChatID keeps only its last 4
+ * digits ("-100••••4821"). Recipients are the email addresses; both are ""
+ * and empty for a channel that is not set up.
+ */
+export interface AlertChannel {
+  available: boolean;
+  configured: boolean;
+  enabled: boolean;
+  tokenHint: string;
+  chatId: string;
+  recipients: string[];
+  reason: string;
+}
+/**
+ * AlertThresholds are the server-wide alert thresholds in percent (1 to 100)
+ * and how long a resource must stay over one (1 to 60 minutes); also the body
+ * of POST /api/alerts/thresholds.
+ */
+export interface AlertThresholds {
+  cpuPercent: number /* int */;
+  ramPercent: number /* int */;
+  diskPercent: number /* int */;
+  sustainedMinutes: number /* int */;
+}
+/**
+ * AlertsConfig is the body of GET /api/alerts and of every alert settings
+ * save. CanSeal is false without PANEL_SECRET_KEY (Telegram cannot be set
+ * up).
+ */
+export interface AlertsConfig {
+  telegram: AlertChannel;
+  email: AlertChannel;
+  thresholds: AlertThresholds;
+  canSeal: boolean;
+}
+/**
+ * TelegramRequest is the body of POST /api/alerts/telegram: an empty Token
+ * keeps the stored one; ChatID is the numeric chat id.
+ */
+export interface TelegramRequest {
+  token: string;
+  chatId: string;
+}
+/**
+ * EmailRequest is the body of POST /api/alerts/email: 1 to 10 addresses,
+ * separated by commas or new lines.
+ */
+export interface EmailRequest {
+  recipients: string;
+}
+/**
+ * AlertEnabledRequest is the body of POST /api/alerts/{channel}/enabled.
+ */
+export interface AlertEnabledRequest {
+  enabled: boolean;
+}
+/**
+ * AlertTestResult is the answer to POST /api/alerts/{channel}/test: OK with
+ * "Delivered", or the words of the failure.
+ */
+export interface AlertTestResult {
+  ok: boolean;
+  message: string;
+}
+/**
+ * AlertRefused is the 409 body of an alert settings change the server cannot
+ * make: Error is no_secret_key (Telegram without PANEL_SECRET_KEY) or
+ * not_configured (the channel is not set up, or email has no SMTP server),
+ * Message the words to show.
+ */
+export interface AlertRefused {
+  error: string;
+  message: string;
+}
+/**
+ * AlertOutboxEntry is one message the dev build's fake senders delivered
+ * (GET /api/alerts/dev-outbox, dev builds only): At is RFC 3339 in the
+ * server zone, Channel telegram or email, Text the whole message.
+ */
+export interface AlertOutboxEntry {
+  at: string;
+  channel: string;
+  text: string;
+}
+/**
+ * ActivityEntry is one record of GET /api/activity. At and FinishedAt are RFC
+ * 3339 in the server zone (FinishedAt null while it runs); ActorKind is
+ * person, schedule or system; Kind is alert (alert.*), backup (backup.run,
+ * backup.all) or action (everything else); ProjectID is null when the record
+ * names no project, and ProjectTracked says the project is still tracked, so
+ * its name can link. Channels are the channels an alert went to.
+ */
+export interface ActivityEntry {
+  id: number /* int64 */;
+  at: string;
+  finishedAt: string | null;
+  actor: string;
+  actorKind: string;
+  action: string;
+  kind: string;
+  projectId: number | null;
+  projectTracked: boolean;
+  target: string;
+  result: string;
+  reason: string;
+  channels: string[];
+}
+/**
+ * ActivityPage is the body of GET /api/activity: a page of records, newest
+ * first, and whether older ones match.
+ */
+export interface ActivityPage {
+  entries: ActivityEntry[];
+  more: boolean;
 }

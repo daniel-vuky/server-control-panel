@@ -845,3 +845,112 @@ type LatestBackup struct {
 	State       string `json:"state"`
 	At          string `json:"at"`
 }
+
+// AlertChannel is one alert channel of GET /api/alerts. Available is false,
+// with Reason the words to show, when the channel cannot be set up on this
+// server (email without SMTP_HOST and SMTP_FROM, Telegram without
+// PANEL_SECRET_KEY). The bot token is never sent: TokenHint is "••••••:" and
+// its first 3 characters after the colon, and ChatID keeps only its last 4
+// digits ("-100••••4821"). Recipients are the email addresses; both are ""
+// and empty for a channel that is not set up.
+type AlertChannel struct {
+	Available  bool     `json:"available"`
+	Configured bool     `json:"configured"`
+	Enabled    bool     `json:"enabled"`
+	TokenHint  string   `json:"tokenHint"`
+	ChatID     string   `json:"chatId"`
+	Recipients []string `json:"recipients"`
+	Reason     string   `json:"reason"`
+}
+
+// AlertThresholds are the server-wide alert thresholds in percent (1 to 100)
+// and how long a resource must stay over one (1 to 60 minutes); also the body
+// of POST /api/alerts/thresholds.
+type AlertThresholds struct {
+	CPUPercent       int `json:"cpuPercent"`
+	RAMPercent       int `json:"ramPercent"`
+	DiskPercent      int `json:"diskPercent"`
+	SustainedMinutes int `json:"sustainedMinutes"`
+}
+
+// AlertsConfig is the body of GET /api/alerts and of every alert settings
+// save. CanSeal is false without PANEL_SECRET_KEY (Telegram cannot be set
+// up).
+type AlertsConfig struct {
+	Telegram   AlertChannel    `json:"telegram"`
+	Email      AlertChannel    `json:"email"`
+	Thresholds AlertThresholds `json:"thresholds"`
+	CanSeal    bool            `json:"canSeal"`
+}
+
+// TelegramRequest is the body of POST /api/alerts/telegram: an empty Token
+// keeps the stored one; ChatID is the numeric chat id.
+type TelegramRequest struct {
+	Token  string `json:"token"`
+	ChatID string `json:"chatId"`
+}
+
+// EmailRequest is the body of POST /api/alerts/email: 1 to 10 addresses,
+// separated by commas or new lines.
+type EmailRequest struct {
+	Recipients string `json:"recipients"`
+}
+
+// AlertEnabledRequest is the body of POST /api/alerts/{channel}/enabled.
+type AlertEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// AlertTestResult is the answer to POST /api/alerts/{channel}/test: OK with
+// "Delivered", or the words of the failure.
+type AlertTestResult struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
+// AlertRefused is the 409 body of an alert settings change the server cannot
+// make: Error is no_secret_key (Telegram without PANEL_SECRET_KEY) or
+// not_configured (the channel is not set up, or email has no SMTP server),
+// Message the words to show.
+type AlertRefused struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+// AlertOutboxEntry is one message the dev build's fake senders delivered
+// (GET /api/alerts/dev-outbox, dev builds only): At is RFC 3339 in the
+// server zone, Channel telegram or email, Text the whole message.
+type AlertOutboxEntry struct {
+	At      string `json:"at"`
+	Channel string `json:"channel"`
+	Text    string `json:"text"`
+}
+
+// ActivityEntry is one record of GET /api/activity. At and FinishedAt are RFC
+// 3339 in the server zone (FinishedAt null while it runs); ActorKind is
+// person, schedule or system; Kind is alert (alert.*), backup (backup.run,
+// backup.all) or action (everything else); ProjectID is null when the record
+// names no project, and ProjectTracked says the project is still tracked, so
+// its name can link. Channels are the channels an alert went to.
+type ActivityEntry struct {
+	ID             int64    `json:"id"`
+	At             string   `json:"at"`
+	FinishedAt     *string  `json:"finishedAt" tstype:"string | null,required"`
+	Actor          string   `json:"actor"`
+	ActorKind      string   `json:"actorKind"`
+	Action         string   `json:"action"`
+	Kind           string   `json:"kind"`
+	ProjectID      *int64   `json:"projectId" tstype:"number | null,required"`
+	ProjectTracked bool     `json:"projectTracked"`
+	Target         string   `json:"target"`
+	Result         string   `json:"result"`
+	Reason         string   `json:"reason"`
+	Channels       []string `json:"channels"`
+}
+
+// ActivityPage is the body of GET /api/activity: a page of records, newest
+// first, and whether older ones match.
+type ActivityPage struct {
+	Entries []ActivityEntry `json:"entries"`
+	More    bool            `json:"more"`
+}

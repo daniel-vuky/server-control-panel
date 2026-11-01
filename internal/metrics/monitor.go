@@ -187,9 +187,6 @@ func (m *Monitor) Hostname() (string, bool) {
 	return m.info.Name, true
 }
 
-// Thresholds are the server's alert lines.
-func (m *Monitor) Thresholds() Thresholds { return DefaultThresholds }
-
 // Disk returns the latest disk usage per tracked, present project; a project
 // never read is absent.
 func (m *Monitor) Disk() map[int64]DiskUsage {

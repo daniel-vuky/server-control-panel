@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/alerts"
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/backup"
 	"github.com/daniel-vuky/server-control-panel/internal/control"
@@ -36,6 +37,7 @@ type Deps struct {
 	Drive   *drive.Service  // the Google Drive connection
 	Backups *backup.Manager // queues and runs the backups
 	Metrics Monitor         // the server metrics (*metrics.Monitor)
+	Alerts  *alerts.Service // the alert channels and thresholds
 
 	// Zone is the server zone schedule times, next runs and the backup page's
 	// days are read in (UTC when nil); Now is the clock (time.Now when nil).
@@ -53,7 +55,6 @@ type Monitor interface {
 	Disks() (disks []metrics.Disk, fallback bool)
 	System(ctx context.Context) metrics.System
 	Prune(ctx context.Context) error
-	Thresholds() metrics.Thresholds
 	Load() (one, five, fifteen float64, ok bool)
 	BootTime() (time.Time, bool)
 }
@@ -87,6 +88,7 @@ func NewRouter(d Deps) http.Handler {
 		{"Drive", d.Drive == nil},
 		{"Backups", d.Backups == nil},
 		{"Metrics", d.Metrics == nil},
+		{"Alerts", d.Alerts == nil},
 	} {
 		if dep.nil {
 			panic("api.NewRouter: Deps." + dep.name + " is nil")
@@ -153,8 +155,19 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/drive/folder", protect(requireJSON(http.HandlerFunc(s.driveFolder))))
 	mux.Handle("POST /api/drive/test", protect(requireJSON(http.HandlerFunc(s.driveTest))))
 	mux.Handle("POST /api/drive/disconnect", protect(requireJSON(http.HandlerFunc(s.driveDisconnect))))
-	// The fake Drive's consent page, in a dev build only.
+	// The literal telegram, email and thresholds segments are their own
+	// routes; {channel} is telegram or email, anything else a 404.
+	mux.Handle("GET /api/alerts", protect(http.HandlerFunc(s.alertSettings)))
+	mux.Handle("POST /api/alerts/telegram", protect(requireJSON(http.HandlerFunc(s.saveTelegram))))
+	mux.Handle("POST /api/alerts/email", protect(requireJSON(http.HandlerFunc(s.saveEmail))))
+	mux.Handle("POST /api/alerts/thresholds", protect(requireJSON(http.HandlerFunc(s.saveAlertThresholds))))
+	mux.Handle("POST /api/alerts/{channel}/enabled", protect(requireJSON(http.HandlerFunc(s.setAlertEnabled))))
+	mux.Handle("POST /api/alerts/{channel}/test", protect(requireJSON(http.HandlerFunc(s.testAlertChannel))))
+	mux.Handle("GET /api/activity", protect(http.HandlerFunc(s.listActivity)))
+	// The fake Drive's consent page and the alerts' dev outbox, in a dev
+	// build only.
 	registerDevRoutes(mux, s, protect)
+	registerAlertsDevRoutes(mux, s, protect)
 	mux.Handle("/api/", protect(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})))
