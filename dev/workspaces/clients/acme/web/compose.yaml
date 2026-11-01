@@ -1,6 +1,0 @@
-name: scp-fixture-acme-web
-
-services:
-  web:
-    image: busybox
-    command: ["sleep", "infinity"]
