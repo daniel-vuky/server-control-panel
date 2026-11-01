@@ -109,6 +109,34 @@ describe('useRead', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
+  it('is pending from a read until its answer, success or failure', async () => {
+    const first = deferred<string>()
+    const second = deferred<string>()
+    const fetcher = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const { result } = renderHook(() => useRead(fetcher, 'k'))
+    expect(result.current.pending).toBe(true)
+    await act(async () => first.reject(new Error('down')))
+    expect(result.current.pending).toBe(false)
+    expect(result.current.error).toBe('down')
+
+    act(() => result.current.refresh())
+    expect(result.current.pending).toBe(true)
+    expect(result.current.error).toBe('down')
+    await act(async () => second.resolve('one'))
+    expect(result.current.pending).toBe(false)
+    expect(result.current.data).toBe('one')
+  })
+
+  it('is not pending with a null key', () => {
+    const { result } = renderHook(() =>
+      useRead(
+        vi.fn(async () => 'x'),
+        null,
+      ),
+    )
+    expect(result.current.pending).toBe(false)
+  })
+
   it('reads nothing with a null key, and refresh does nothing then', () => {
     const fetcher = vi.fn(async () => 'x')
     const { result } = renderHook(() => useRead(fetcher, null))

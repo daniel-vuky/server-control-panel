@@ -87,7 +87,8 @@ export function useAllBackups(filters: Filters, changed: string, ready: boolean)
       },
       (err: unknown) => {
         if (ctl.signal.aborted) return
-        setState((prev) => ({ ...prev, loaded: true, error: message(err) }))
+        // loaded stays as it was: it means a page was read under these filters.
+        setState((prev) => ({ ...prev, error: message(err) }))
       },
     )
   }, [project, result, from, to])
@@ -286,19 +287,22 @@ export default function BackupsTable({ all: h, flow, projects }: TableProps) {
     projects.find((p) => p.id === b.projectId)?.databases.find((d) => d.key === b.database.key)
       ?.schedule?.keep ?? null
 
-  if (h.error !== '' && h.rows.length === 0) {
-    return (
-      <LoadError title="Could not load the backups." message={h.error} onRetry={h.readNewest} />
-    )
-  }
   if (!h.loaded) {
+    if (h.error !== '') {
+      return (
+        <LoadError title="Could not load the backups." message={h.error} onRetry={h.readNewest} />
+      )
+    }
     return <SkeletonCard />
   }
   if (h.rows.length === 0) {
+    // Read, and empty: a later failed re-read keeps the words, dimmed under the banner.
     return (
-      <p className="m-0 rounded-[10px] border border-border bg-surface px-4 py-5 text-[13px] text-muted">
-        No backups match these filters.
-      </p>
+      <Stale error={h.error} onRetry={h.readNewest} title="Could not load the backups.">
+        <p className="m-0 rounded-[10px] border border-border bg-surface px-4 py-5 text-[13px] text-muted">
+          No backups match these filters.
+        </p>
+      </Stale>
     )
   }
   return (

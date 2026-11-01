@@ -18,4 +18,18 @@ describe('LoadError', () => {
     fireEvent.click(retry)
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
+
+  it('disables Retry and reads Retrying… while busy', () => {
+    const onRetry = vi.fn()
+    const { rerender } = render(
+      <LoadError title="Could not load backups." message="Down." onRetry={onRetry} busy />,
+    )
+    const retry = screen.getByRole('button', { name: 'Retrying…' })
+    expect(retry).toBeDisabled()
+    expect(retry).toHaveAttribute('aria-busy', 'true')
+    fireEvent.click(retry)
+    expect(onRetry).not.toHaveBeenCalled()
+    rerender(<LoadError title="Could not load backups." message="Down." onRetry={onRetry} />)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
+  })
 })

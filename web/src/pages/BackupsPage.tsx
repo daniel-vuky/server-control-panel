@@ -9,6 +9,7 @@ import { BackupSteps } from '../components/BackupProgress'
 import CloudUploadIcon from '../components/CloudUploadIcon'
 import EmptyState, { EmptyStateButton } from '../components/EmptyState'
 import PageHeader from '../components/PageHeader'
+import Stale from '../components/Stale'
 import { DRIVE_NOT_SET_UP, waitingLine } from '../lib/backup'
 import { backupChanges } from '../lib/backupChanges'
 import { formatClock } from '../lib/time'
@@ -101,8 +102,8 @@ export default function BackupsPage() {
     setParams(next, { replace: true })
   }
 
-  const empty =
-    table.loaded && table.error === '' && table.rows.length === 0 && !isFiltered(filters)
+  // No backup at all (a later failed re-read keeps it, dimmed under the banner).
+  const empty = table.loaded && table.rows.length === 0 && !isFiltered(filters)
 
   return (
     <div className="flex flex-col gap-5">
@@ -138,7 +139,9 @@ export default function BackupsPage() {
         ))}
 
         {empty ? (
-          <NoBackups all={all} />
+          <Stale error={table.error} onRetry={table.readNewest} title="Could not load the backups.">
+            <NoBackups all={all} />
+          </Stale>
         ) : (
           <>
             <BackupFilters

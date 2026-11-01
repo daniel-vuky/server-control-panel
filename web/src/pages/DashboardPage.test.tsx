@@ -348,6 +348,27 @@ describe('DashboardPage', () => {
     expect(gets(fetchStub, '/api/projects')).toHaveLength(2)
   })
 
+  it('shows Retrying… on a disabled Retry until the retry answers', async () => {
+    let answer: (r: Response) => void = () => {}
+    let n = 0
+    route({
+      'GET /api/projects': () =>
+        n++ === 0
+          ? json(500, { error: 'docker is down' })
+          : new Promise<Response>((resolve) => {
+              answer = resolve
+            }),
+    })
+    renderPage()
+    const alert = await screen.findByRole('alert')
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(within(alert).getByRole('button', { name: 'Retrying…' })).toBeDisabled()
+
+    await act(async () => answer(json(500, { error: 'still down' })))
+    expect(within(screen.getByRole('alert')).getByRole('button', { name: 'Retry' })).toBeEnabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('still down')
+  })
+
   it('treats a non-JSON 2xx as an error', async () => {
     vi.stubGlobal(
       'fetch',
@@ -1305,7 +1326,7 @@ describe('DashboardPage', () => {
       fireEvent.click(within(blog).getByRole('button', { name: 'More actions for blog' }))
       const item = screen.getByRole('menuitem', { name: 'Back up now' })
       expect(item).toHaveAttribute('aria-disabled', 'true')
-      expect(item).toHaveAttribute('title', 'No databases detected in this project.')
+      expect(item).toHaveAttribute('title', 'No database detected')
       fireEvent.click(item)
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(

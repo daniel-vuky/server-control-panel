@@ -792,6 +792,14 @@ describe('onboarding, first-run setup', () => {
     expect(screen.queryByText('· Add a workspace')).toBeNull()
     expect(screen.queryByText('· First-time setup')).toBeNull()
     expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull()
+    // The shared Skeleton holds both places: inline in the brand line, a block for the steps.
+    const brand = screen.getAllByText('Server Control Panel').find((el) => el.closest('header'))
+      ?.parentElement as HTMLElement
+    const label = brand.querySelector('.animate-scp-pulse') as HTMLElement
+    expect(label.tagName).toBe('SPAN')
+    expect(label).toHaveClass('inline-block', 'h-3', 'w-28', 'align-middle')
+    const steps = brand.closest('header')?.querySelector('div.animate-scp-pulse')
+    expect(steps).toHaveClass('h-6', 'w-56')
   })
 
   it('a failed workspace read falls back to Add a workspace with two steps', async () => {
@@ -804,7 +812,9 @@ describe('onboarding, first-run setup', () => {
   it('the Drive step shows a skeleton while the live Drive state is unknown; Continue is disabled', async () => {
     api(setup([workspace]))
     renderApp('/onboarding?step=drive&added=3')
-    expect(await screen.findByRole('status', { name: 'Loading Google Drive' })).toBeInTheDocument()
+    const loading = await screen.findByRole('status', { name: 'Loading Google Drive' })
+    expect(loading).toHaveAttribute('aria-busy', 'true')
+    expect(loading.querySelectorAll('.animate-scp-pulse')).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Later' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Connect Google Drive' })).toBeNull()

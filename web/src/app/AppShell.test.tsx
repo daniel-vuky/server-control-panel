@@ -183,6 +183,54 @@ describe('phone menu', () => {
     await act(async () => {})
   })
 
+  it('reads /api/me once: opening the drawer shows the same user without a new read', async () => {
+    stub([])
+    const base = vi.mocked(fetch).getMockImplementation()
+    vi.mocked(fetch).mockImplementation(async (url, init) =>
+      url === '/api/me'
+        ? new Response('{"email":"admin@company.vn"}', { status: 200 })
+        : (base as typeof fetch)(url, init),
+    )
+    renderApp('/')
+    await within(nav()).findByText('admin@company.vn')
+    fireEvent.click(opener())
+    const drawer = screen.getByRole('dialog', { name: 'Menu' })
+    expect(within(drawer).getByText('admin@company.vn')).toBeInTheDocument()
+    fireEvent.keyDown(drawer, { key: 'Escape' })
+    fireEvent.click(opener())
+    await act(async () => {})
+    expect(vi.mocked(fetch).mock.calls.filter((c) => c[0] === '/api/me')).toHaveLength(1)
+  })
+
+  it('closes when the window is widened to 768 px or more', async () => {
+    const listeners = new Set<() => void>()
+    let wide = false
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        get matches() {
+          return query === '(min-width: 768px)' && wide
+        },
+        media: query,
+        addEventListener: (_: string, fn: () => void) => {
+          if (query === '(min-width: 768px)') listeners.add(fn)
+        },
+        removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+      })),
+    )
+    stub([])
+    renderApp('/')
+    fireEvent.click(opener())
+    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+    act(() => {
+      wide = true
+      for (const fn of listeners) fn()
+    })
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).toBeNull()
+    expect(listeners.size).toBe(0)
+    await act(async () => {})
+  })
+
   it('closes when the location changes by other means', async () => {
     stub([])
     const { router } = renderApp('/')

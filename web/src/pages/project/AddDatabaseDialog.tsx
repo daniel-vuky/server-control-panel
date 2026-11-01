@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useId, useRef, useState } from 'react'
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { backupRefusal } from '../../api/backups'
 import { ApiError, isFieldError } from '../../api/client'
 import { addDatabase } from '../../api/databases'
@@ -32,6 +32,15 @@ const INPUT =
 const message = (err: unknown) =>
   err instanceof Error && err.message ? err.message : 'Something went wrong.'
 
+/** timedOut is a request that the time limit (or an abort) ended before any answer. */
+const timedOut = (err: unknown) => {
+  const name = (err as { name?: unknown } | null)?.name
+  return name === 'TimeoutError' || name === 'AbortError'
+}
+
+const MSG_TIMEOUT = 'The check did not answer in time. Try again.'
+const MSG_NO_SERVICES = "This project's compose config could not be read. Rescan first."
+
 type Props = {
   project: Project
   /** onAdded runs once the database is stored; the live state carries the new list. */
@@ -44,8 +53,10 @@ type Props = {
  * find (#58): its type, the compose service it runs in, its name and where the
  * credentials are, as the names of variables read inside the container (the
  * panel never holds a value). Check and add runs a check in the container;
- * a failed check, a service that does not run and a 422 on a field show here
- * and nothing is saved.
+ * a failed check, a service that does not run, a 422 on a field (focused once
+ * the form is enabled again) and a request with no answer in 35 s show here
+ * and nothing is saved. A project whose compose config could not be read has
+ * no services to offer, so Check and add stays disabled.
  */
 export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) {
   const prefix = useId()
@@ -55,6 +66,7 @@ export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) 
   const refs = useRef<Partial<Record<Field, HTMLElement | null>>>({})
 
   const services = project.serviceNames
+  const noServices = services.length === 0
   const [type, setType] = useState<DbType>('postgresql')
   const [service, setService] = useState(services[0] ?? '')
   const [name, setName] = useState('')
@@ -64,6 +76,16 @@ export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) 
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({})
   const [formError, setFormError] = useState('')
   const [busy, setBusy] = useState(false)
+  // Set by fail: focus the first field in error once the inputs are enabled
+  // again (after a server answer they are still disabled when fail runs).
+  const focusPending = useRef(false)
+
+  useEffect(() => {
+    if (!focusPending.current) return
+    focusPending.current = false
+    const first = FIELDS.find((f) => errors[f])
+    if (first) refs.current[first]?.focus()
+  }, [errors])
 
   const setRef = (f: Field) => (el: HTMLElement | null) => {
     refs.current[f] = el
@@ -79,14 +101,13 @@ export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) 
   }
 
   const fail = (next: Partial<Record<Field, string>>) => {
+    focusPending.current = true
     setErrors(next)
-    const first = FIELDS.find((f) => next[f])
-    if (first) refs.current[first]?.focus()
   }
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (busy) return
+    if (busy || noServices) return
     const trimmed = name.trim()
     const user = custom ? userVar.trim() : ''
     const pass = custom ? passwordVar.trim() : ''
@@ -115,6 +136,10 @@ export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) 
       onAdded(trimmed)
     } catch (err) {
       setBusy(false)
+      if (timedOut(err)) {
+        setFormError(MSG_TIMEOUT)
+        return
+      }
       if (err instanceof ApiError && err.status === 422 && isFieldError(err.body)) {
         const { field, error } = err.body
         if (isField(field)) fail({ [field]: error })
@@ -213,7 +238,7 @@ export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) 
             value={service}
             disabled={busy}
             aria-invalid={errors.service ? true : undefined}
-            aria-describedby={describe('service')}
+            aria-describedby={noServices ? id('no-services') : describe('service')}
             ref={setRef('service')}
             onChange={(e) => {
               setService(e.target.value)
@@ -229,6 +254,7 @@ export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) 
             ))}
           </select>
           {error('service')}
+          {noServices && <FieldMessage id={id('no-services')} message={MSG_NO_SERVICES} />}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -341,7 +367,7 @@ export default function AddDatabaseDialog({ project, onAdded, onClose }: Props) 
           </button>
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || noServices}
             aria-busy={busy || undefined}
             className={PRIMARY_BUTTON}
           >

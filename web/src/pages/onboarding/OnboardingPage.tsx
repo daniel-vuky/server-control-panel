@@ -339,11 +339,8 @@ export default function OnboardingPage() {
               'Add a workspace'
             )
           ) : (
-            // A span, not Skeleton: the label sits inside a paragraph.
-            <span
-              aria-hidden="true"
-              className="inline-block h-3 w-28 animate-scp-pulse rounded bg-border align-middle"
-            />
+            // Inline: the label sits inside a paragraph.
+            <Skeleton inline className="h-3 w-28" />
           )
         }
       >

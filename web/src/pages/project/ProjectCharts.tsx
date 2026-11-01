@@ -70,7 +70,14 @@ export default function ProjectCharts({ project }: { project: Project }) {
       </Stale>
     )
   } else if (error !== '') {
-    body = <LoadError title="Could not load the charts." message={error} onRetry={retry} />
+    body = (
+      <LoadError
+        title="Could not load the charts."
+        message={error}
+        onRetry={retry}
+        busy={series.pending || zone.pending}
+      />
+    )
   } else {
     body = <ChartsLoading />
   }

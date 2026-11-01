@@ -27,7 +27,12 @@ export default function CardRead<T>({
     if (read.error !== '') {
       return (
         <div className="p-3.5">
-          <LoadError title={title} message={read.error} onRetry={read.refresh} />
+          <LoadError
+            title={title}
+            message={read.error}
+            onRetry={read.refresh}
+            busy={read.pending}
+          />
         </div>
       )
     }

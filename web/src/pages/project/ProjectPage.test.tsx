@@ -183,7 +183,7 @@ describe('project page', () => {
       renderProject('/projects/1')
       pushState([shop])
       expect(button()).toBeDisabled()
-      expect(button()).toHaveAttribute('title', 'No databases detected in this project.')
+      expect(button()).toHaveAttribute('title', 'No database detected')
     })
 
     it("is disabled with the first database's reason when none can be backed up", () => {

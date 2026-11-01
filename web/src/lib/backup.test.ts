@@ -113,7 +113,7 @@ describe('projectRule', () => {
   it('has a reason for a project without databases', () => {
     expect(projectRule(makeProject(), 'connected')).toEqual({
       enabled: false,
-      reason: 'No databases detected in this project.',
+      reason: 'No database detected',
     })
   })
 })

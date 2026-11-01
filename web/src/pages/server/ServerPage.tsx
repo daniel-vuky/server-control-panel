@@ -91,6 +91,7 @@ export default function ServerPage() {
             title="Could not load the server."
             message={server.error}
             onRetry={server.refresh}
+            busy={server.pending}
           />
         )}
 
@@ -112,6 +113,7 @@ export default function ServerPage() {
                 title="Could not load the charts."
                 message={series.error}
                 onRetry={series.refresh}
+                busy={series.pending}
               />
             )}
           </>
@@ -133,6 +135,7 @@ export default function ServerPage() {
             title="Could not load the usage by app."
             message={usage.error}
             onRetry={usage.refresh}
+            busy={usage.pending}
           />
         )}
 

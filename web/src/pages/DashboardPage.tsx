@@ -170,6 +170,7 @@ export default function DashboardPage() {
             title="Could not load projects."
             message={projects.error}
             onRetry={projects.refresh}
+            busy={projects.pending}
           />
         )}
         {rows !== undefined && counts !== null && (

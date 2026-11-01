@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeProject } from '../../test/projects'
 import AddDatabaseDialog from './AddDatabaseDialog'
@@ -8,17 +8,21 @@ const URL = '/api/projects/1/databases'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
-/** open renders the dialog on a project with two services; fetch answers the POST with answer. */
-function open(answer: () => Response | Promise<Response> = () => json(404, { error: 'no' })) {
-  const stub = vi.fn(async (_url: string, _init?: RequestInit) => answer())
+/** open renders the dialog on a project with two services (or serviceNames); fetch answers the POST with answer. */
+function open(
+  answer: (init?: RequestInit) => Response | Promise<Response> = () => json(404, { error: 'no' }),
+  serviceNames: string[] = ['db', 'cache'],
+) {
+  const stub = vi.fn(async (_url: string, init?: RequestInit) => answer(init))
   vi.stubGlobal('fetch', stub)
   const onAdded = vi.fn()
   const onClose = vi.fn()
   render(
     <AddDatabaseDialog
-      project={makeProject({ serviceNames: ['db', 'cache'] })}
+      project={makeProject({ serviceNames })}
       onAdded={onAdded}
       onClose={onClose}
     />,
@@ -182,5 +186,60 @@ describe('add database dialog', () => {
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('focuses the field a server 422 names once the form is enabled again', async () => {
+    const { dialog } = open(() =>
+      json(422, { error: 'This database is already added.', field: 'name', code: 'exists' }),
+    )
+    fill(dialog)
+    // Focus starts on the name: move it away, as a click on Check and add would.
+    act(() => within(dialog).getByLabelText('Service').focus())
+    submit(dialog)
+    const shown = await within(dialog).findByText('This database is already added.')
+    const input = within(dialog).getByLabelText('Database name')
+    expect(input).toBeEnabled()
+    await waitFor(() => expect(input).toHaveFocus())
+    expect(input.getAttribute('aria-describedby')).toBe(shown.closest('p')?.id)
+  })
+
+  it('gives up after 35 s with no answer, says so and unlocks the dialog', async () => {
+    const timer = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timer.signal)
+    const { dialog, stub, onAdded } = open(
+      (init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+        }),
+    )
+    fill(dialog)
+    submit(dialog)
+    await within(dialog).findByRole('button', { name: 'Checking…' })
+    expect(timeout).toHaveBeenCalledWith(35_000)
+    expect(stub.mock.calls[0][1]?.signal).toBe(timer.signal)
+
+    timer.abort(new DOMException('signal timed out', 'TimeoutError'))
+    expect(
+      await within(dialog).findByText('The check did not answer in time. Try again.'),
+    ).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Check and add' })).toBeEnabled()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    expect(within(dialog).getByLabelText('Database name')).toBeEnabled()
+    expect(onAdded).not.toHaveBeenCalled()
+  })
+
+  it('cannot check a project whose compose config could not be read', () => {
+    const { dialog, stub } = open(undefined, [])
+    const words = "This project's compose config could not be read. Rescan first."
+    const shown = within(dialog).getByText(words)
+    expect(within(dialog).getByLabelText('Service')).toHaveAttribute(
+      'aria-describedby',
+      shown.closest('p')?.id,
+    )
+    fill(dialog)
+    const button = within(dialog).getByRole('button', { name: 'Check and add' })
+    expect(button).toBeDisabled()
+    fireEvent.submit(button.closest('form') as HTMLFormElement)
+    expect(stub).not.toHaveBeenCalled()
   })
 })

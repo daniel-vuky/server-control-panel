@@ -81,7 +81,7 @@ export function projectRule(
   driveState: string | undefined,
 ): { enabled: boolean; reason: string } {
   if (p.databases.length === 0) {
-    return { enabled: false, reason: 'No databases detected in this project.' }
+    return { enabled: false, reason: 'No database detected' }
   }
   const rules = p.databases.map((d) => databaseRule(d, driveState))
   if (rules.some((r) => r.enabled)) return { enabled: true, reason: '' }

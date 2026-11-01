@@ -486,6 +486,44 @@ describe('empty state', () => {
   })
 })
 
+describe('a failed re-read with nothing to list', () => {
+  it('keeps "No backups match these filters." dimmed under the banner', async () => {
+    let list = () => json(200, { backups: [], more: false })
+    serveBackups([], { list: () => list() })
+    openBackups(connected, { backups: [runningCrm] }, '/backups?result=failed')
+    const words = await screen.findByText('No backups match these filters.')
+    expect(words.closest('[data-stale]')).toBeNull()
+
+    list = () => json(503, { error: 'database is locked' })
+    push(connected, { backups: [] })
+    expect(await screen.findByText('database is locked')).toBeInTheDocument()
+    expect(screen.getByText('Could not load the backups.')).toBeInTheDocument()
+    const kept = screen.getByText('No backups match these filters.')
+    expect((kept.closest('[data-stale]') as HTMLElement).style.opacity).toBe('0.55')
+  })
+
+  it('keeps "No backups yet" dimmed under the banner', async () => {
+    let list = () => json(200, { backups: [], more: false })
+    serveBackups([], { list: () => list() })
+    openBackups(connected)
+    await screen.findByText('No backups yet')
+
+    list = () => json(503, { error: 'database is locked' })
+    push(connected, { batch: batch({ total: 0, done: 0, finishedAt: '2026-10-31T10:05:00Z' }) })
+    expect(await screen.findByText('database is locked')).toBeInTheDocument()
+    expect(screen.getByText('No backups yet').closest('[data-stale]')).not.toBeNull()
+    expect(screen.queryByText('No backups match these filters.')).toBeNull()
+  })
+
+  it('shows the banner alone when the first read fails', async () => {
+    serveBackups([], { list: () => json(503, { error: 'database is locked' }) })
+    openBackups(connected, {}, '/backups?result=failed')
+    expect(await screen.findByText('database is locked')).toBeInTheDocument()
+    expect(screen.queryByText('No backups match these filters.')).toBeNull()
+    expect(screen.queryByText('No backups yet')).toBeNull()
+  })
+})
+
 describe('the table', () => {
   it('reads the first page once the page opens', async () => {
     const stub = serveBackups([okRow(1)])

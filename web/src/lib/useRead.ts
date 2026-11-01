@@ -7,12 +7,14 @@ export const errorMessage = (err: unknown) =>
 /**
  * Read is what useRead gives: the data (null until the first answer), the
  * error while there is no data, staleError (why the last refresh failed while
- * the data on screen is kept) and refresh.
+ * the data on screen is kept), pending (a read is on its way: true from
+ * refresh, or a new key, until its answer) and refresh.
  */
 export type Read<T> = {
   data: T | null
   error: string
   staleError: string
+  pending: boolean
   refresh(): void
 }
 
@@ -22,7 +24,8 @@ export type Read<T> = {
  * the answer comes: a failed refresh keeps the last data. `error` is reported
  * only while there is no data to show; with data, the same error is
  * `staleError` (a `Stale` wrapper shows it above the kept data), and a
- * successful read clears both. A null key reads nothing
+ * successful read clears both. `pending` lets a Retry show that it is
+ * reading (LoadError's busy). A null key reads nothing
  * (and refresh does nothing) until it is set. It aborts the read it
  * supersedes and the one running at unmount. The fetcher may be an inline
  * function: the latest one is used, and a new identity does not re-read.
@@ -33,6 +36,7 @@ export function useRead<T>(
 ): Read<T> {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
   const fetcherRef = useRef(fetcher)
   fetcherRef.current = fetcher
   const keyRef = useRef(key)
@@ -44,14 +48,18 @@ export function useRead<T>(
     ctl.current?.abort()
     const c = new AbortController()
     ctl.current = c
+    setPending(true)
     fetcherRef.current(c.signal).then(
       (d) => {
         if (c.signal.aborted) return
         setData(d)
         setError('')
+        setPending(false)
       },
       (err: unknown) => {
-        if (!c.signal.aborted) setError(errorMessage(err))
+        if (c.signal.aborted) return
+        setError(errorMessage(err))
+        setPending(false)
       },
     )
   }, [])
@@ -60,6 +68,7 @@ export function useRead<T>(
     ctl.current?.abort()
     setData(null)
     setError('')
+    setPending(false)
     if (key !== null) refresh()
   }, [key, refresh])
   useEffect(() => () => ctl.current?.abort(), [])
@@ -68,6 +77,7 @@ export function useRead<T>(
     data,
     error: data === null ? error : '',
     staleError: data === null ? '' : error,
+    pending,
     refresh,
   }
 }
