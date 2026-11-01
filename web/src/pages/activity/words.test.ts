@@ -12,7 +12,7 @@ describe('verbOf', () => {
     ['project.restart', 'restarted'],
     ['project.settings', 'changed the settings of'],
     ['project.untrack', 'stopped tracking'],
-    ['project.remove', 'removed from the list'],
+    ['project.remove', 'removed'],
     ['scan.start', 'scanned'],
     ['scan.track', 'started tracking projects in'],
     ['workspace.rescan', 'rescanned workspace'],
@@ -120,8 +120,8 @@ describe('detailOf', () => {
       reason: 'shop-db-1 exited with code 1',
       channels: ['telegram', 'email'],
     })
-    expect(detailOf(alert)).toBe('shop-db-1 exited with code 1 · Sent via Telegram, Email')
-    expect(detailOf({ ...alert, reason: '' })).toBe('Sent via Telegram, Email')
+    expect(detailOf(alert)).toBe('shop-db-1 exited with code 1 · Sent via Telegram, email')
+    expect(detailOf({ ...alert, reason: '' })).toBe('Sent via Telegram, email')
     expect(detailOf({ ...alert, result: 'not_sent', channels: [] })).toBe(
       'shop-db-1 exited with code 1',
     )

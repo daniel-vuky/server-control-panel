@@ -10,7 +10,7 @@ const VERBS: Record<string, string> = {
   'project.restart': 'restarted',
   'project.settings': 'changed the settings of',
   'project.untrack': 'stopped tracking',
-  'project.remove': 'removed from the list',
+  'project.remove': 'removed',
   'scan.start': 'scanned',
   'scan.track': 'started tracking projects in',
   'workspace.rescan': 'rescanned workspace',
@@ -100,7 +100,9 @@ function duration(a: string, b: string | null): string {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
 }
 
-const capitalised = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+/** CHANNEL_WORDS are the channels as the sentence names them. */
+const CHANNEL_WORDS: Record<string, string> = { telegram: 'Telegram', email: 'email' }
+const channelWord = (c: string) => (Object.hasOwn(CHANNEL_WORDS, c) ? CHANNEL_WORDS[c] : c)
 
 /**
  * detailOf is the line under the sentence: the record's reason; for a
@@ -114,7 +116,7 @@ export function detailOf(e: ActivityEntry): string {
     if (d !== '') parts.push(d)
   }
   if (isAlert(e) && e.result === 'sent' && e.channels.length > 0) {
-    parts.push(`Sent via ${e.channels.map(capitalised).join(', ')}`)
+    parts.push(`Sent via ${e.channels.map(channelWord).join(', ')}`)
   }
   return parts.join(' · ')
 }

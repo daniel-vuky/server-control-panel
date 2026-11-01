@@ -171,7 +171,7 @@ describe('ActivityPage', () => {
     open()
     const [sent, failed] = await screen.findAllByRole('listitem')
     expect(sent).toHaveTextContent('System detected an error in blog')
-    expect(sent).toHaveTextContent('blog-wp-1 exited with code 1 · Sent via Telegram, Email')
+    expect(sent).toHaveTextContent('blog-wp-1 exited with code 1 · Sent via Telegram, email')
     expect(sent).toHaveTextContent('Alert sent')
     expect(failed).toHaveTextContent('Not delivered')
     expect(within(failed).getByText(/Could not reach Telegram/).className).toMatch(
@@ -302,6 +302,34 @@ describe('ActivityPage paging and refresh', () => {
     expect(await screen.findByText('boom')).toBeInTheDocument()
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Show older' })).toBeEnabled()
+  })
+})
+
+describe('ActivityPage error then Show older', () => {
+  it('clears the refresh error and the dim when Show older succeeds, keeping the rows', async () => {
+    let fail = false
+    serveActivity([], (url) => {
+      if (url.includes('before=')) {
+        return json(200, { entries: [E(50, { target: 'older', projectId: null })], more: false })
+      }
+      return fail
+        ? json(500, { error: 'boom' })
+        : json(200, { entries: [E(99, { projectId: null })], more: true })
+    })
+    open()
+    await screen.findByRole('listitem')
+    fail = true
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+    await screen.findByRole('alert')
+    expect(screen.getByTestId('activity-days').className).toMatch(/opacity-55/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    await screen.findByText('older')
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(screen.getByTestId('activity-days').className).not.toMatch(/opacity-55/)
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
   })
 })
 

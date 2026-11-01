@@ -41,7 +41,12 @@ function useActivity(kind: Kind | undefined, project: number | undefined) {
     newestCtl.current = ctl
     getActivity({ kind, project }, ctl.signal).then(
       (page) => {
-        if (ctl.signal.aborted || olderLoaded.current) return
+        if (ctl.signal.aborted) return
+        // After Show older the list stays as it is; only the error goes.
+        if (olderLoaded.current) {
+          setState((prev) => ({ ...prev, error: '' }))
+          return
+        }
         setState({ rows: page.entries, more: page.more, loaded: true, error: '' })
       },
       (err: unknown) => {
@@ -87,6 +92,7 @@ function useActivity(kind: Kind | undefined, project: number | undefined) {
             ...prev,
             rows: [...prev.rows, ...page.entries.filter((e) => e.id < end)],
             more: page.more,
+            error: '',
           }
         })
         setOlder({ busy: false, error: '' })
@@ -122,7 +128,7 @@ const CHIP =
 const FIELD =
   'flex h-9 items-center gap-2 rounded-[7px] border border-border-strong bg-surface px-2.5 text-[13px] text-muted focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent'
 
-/** KindChips and ProjectSelect are design 06's filters; they write the URL query. */
+/** Filters are design 06's kind chips and Project select; they write the URL query. */
 function Filters({
   kind,
   project,
