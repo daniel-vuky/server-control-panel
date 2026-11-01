@@ -14,6 +14,7 @@ import (
 const (
 	ActorPerson   = "person"
 	ActorSchedule = "schedule"
+	ActorSystem   = "system"
 )
 
 // What was done.
@@ -36,6 +37,16 @@ const (
 	ActBackupDefaults   = "backup.defaults"
 	ActBackupAll        = "backup.all"
 	ActMetricsRetention = "metrics.retention"
+
+	// Alert settings are actions of a person; the alert.* ones are the system's.
+	ActAlertsChannel    = "alerts.channel"
+	ActAlertsThresholds = "alerts.thresholds"
+	ActAlertProject     = "alert.project"
+	ActAlertDomain      = "alert.domain"
+	ActAlertBackup      = "alert.backup"
+	ActAlertResource    = "alert.resource"
+	ActAlertTunnel      = "alert.tunnel"
+	ActAlertRecovery    = "alert.recovery"
 )
 
 // How it ended.
@@ -46,6 +57,8 @@ const (
 	ResultTimedOut    = "timed_out"
 	ResultRefused     = "refused"
 	ResultInterrupted = "interrupted"
+	ResultSent        = "sent"     // an alert reached at least one channel
+	ResultNotSent     = "not_sent" // an alert reached none
 )
 
 const (
@@ -69,6 +82,26 @@ type ActivityRow struct {
 	FinishedAt *time.Time
 	Activity
 	Result, Reason string
+	Channels       []string // the channels an alert went to; nil for other rows
+}
+
+// ActivityFilter selects rows for ListActivity. Kind is "" (everything),
+// "action" (not a backup or an alert), "backup" (backup.run, backup.all) or
+// "alert" (alert.*; alerts.channel and alerts.thresholds are actions).
+// ProjectID 0 means any project, Before 0 means from the newest, and Limit is
+// the page size.
+type ActivityFilter struct {
+	Kind      string
+	ProjectID int64
+	Before    int64
+	Limit     int
+}
+
+// ActivityEntry is a listed row with whether its project is still tracked, so
+// its name can link to a page that exists.
+type ActivityEntry struct {
+	ActivityRow
+	ProjectTracked bool
 }
 
 // The activity record is append-only: the only writes are an insert, and the
@@ -89,9 +122,15 @@ func (s *Store) StartActivity(ctx context.Context, a Activity) (int64, error) {
 // that is not running (finished already, or unknown) is left as it is and the
 // call returns nil.
 func (s *Store) FinishActivity(ctx context.Context, id int64, result, reason string) error {
+	return s.FinishActivityWith(ctx, id, result, reason, nil)
+}
+
+// FinishActivityWith is FinishActivity that also stores the channels an alert
+// went to.
+func (s *Store) FinishActivityWith(ctx context.Context, id int64, result, reason string, channels []string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE activity SET finished_at = ?, result = ?, reason = ? WHERE id = ? AND result = 'running'`,
-		formatTime(time.Now()), result, cleanText(reason, maxReason), id)
+		`UPDATE activity SET finished_at = ?, result = ?, reason = ?, channels = ? WHERE id = ? AND result = 'running'`,
+		formatTime(time.Now()), result, cleanText(reason, maxReason), strings.Join(channels, ","), id)
 	if err != nil {
 		return fmt.Errorf("store: finish activity: %w", err)
 	}
@@ -111,40 +150,98 @@ func (s *Store) RecordActivity(ctx context.Context, a Activity, result, reason s
 	return nil
 }
 
+const activityColumns = `a.id, a.started_at, a.finished_at, a.actor, a.actor_kind, a.action, a.project_id, a.target, a.result, a.reason, a.channels`
+
+// scanActivity reads activityColumns, then any extra columns into extra.
+func scanActivity(r rowScanner, extra ...any) (ActivityRow, error) {
+	var (
+		row      ActivityRow
+		started  string
+		finished sql.NullString
+		project  sql.NullInt64
+		channels string
+	)
+	if err := r.Scan(append([]any{&row.ID, &started, &finished, &row.Actor, &row.ActorKind, &row.Action, &project, &row.Target, &row.Result, &row.Reason, &channels}, extra...)...); err != nil {
+		return ActivityRow{}, fmt.Errorf("store: list activity: %w", err)
+	}
+	var err error
+	if row.StartedAt, err = parseTime(started); err != nil {
+		return ActivityRow{}, fmt.Errorf("store: activity %d started_at: %w", row.ID, err)
+	}
+	if finished.Valid {
+		t, err := parseTime(finished.String)
+		if err != nil {
+			return ActivityRow{}, fmt.Errorf("store: activity %d finished_at: %w", row.ID, err)
+		}
+		row.FinishedAt = &t
+	}
+	row.ProjectID = project.Int64
+	if channels != "" {
+		row.Channels = strings.Split(channels, ",")
+	}
+	return row, nil
+}
+
 // RecentActivity returns up to limit records, newest first.
 func (s *Store) RecentActivity(ctx context.Context, limit int) ([]ActivityRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, started_at, finished_at, actor, actor_kind, action, project_id, target, result, reason
-		 FROM activity ORDER BY id DESC LIMIT ?`, limit)
+		`SELECT `+activityColumns+` FROM activity a ORDER BY a.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: list activity: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := []ActivityRow{}
 	for rows.Next() {
-		var (
-			r        ActivityRow
-			started  string
-			finished sql.NullString
-			project  sql.NullInt64
-		)
-		if err := rows.Scan(&r.ID, &started, &finished, &r.Actor, &r.ActorKind, &r.Action, &project, &r.Target, &r.Result, &r.Reason); err != nil {
-			return nil, fmt.Errorf("store: list activity: %w", err)
+		r, err := scanActivity(rows)
+		if err != nil {
+			return nil, err
 		}
-		if r.StartedAt, err = parseTime(started); err != nil {
-			return nil, fmt.Errorf("store: activity %d started_at: %w", r.ID, err)
-		}
-		if finished.Valid {
-			t, err := parseTime(finished.String)
-			if err != nil {
-				return nil, fmt.Errorf("store: activity %d finished_at: %w", r.ID, err)
-			}
-			r.FinishedAt = &t
-		}
-		r.ProjectID = project.Int64
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ListActivity returns one page of records, newest first by id, and whether
+// older ones match. An unknown Kind matches everything.
+func (s *Store) ListActivity(ctx context.Context, f ActivityFilter) ([]ActivityEntry, bool, error) {
+	kind := f.Kind
+	if kind != "action" && kind != "backup" && kind != "alert" {
+		kind = ""
+	}
+	// substr, not LIKE 'alert%': alerts.channel and alerts.thresholds are
+	// actions, not alerts.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+activityColumns+`, p.id IS NOT NULL
+		 FROM activity a LEFT JOIN projects p ON p.id = a.project_id AND p.state = 'tracked'
+		 WHERE (? = '' OR
+		        (? = 'action' AND a.action NOT IN ('backup.run', 'backup.all') AND substr(a.action, 1, 6) <> 'alert.') OR
+		        (? = 'backup' AND a.action IN ('backup.run', 'backup.all')) OR
+		        (? = 'alert' AND substr(a.action, 1, 6) = 'alert.'))
+		   AND (? = 0 OR a.project_id = ?)
+		   AND (? = 0 OR a.id < ?)
+		 ORDER BY a.id DESC LIMIT ?`,
+		kind, kind, kind, kind, f.ProjectID, f.ProjectID, f.Before, f.Before, f.Limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: list activity: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []ActivityEntry{}
+	for rows.Next() {
+		var tracked bool
+		r, err := scanActivity(rows, &tracked)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, ActivityEntry{ActivityRow: r, ProjectTracked: tracked})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("store: list activity: %w", err)
+	}
+	more := len(out) > f.Limit
+	if more {
+		out = out[:f.Limit]
+	}
+	return out, more, nil
 }
 
 // interruptRunningActivity marks records a previous process left running as
