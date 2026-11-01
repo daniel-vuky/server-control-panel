@@ -12,6 +12,15 @@ type Database struct {
 	LocationKind string   `json:"locationKind"`           // container | host | external | file | unknown
 	Location     string   `json:"location"`               // service or container name, host name or file path
 	Sources      []string `json:"sources"`
+	// Manual rows are the ones the owner added by hand (store.ManualDatabase):
+	// they have their own key (DatabaseKey: manual:<ManualID>) and may name the
+	// environment variables that hold the credentials. UserVar and PasswordVar
+	// are variable names, never values; both empty means the image's standard
+	// variables.
+	Manual      bool   `json:"manual,omitempty"`
+	ManualID    int64  `json:"manualId,omitempty"`
+	UserVar     string `json:"userVar,omitempty"`
+	PasswordVar string `json:"passwordVar,omitempty"`
 }
 
 // Service is one service of a compose project, as the compose config reports it.

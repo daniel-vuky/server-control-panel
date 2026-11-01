@@ -139,8 +139,8 @@ func TestMigrationSeedsOffSchedules(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 10 {
-		t.Fatalf("schema_migrations has %d rows, want 10", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 11 {
+		t.Fatalf("schema_migrations has %d rows, want 11", n)
 	}
 	got, err := s.TrackedProject(ctx, 1)
 	if err != nil {

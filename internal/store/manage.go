@@ -58,8 +58,8 @@ func (s *Store) RemoveWorkspace(ctx context.Context, id int64) (Workspace, error
 }
 
 // UntrackProject stops tracking a project and returns it as it was. A normal
-// tracked project becomes ignored, its databases, schedules and metrics
-// dropped; a project that a rescan could not find (missing_since set) is
+// tracked project becomes ignored, its databases (hand-added ones included),
+// schedules and metrics dropped; a project that a rescan could not find (missing_since set) is
 // deleted (its databases, schedules and metrics by cascade), so a gone folder
 // does not linger as an ignored row. An unknown or ignored id gives
 // ErrNotFound.
@@ -86,6 +86,7 @@ func (s *Store) UntrackProject(ctx context.Context, id int64) (Tracked, error) {
 		// Re-tracking starts from the defaults and a fresh metrics history.
 		for _, q := range []string{
 			`DELETE FROM databases WHERE project_id = ?`,
+			`DELETE FROM manual_databases WHERE project_id = ?`,
 			`DELETE FROM backup_schedules WHERE project_id = ?`,
 			`DELETE FROM project_samples WHERE project_id = ?`,
 			`DELETE FROM project_rollups WHERE project_id = ?`,

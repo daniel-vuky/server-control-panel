@@ -1,6 +1,10 @@
 package project
 
-import "github.com/daniel-vuky/server-control-panel/internal/runner"
+import (
+	"fmt"
+
+	"github.com/daniel-vuky/server-control-panel/internal/runner"
+)
 
 // The reasons BackupReason gives for refusing a backup. The empty string means
 // the database can be backed up now. The Drive reasons are layered on top by
@@ -13,8 +17,13 @@ const (
 )
 
 // DatabaseKey identifies a detected database across scans: type, location and
-// name. The location is not the resolved service, so the key stays stable.
+// name. The location is not the resolved service, so the key stays stable. A
+// database added by hand has its own key, manual:<id>, so it never collides
+// with a detected one.
 func DatabaseKey(d Database) string {
+	if d.Manual {
+		return fmt.Sprintf("manual:%d", d.ManualID)
+	}
 	return d.Type + ":" + d.Location + ":" + d.Name
 }
 

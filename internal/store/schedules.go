@@ -158,15 +158,17 @@ func (s *Store) SetSchedule(ctx context.Context, projectID int64, dbKey string, 
 
 // EnabledSchedules lists the schedules that may run: frequency not off, the
 // project tracked and present (no missing_since), and the key matching a
-// database detected now (an orphan row, whose database was renamed or
+// database detected now or added by hand (an orphan row, whose database was renamed or
 // removed, is left out until it is detected again). Ordered by project, then
 // key.
 func (s *Store) EnabledSchedules(ctx context.Context) ([]Schedule, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+scheduleColumns+`
 		FROM backup_schedules s JOIN projects p ON p.id = s.project_id
 		WHERE s.frequency <> 'off' AND p.state = 'tracked' AND p.missing_since IS NULL
-		  AND EXISTS (SELECT 1 FROM databases d
-		              WHERE d.project_id = s.project_id AND d.type || ':' || d.location || ':' || d.name = s.db_key)
+		  AND (EXISTS (SELECT 1 FROM databases d
+		               WHERE d.project_id = s.project_id AND d.type || ':' || d.location || ':' || d.name = s.db_key)
+		       OR EXISTS (SELECT 1 FROM manual_databases m
+		                  WHERE m.project_id = s.project_id AND 'manual:' || m.id = s.db_key))
 		ORDER BY s.project_id, s.db_key`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list enabled schedules: %w", err)

@@ -10,6 +10,10 @@ func TestDatabaseKey(t *testing.T) {
 	if got := DatabaseKey(d); got != "postgresql:shop-db:shop" {
 		t.Errorf("DatabaseKey = %q", got)
 	}
+	m := Database{Type: "postgresql", Name: "shop", Location: "shop-db", Manual: true, ManualID: 7}
+	if got := DatabaseKey(m); got != "manual:7" {
+		t.Errorf("manual DatabaseKey = %q", got)
+	}
 }
 
 func TestNameIsPlaceholder(t *testing.T) {

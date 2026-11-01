@@ -223,6 +223,29 @@ func trackedIn(ctx context.Context, tx queryer, only int64) ([]Tracked, error) {
 	}
 	_ = drows.Close()
 
+	// Hand-added databases come after the detected ones.
+	mrows, err := tx.QueryContext(ctx,
+		`SELECT m.project_id, m.id, m.type, m.name, m.service, m.user_var, m.password_var
+		 FROM manual_databases m JOIN projects p ON p.id = m.project_id WHERE p.state = 'tracked' AND (? = 0 OR p.id = ?) ORDER BY m.id`, only, only)
+	if err != nil {
+		return nil, fmt.Errorf("store: list manual databases: %w", err)
+	}
+	defer func() { _ = mrows.Close() }()
+	for mrows.Next() {
+		var pid int64
+		d := project.Database{Manual: true, NameExplicit: true, LocationKind: "container", Sources: []string{ManualSource}}
+		if err := mrows.Scan(&pid, &d.ManualID, &d.Type, &d.Name, &d.Location, &d.UserVar, &d.PasswordVar); err != nil {
+			return nil, fmt.Errorf("store: list manual databases: %w", err)
+		}
+		if i, ok := byID[pid]; ok {
+			ts[i].Databases = append(ts[i].Databases, d)
+		}
+	}
+	if err := mrows.Err(); err != nil {
+		return nil, err
+	}
+	_ = mrows.Close()
+
 	scs, err := projectSchedules(ctx, tx, only)
 	if err != nil {
 		return nil, err
