@@ -130,6 +130,51 @@ func TestAddDatabase(t *testing.T) {
 	}
 }
 
+// A database the project already has by hand (same type, service and name)
+// is refused 422 on name, code exists, before the check runs; one added
+// while the check ran is refused the same way by the store. Nothing more is
+// stored or recorded.
+func TestAddDatabaseDuplicate(t *testing.T) {
+	d, h, alpha := databasesSetup(t)
+	req := AddDatabaseRequest{Type: "postgresql", Service: "db", Name: "reports"}
+	if rec := doJSON(h, http.MethodPost, databasesURL(alpha), req); rec.Code != http.StatusCreated {
+		t.Fatalf("first add = %d %s", rec.Code, rec.Body.String())
+	}
+	wantExists := func(rec *httptest.ResponseRecorder) {
+		t.Helper()
+		fe := decode[FieldError](t, rec)
+		if rec.Code != http.StatusUnprocessableEntity || fe.Field != "name" || fe.Code != "exists" || fe.Error != "This database is already added." {
+			t.Fatalf("duplicate = %d %+v", rec.Code, fe)
+		}
+	}
+
+	again := req
+	again.UserVar, again.PasswordVar = "APP_USER", "APP_PASSWORD"
+	wantExists(doJSON(h, http.MethodPost, databasesURL(alpha), again))
+	if n := len(checksOf(d)); n != 1 {
+		t.Errorf("checks = %d, want only the first add's", n)
+	}
+
+	// Added by someone else while the check ran.
+	raced := AddDatabaseRequest{Type: "mysql", Service: "db", Name: "crm"}
+	dockerOf(d).set(func(f *fakeDocker) {
+		f.onCheck = func() {
+			if _, err := d.Store.AddManualDatabase(context.Background(), alpha, store.ManualDatabase{
+				Type: raced.Type, Service: raced.Service, Name: raced.Name, CreatedBy: "other@example.com",
+			}); err != nil {
+				t.Errorf("add meanwhile: %v", err)
+			}
+		}
+	})
+	wantExists(doJSON(h, http.MethodPost, databasesURL(alpha), raced))
+	if n := storedManual(t, d, alpha); n != 2 {
+		t.Errorf("stored = %d, want 2", n)
+	}
+	if rows := activityOf(t, d, store.ActDatabaseAdd); len(rows) != 1 {
+		t.Errorf("activity = %+v, want the first add only", rows)
+	}
+}
+
 func TestAddDatabaseValidation(t *testing.T) {
 	d, h, alpha := databasesSetup(t)
 	ok := AddDatabaseRequest{Type: "postgresql", Service: "db", Name: "reports"}

@@ -81,6 +81,7 @@ type fakeDocker struct {
 
 	checkErr *runner.ExitError // when set, the db.*.check actions fail with it and its stderr
 	checks   []call            // the db.*.check actions run, in order
+	onCheck  func()            // when set, runs (unlocked) as a db.*.check action starts
 }
 
 // call is one command the fake ran, with its values.
@@ -156,6 +157,12 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 		defer f.mu.Unlock()
 		return runner.Result{Stdout: []byte("29.0.0\n")}, f.pingErr
 	case isDBAction(a, "check"):
+		f.mu.Lock()
+		hook := f.onCheck
+		f.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		cp := runner.Values{}

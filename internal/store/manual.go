@@ -2,9 +2,14 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrDatabaseExists is a hand-added database the project already has: the
+// same type, service and name.
+var ErrDatabaseExists = errors.New("store: database already added")
 
 // ManualSource is the one entry in Sources of a database added by hand.
 const ManualSource = "added by hand"
@@ -24,7 +29,8 @@ func manualKey(id int64) string { return fmt.Sprintf("manual:%d", id) }
 // AddManualDatabase stores a hand-added database of a tracked project and its
 // schedule row, from the current backup defaults, in one transaction, and
 // returns the new id. A project that is unknown or not tracked gives
-// ErrNotFound. A rescan never touches the row.
+// ErrNotFound, one that already has a hand-added database of the same type,
+// service and name ErrDatabaseExists. A rescan never touches the row.
 func (s *Store) AddManualDatabase(ctx context.Context, projectID int64, m ManualDatabase) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -43,6 +49,9 @@ func (s *Store) AddManualDatabase(ctx context.Context, projectID int64, m Manual
 		`INSERT INTO manual_databases (project_id, type, name, service, user_var, password_var, created_by, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		projectID, m.Type, m.Name, m.Service, m.UserVar, m.PasswordVar, m.CreatedBy, now)
+	if isUnique(err, "manual_databases.project_id") {
+		return 0, ErrDatabaseExists
+	}
 	if err != nil {
 		return 0, fmt.Errorf("store: add manual database: %w", err)
 	}

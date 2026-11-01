@@ -25,6 +25,7 @@ const (
 
 const (
 	codeCheckFailed = "check_failed"
+	codeDBExists    = "exists"
 
 	msgDBType         = "Choose PostgreSQL, MySQL / MariaDB or MongoDB."
 	msgDBService      = "Choose one of the project's services."
@@ -35,6 +36,7 @@ const (
 	msgUserVarToo     = "Enter the user variable too."
 	msgPasswordVarToo = "Enter the password variable too."
 	msgNoManual       = "This database was not added by hand to this project."
+	msgDBExists       = "This database is already added."
 )
 
 // dbTypeWords are the types a database can be added as, with the words the
@@ -53,8 +55,9 @@ var scriptVars = []string{"u", "pw", "f", "d", "c", "r", "a", "pf", "s", "k", "t
 // addDatabase is POST /api/projects/{id}/databases: it checks a database
 // inside its container and, when the check passes, stores it as added by hand
 // and answers 201 with the Project. 404 for a project that is not tracked; 422
-// on the first bad field (type, service, name, userVar, passwordVar), then on
-// check (check_failed) when the check ran and failed; 409 BackupRefused for a
+// on the first bad field (type, service, name, userVar, passwordVar), on name
+// (exists) for a hand-added database of the same type, service and name, then
+// on check (check_failed) when the check ran and failed; 409 BackupRefused for a
 // missing project (not_found), a service that does not run (db_not_running)
 // or one that is gone (not_supported), and 503 BackupRefused with Docker down
 // (docker_down). Nothing is stored or recorded on any failure; a database
@@ -82,6 +85,12 @@ func (s *server) addDatabase(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, fe)
 		return
 	}
+	if slices.ContainsFunc(t.Databases, func(d project.Database) bool {
+		return d.Manual && d.Type == req.Type && d.Location == req.Service && d.Name == req.Name
+	}) {
+		writeFieldError(w, fieldDBName, codeDBExists, msgDBExists)
+		return
+	}
 	db := project.Database{
 		Type: req.Type, Name: req.Name, NameExplicit: true, LocationKind: "container", Location: req.Service,
 		Sources: []string{store.ManualSource}, Manual: true, UserVar: req.UserVar, PasswordVar: req.PasswordVar,
@@ -100,6 +109,9 @@ func (s *server) addDatabase(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, store.ErrNotFound): // untracked meanwhile
 		writeError(w, http.StatusNotFound, msgNotTracked)
+		return
+	case errors.Is(err, store.ErrDatabaseExists): // added meanwhile
+		writeFieldError(w, fieldDBName, codeDBExists, msgDBExists)
 		return
 	case err != nil:
 		s.internalError(w, r, err)

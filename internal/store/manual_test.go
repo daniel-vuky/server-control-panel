@@ -83,6 +83,40 @@ func TestAddManualDatabaseUnknownProject(t *testing.T) {
 	}
 }
 
+// The same database (type, service and name) cannot be added twice to a
+// project: ErrDatabaseExists, nothing stored. Another type, service, name or
+// project is a different database, and a removed row can be added again.
+func TestAddManualDatabaseDuplicate(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	_, shopID, _ := seedApps(t, s)
+	id := addManual(t, s, shopID, appManual)
+
+	again := appManual
+	again.UserVar, again.PasswordVar, again.CreatedBy = "", "", "other@localhost"
+	if _, err := s.AddManualDatabase(ctx, shopID, again); !errors.Is(err, ErrDatabaseExists) {
+		t.Fatalf("duplicate: err = %v, want ErrDatabaseExists", err)
+	}
+	if n := count(t, s.db, `SELECT count(*) FROM manual_databases`); n != 1 {
+		t.Fatalf("%d rows stored, want 1", n)
+	}
+	if n := count(t, s.db, `SELECT count(*) FROM backup_schedules WHERE db_key LIKE 'manual:%'`); n != 1 {
+		t.Fatalf("%d manual schedules, want 1", n)
+	}
+
+	other := appManual
+	other.Type = "postgresql"
+	addManual(t, s, shopID, other)
+	other = appManual
+	other.Name = "app2"
+	addManual(t, s, shopID, other)
+
+	if err := s.RemoveManualDatabase(ctx, shopID, id); err != nil {
+		t.Fatal(err)
+	}
+	addManual(t, s, shopID, appManual)
+}
+
 func TestManualSurvivesRescan(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)

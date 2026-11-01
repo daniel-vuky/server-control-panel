@@ -5,7 +5,8 @@
 -- never reused (AUTOINCREMENT), so a removed row's key never points at a later
 -- database's backups. user_var and password_var are environment variable
 -- names read inside the container, never values; both empty means the image's
--- standard variables. Times are UTC RFC 3339 text.
+-- standard variables. A project holds a database (type, service and name)
+-- once. Times are UTC RFC 3339 text.
 
 CREATE TABLE manual_databases (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,6 +17,7 @@ CREATE TABLE manual_databases (
     user_var     TEXT    NOT NULL DEFAULT '',
     password_var TEXT    NOT NULL DEFAULT '',
     created_by   TEXT    NOT NULL,
-    created_at   TEXT    NOT NULL
+    created_at   TEXT    NOT NULL,
+    UNIQUE (project_id, type, service, name)
 );
 CREATE INDEX manual_databases_project_id ON manual_databases (project_id);
