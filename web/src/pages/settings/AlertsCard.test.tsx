@@ -142,6 +142,43 @@ describe('Alerts card: channels', () => {
     expect(bodies(stub, '/api/alerts/telegram')).toEqual([{ token: '', chatId: '-1001234564821' }])
   })
 
+  it('edits with the chat empty: shows the masked chat and posts chatId ""', async () => {
+    const stub = route({
+      'GET /api/alerts': () => json(200, config()),
+      'POST /api/alerts/telegram': () => json(200, config()),
+    })
+    renderCard()
+    await waitFor(() => expect(row('Telegram')).toBeInTheDocument())
+    fireEvent.click(within(row('Telegram')).getByRole('button', { name: 'Edit' }))
+
+    const dlg = within(dialog())
+    const chat = dlg.getByLabelText('Chat ID')
+    expect(chat).toHaveValue('')
+    expect(chat).toHaveAttribute('placeholder', '-100••••4821')
+    expect(dlg.getByText('Leave empty to keep the current chat')).toBeInTheDocument()
+    fireEvent.click(dlg.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(bodies(stub, '/api/alerts/telegram')).toEqual([{ token: '', chatId: '' }])
+  })
+
+  it('setting Telegram up shows the chat id example, not the keep hint', async () => {
+    route({
+      'GET /api/alerts': () =>
+        json(200, config({ telegram: NONE, email: { ...NONE, configured: false } })),
+    })
+    renderCard()
+    const set = await within(await screen.findByRole('group', { name: 'Telegram' })).findByRole(
+      'button',
+      { name: 'Set up' },
+    )
+    fireEvent.click(set)
+    const dlg = within(dialog())
+    expect(dlg.getByText('The numeric id, like -1001234567890.')).toBeInTheDocument()
+    expect(dlg.queryByText('Leave empty to keep the current chat')).toBeNull()
+    expect(dlg.getByLabelText('Chat ID')).not.toHaveAttribute('placeholder')
+  })
+
   it('places a 422 under its field and keeps the dialog open', async () => {
     route({
       'GET /api/alerts': () => json(200, config()),

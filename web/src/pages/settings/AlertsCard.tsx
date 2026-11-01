@@ -106,6 +106,7 @@ function AlertsBody({ initial }: { initial: AlertsConfig }) {
       {editing === 'telegram' && (
         <TelegramDialog
           configured={config.telegram.configured}
+          maskedChat={config.telegram.chatId}
           onClose={() => setEditing(null)}
           onSaved={(next) => {
             setConfig(next)
@@ -322,12 +323,18 @@ function Labeled({
 const TELEGRAM_FIELDS = ['token', 'chatId'] as const
 const EMAIL_FIELDS = ['recipients'] as const
 
+/**
+ * TelegramDialog sets Telegram up or edits it. Editing, an empty token or an
+ * empty chat id keeps the stored one (the masked chat is the placeholder).
+ */
 function TelegramDialog({
   configured,
+  maskedChat,
   onClose,
   onSaved,
 }: {
   configured: boolean
+  maskedChat: string
   onClose(): void
   onSaved(next: AlertsConfig): void
 }) {
@@ -412,7 +419,11 @@ function TelegramDialog({
         id={chatId}
         label="Chat ID"
         error={errors.chatId}
-        hint="The numeric id, like -1001234567890."
+        hint={
+          configured
+            ? 'Leave empty to keep the current chat'
+            : 'The numeric id, like -1001234567890.'
+        }
       >
         <input
           id={chatId}
@@ -420,6 +431,7 @@ function TelegramDialog({
           type="text"
           inputMode="numeric"
           autoComplete="off"
+          placeholder={configured && maskedChat ? maskedChat : undefined}
           value={chatDraft}
           disabled={saving}
           aria-invalid={errors.chatId ? true : undefined}

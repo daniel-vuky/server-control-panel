@@ -23,7 +23,7 @@ const rowButton =
 
 const mono = (text: string): ReactNode => <span className="font-mono">{text}</span>
 
-/** SettingsPage is /settings: workspaces, Google Drive, alerts (still to come), backup defaults and metrics history. */
+/** SettingsPage is /settings: workspaces, Google Drive, alerts (channels and thresholds), backup defaults and metrics history. */
 export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-[18px]">
