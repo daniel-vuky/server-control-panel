@@ -4,6 +4,8 @@
 docs/superpowers/
 
 # Build output and local data
+# dev/workspaces is the WORKSPACE_ROOTS of `make dev`: put local compose projects there
+/dev/
 /bin/
 /data/
 node_modules/

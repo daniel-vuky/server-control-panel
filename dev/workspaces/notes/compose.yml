@@ -1,8 +1,0 @@
-name: scp-fixture-notes
-
-services:
-  app:
-    image: busybox
-    command: ["sleep", "infinity"]
-    environment:
-      DATABASE_URL: file:./data/notes.db
