@@ -110,6 +110,10 @@ To change it later, edit `TZ` in `panel.env` and run `cd /opt/server-control-pan
 
 Without the three optional values the panel runs as before and Google Drive shows as not set up. To set Drive up, follow [Connect Google Drive](google-drive.md), put the values in `panel.env` and run `cd /opt/server-control-panel && docker compose up -d`.
 
+### Alerts (Telegram and email)
+
+The panel can message you through Telegram or email when a project is in Error, a domain stops answering, a disk or CPU stays over its threshold, the Cloudflare Tunnel drops or a scheduled backup fails. Telegram is set up entirely in Settings (it needs `PANEL_SECRET_KEY`). Email also needs `SMTP_HOST` and `SMTP_FROM` (and optionally `SMTP_PORT`, `SMTP_USERNAME` and `SMTP_PASSWORD`) in `panel.env`, applied with `cd /opt/server-control-panel && docker compose up -d`; the install does not ask for them. See [Alerts](alerts.md).
+
 ## 4b. Server metrics: disks and cloudflared
 
 The Server page reads the host's CPU, memory, network and disks. The compose project mounts the host's `/proc` and its root (`/`) into the panel, both read-only: `/proc` for the counters, the root only to ask each disk for its used and total space. The panel never opens a file under it. A disk mounted after the panel started appears after the panel's next restart, which every release does. On a host whose `/proc` is mounted with `hidepid`, the panel cannot see other users' processes, so cloudflared may read "Not running" and a project's network "—".

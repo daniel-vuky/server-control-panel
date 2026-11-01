@@ -87,12 +87,14 @@ type Tunnel struct {
 	Hostnames *int
 }
 
-// Thresholds are the server's alert lines in percent (decision 12).
+// Thresholds are the server's alert lines in percent (decision 12). The
+// alerts service holds the saved ones (Settings → Alerts).
 type Thresholds struct {
 	CPUPercent, RAMPercent, DiskPercent int
 }
 
-// DefaultThresholds are constants until the thresholds become settings (#66).
+// DefaultThresholds are a new install's thresholds, the values the alerts
+// settings start from.
 var DefaultThresholds = Thresholds{CPUPercent: 90, RAMPercent: 90, DiskPercent: 85}
 
 // System is what the System info and System services cards show. Available

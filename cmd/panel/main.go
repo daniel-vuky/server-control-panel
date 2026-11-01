@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/daniel-vuky/server-control-panel/internal/alerts"
 	"github.com/daniel-vuky/server-control-panel/internal/api"
 	"github.com/daniel-vuky/server-control-panel/internal/auth"
 	"github.com/daniel-vuky/server-control-panel/internal/backup"
@@ -103,6 +105,36 @@ func run(log *slog.Logger) int {
 	if reason := cfg.DriveReason(); reason != "" {
 		log.Info("Google Drive is not configured", "reason", reason)
 	}
+
+	// Alerts: the channels and thresholds, and the notifier that delivers
+	// and records them. The notifier's worker may name the host before the
+	// Monitor exists, so the Monitor is read through an atomic pointer: the
+	// hostname docker info gave, else the container's own.
+	var monitorRef atomic.Pointer[metrics.Monitor]
+	host := func() string {
+		if m := monitorRef.Load(); m != nil {
+			if h, ok := m.Hostname(); ok {
+				return h
+			}
+		}
+		h, _ := os.Hostname()
+		return h
+	}
+	alertSvc, err := alerts.NewService(st, alerts.NewFactory(cfg, host), cfg.SecretKey, log)
+	if err != nil {
+		log.Error("cannot load the alert settings", "error", err)
+		return 1
+	}
+	frame := alerts.Frame{Host: host, Zone: cfg.Zone, PublicURL: cfg.PublicURL, Now: time.Now}
+	notifier := alerts.NewNotifier(st, alertSvc, frame, log)
+	if err := notifier.Start(context.Background()); err != nil {
+		log.Error("cannot start the alerts", "error", err)
+		return 1
+	}
+	// Registered before the backup manager's, so an early return closes the
+	// manager first: a backup ending in its drain can still raise.
+	defer notifier.Close()
+
 	recent := func(ctx context.Context) ([]project.Container, bool) {
 		return hub.RecentContainers(ctx, recentContainers)
 	}
@@ -113,6 +145,8 @@ func run(log *slog.Logger) int {
 	hub.SetDriveSource(driveSvc.Status)
 	backups.OnChange(hub.Publish)
 	driveSvc.OnChange(hub.Publish)
+	// A scheduled backup that fails or is refused raises an alert.
+	backups.OnEnded(notifier.BackupEnded)
 	backups.Start(context.Background())
 	defer backups.Close() // an early return; the shutdown below also waits
 	// The scheduler queues through the manager, so it starts after it and
@@ -134,8 +168,25 @@ func run(log *slog.Logger) int {
 		Now:             time.Now,
 		Log:             log,
 	})
+	monitorRef.Store(monitor)
 	monitor.Start(context.Background())
 	defer monitor.Close() // an early return; the shutdown below closes it first
+
+	// The watcher checks the server and the projects every 30 s and raises
+	// through the notifier. It reads Docker only from the hub's cache.
+	watcher := alerts.NewWatcher(alerts.Sources{
+		Tracked:    st.TrackedProjects,
+		Containers: hub.CachedContainers,
+		Inspect:    hub.RecentInspect,
+		Lock:       ctl.Lock,
+		Latest:     monitor.Latest,
+		Disks:      monitor.Disks,
+		Tunnel:     monitor.Tunnel,
+		Settings:   st.AlertSettings,
+		SetSeen:    st.SetTunnelSeenConnected,
+	}, notifier, alertSvc, frame, alerts.NewDomainClient(), log)
+	watcher.Start(context.Background())
+	defer watcher.Close() // an early return; the shutdown below closes it first
 
 	// Long-lived requests (the SSE streams) watch this context, so they
 	// return when shutdown begins and Shutdown does not wait for them.
@@ -158,6 +209,7 @@ func run(log *slog.Logger) int {
 			Drive:    driveSvc,
 			Backups:  backups,
 			Metrics:  monitor,
+			Alerts:   alertSvc,
 			Zone:     cfg.Zone,
 			Now:      time.Now,
 		}),
@@ -203,12 +255,16 @@ func run(log *slog.Logger) int {
 	// or queued backup ends interrupted.
 	waitCtx, cancelWait := context.WithTimeout(context.Background(), jobWait)
 	defer cancelWait()
+	watcher.Close() // no check raises after this
 	monitor.Close() // no sample is written after this
 	sched.Close()   // no scheduled backup is queued after this
 	backups.Close()
 	if err := backups.Wait(waitCtx); err != nil {
 		log.Warn("a backup is still stopping; the next start marks it interrupted", "error", err)
 	}
+	// After the backups' drain, which can still raise: the queued alerts are
+	// recorded interrupted and nothing more is sent.
+	notifier.Close()
 	if err := scans.Wait(waitCtx); err != nil {
 		log.Warn("a scan is still running; the next start marks it interrupted", "error", err)
 	}

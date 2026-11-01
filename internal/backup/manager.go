@@ -236,6 +236,7 @@ type Manager struct {
 	running  *job
 	reserved map[dbRef]*reservation
 	onChange []func()
+	onEnded  []func(store.Backup)
 	started  bool
 	closed   bool
 	cancel   context.CancelFunc
@@ -284,6 +285,27 @@ func (m *Manager) fire() {
 	m.mu.Unlock()
 	for _, fn := range fns {
 		fn()
+	}
+}
+
+// OnEnded registers fn, called once for every backup that ends with a stored
+// row: finished (ok, failed or interrupted), interrupted before it started and
+// refused, at enqueue or by the worker's re-check. A refusal that stores no row
+// (not_found, unknown_database, not_supported, already_running) does not call
+// it. fn gets a copy of the stored row, after the store write and outside the
+// Manager's lock. Set it before Start.
+func (m *Manager) OnEnded(fn func(store.Backup)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onEnded = append(m.onEnded, fn)
+}
+
+func (m *Manager) fireEnded(b store.Backup) {
+	m.mu.Lock()
+	fns := append([]func(store.Backup){}, m.onEnded...)
+	m.mu.Unlock()
+	for _, fn := range fns {
+		fn(copyBackup(b))
 	}
 }
 
@@ -780,7 +802,9 @@ func (m *Manager) refuse(ctx context.Context, row store.Backup, r *Refusal, s *s
 	if err := m.st.RecordActivity(sctx, activityOf(row), store.ResultRefused, r.Words); err != nil {
 		m.log.Error("backup: record the refusal", "project", row.ProjectID, "err", err)
 	}
+	row.ID = id
 	m.countNow(StateRefused, s)
+	m.fireEnded(row)
 	return r
 }
 
@@ -912,6 +936,7 @@ func (m *Manager) endUnstarted(j *job) {
 	m.persist(b)
 	m.recordUnstarted(b, store.ResultInterrupted, b.Error)
 	m.ended(j)
+	m.fireEnded(b)
 }
 
 // recordUnstarted records one finished backup.run activity for a backup that

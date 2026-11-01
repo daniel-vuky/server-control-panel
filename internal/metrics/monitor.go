@@ -170,8 +170,22 @@ func (m *Monitor) BootTime() (time.Time, bool) {
 	return t, err == nil
 }
 
-// Thresholds are the server's alert lines.
-func (m *Monitor) Thresholds() Thresholds { return DefaultThresholds }
+// Tunnel is cloudflared's state from the same 15 s cached probe the System
+// card uses (decision 14): a caller within 15 s of the last probe starts none.
+// A caller whose ctx ends while another probe runs gets Unknown. The alert
+// watcher bounds the call at 5 s.
+func (m *Monitor) Tunnel(ctx context.Context) Tunnel { return m.cloudflared(ctx) }
+
+// Hostname is the last good docker.info hostname, ok false before one. It
+// reads only that cache: it never runs a command or waits for a read.
+func (m *Monitor) Hostname() (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.haveInfo || m.info.Name == "" {
+		return "", false
+	}
+	return m.info.Name, true
+}
 
 // Disk returns the latest disk usage per tracked, present project; a project
 // never read is absent.

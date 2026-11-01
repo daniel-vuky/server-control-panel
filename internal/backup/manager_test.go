@@ -2132,3 +2132,203 @@ func TestCompressionSnapshotAtEnqueue(t *testing.T) {
 		t.Fatalf("row = %q %q", b.State, b.FileName)
 	}
 }
+
+// ended collects the rows OnEnded hands over.
+type ended struct {
+	mu   sync.Mutex
+	rows []store.Backup
+}
+
+func (c *ended) add(b store.Backup) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rows = append(c.rows, b)
+}
+
+func (c *ended) all() []store.Backup {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]store.Backup(nil), c.rows...)
+}
+
+// hookEnded registers a collector before the Manager starts.
+func (e *env) hookEnded() *ended {
+	c := &ended{}
+	e.m.OnEnded(c.add)
+	return c
+}
+
+// Every end of a backup that has a stored row calls OnEnded once, with that row.
+func TestOnEndedFiresForEveryEnd(t *testing.T) {
+	ctx := context.Background()
+	check := func(t *testing.T, e *env, got []store.Backup, id int64, state, step, startedBy, dbName string) {
+		t.Helper()
+		if len(got) != 1 {
+			t.Fatalf("OnEnded calls = %d, want 1: %+v", len(got), got)
+		}
+		b := got[0]
+		if b.ID != id || b.ID == 0 || b.State != state || b.FailedStep != step || b.StartedBy != startedBy ||
+			b.ProjectName != "Shop" || b.DBName != dbName || b.FinishedAt == nil {
+			t.Errorf("row = %+v, want id %d state %s step %q by %s on %s", b, id, state, step, startedBy, dbName)
+		}
+		if state != "ok" && b.Error == "" {
+			t.Errorf("row has no error: %+v", b)
+		}
+		stored, err := e.st.GetBackup(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.State != state || stored.Error != b.Error {
+			t.Errorf("the hook ran before the store write: stored %+v, hook %+v", stored, b)
+		}
+	}
+
+	t.Run("ok", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		c := e.hookEnded()
+		e.m.Start(ctx)
+		id := e.enqueue(t, keyPG)
+		waitFor(t, "the hook", func() bool { return len(c.all()) > 0 })
+		e.waitDone(t, id)
+		check(t, e, c.all(), id, "ok", "", actor, "shop")
+	})
+	t.Run("failed at dump", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		e.r.dump = func(_ context.Context, _ call, w io.Writer) ([]byte, error) {
+			_, _ = w.Write([]byte("-- partial\n"))
+			return []byte("pg_dump: error: boom\n"), &runner.ExitError{Code: 1, Stderr: "pg_dump: error: boom\n"}
+		}
+		c := e.hookEnded()
+		e.m.Start(ctx)
+		id := e.enqueue(t, keyPG)
+		waitFor(t, "the hook", func() bool { return len(c.all()) > 0 })
+		check(t, e, c.all(), id, "failed", "dump", actor, "shop")
+	})
+	t.Run("refused at enqueue", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		e.free.Store(1)
+		c := e.hookEnded()
+		_, err := e.m.Enqueue(ctx, e.shop, keyPG, ScheduleActor)
+		r := refusalOf(t, err)
+		if r.Code != CodeDiskShort || r.ID == 0 {
+			t.Fatalf("refusal = %+v", r)
+		}
+		got := c.all()
+		check(t, e, got, r.ID, "refused", "", "schedule", "shop")
+		if got[0].Error != r.Words {
+			t.Errorf("error = %q, want %q", got[0].Error, r.Words)
+		}
+	})
+	t.Run("refused by the worker's re-check", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		c := e.hookEnded()
+		id := e.enqueue(t, keyPG)
+		e.hub.setState("db", "exited")
+		e.m.Start(ctx)
+		waitFor(t, "the hook", func() bool { return len(c.all()) > 0 })
+		check(t, e, c.all(), id, "refused", "", actor, "shop")
+	})
+	t.Run("interrupted at Close", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		e.r.dump = func(ctx context.Context, _ call, w io.Writer) ([]byte, error) {
+			_, _ = w.Write([]byte("-- partial\n"))
+			<-ctx.Done()
+			return nil, fmt.Errorf("docker db.pg.dump: %w", ctx.Err())
+		}
+		c := e.hookEnded()
+		running := e.enqueue(t, keyPG)
+		queued := e.enqueue(t, keyMongo)
+		e.m.Start(ctx)
+		waitFor(t, "the dump", func() bool { return len(e.r.callsOf(isDumpAction)) == 1 })
+		e.m.Close()
+		wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := e.m.Wait(wctx); err != nil {
+			t.Fatal(err)
+		}
+		got := c.all()
+		if len(got) != 2 {
+			t.Fatalf("OnEnded calls = %d, want 2: %+v", len(got), got)
+		}
+		byID := map[int64]store.Backup{}
+		for _, b := range got {
+			byID[b.ID] = b
+		}
+		if b := byID[running]; b.State != "interrupted" || b.Error == "" || stepStates(b) != "dump=failed compress=skipped upload=skipped prune=skipped" || b.DBName != "shop" || b.ProjectName != "Shop" {
+			t.Errorf("running backup = %+v", b)
+		}
+		if b := byID[queued]; b.State != "interrupted" || b.Error == "" || b.DBName != "notes" || b.ProjectName != "Shop" || b.StartedBy != actor {
+			t.Errorf("queued backup = %+v", b)
+		}
+	})
+	t.Run("a hook gets a copy", func(t *testing.T) {
+		e := newEnv(t, envOpt{noStart: true})
+		e.m.OnEnded(func(b store.Backup) { b.Steps[0].State = "mangled" })
+		c := e.hookEnded()
+		e.m.Start(ctx)
+		id := e.enqueue(t, keyPG)
+		waitFor(t, "the hook", func() bool { return len(c.all()) > 0 })
+		if got := c.all()[0]; got.Steps[0].State == "mangled" {
+			t.Errorf("hooks share one row: %+v", got.Steps)
+		}
+		if b := e.waitDone(t, id); b.Steps[0].State != "done" {
+			t.Errorf("stored steps = %+v", b.Steps)
+		}
+	})
+}
+
+// A refusal that stores no row ends nothing: OnEnded stays silent.
+func TestOnEndedNotForUnstoredRefusal(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	c := e.hookEnded()
+	for _, key := range []string{"postgresql:nope:nope", keySQLite, keyHost} {
+		_, err := e.m.Enqueue(context.Background(), e.shop, key, Person(actor))
+		if r := refusalOf(t, err); r.ID != 0 {
+			t.Fatalf("%s: refusal stored a row: %+v", key, r)
+		}
+	}
+	id := e.enqueue(t, keyPG)
+	_, err := e.m.Enqueue(context.Background(), e.shop, keyPG, Person(actor))
+	if r := refusalOf(t, err); r.Code != CodeAlreadyRunning || r.ID != id {
+		t.Fatalf("refusal = %+v", r)
+	}
+	if got := c.all(); len(got) != 0 {
+		t.Errorf("OnEnded calls = %+v, want none", got)
+	}
+}
+
+// A successful backup.run activity finishes with "<size> · <duration>".
+func TestBackupRunSuccessReason(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, envOpt{noStart: true})
+	at := time.Date(2026, 11, 1, 2, 0, 2, 0, time.UTC)
+	e.m.now = func() time.Time { return at }
+	started := at.Add(-2 * time.Second)
+	row := e.m.newRow(e.shop, e.shop.Databases[0], actor)
+	row.State, row.StartedAt, row.SizeBytes = StateRunning, &started, 1<<20
+	row.Steps = newSteps(stepDone)
+	id, err := e.st.InsertBackup(ctx, row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.ID = id
+	actID, err := e.st.StartActivity(ctx, activityOf(row))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := &job{b: row, activityID: actID}
+	e.m.mu.Lock()
+	e.m.jobs[id] = j
+	e.m.mu.Unlock()
+	c := e.hookEnded()
+
+	e.m.finish(j)
+
+	acts := e.activity(t)
+	if len(acts) != 1 || acts[0].Result != store.ResultOK || acts[0].Reason != "1.0 MB · 2s" {
+		t.Fatalf("activity = %+v, want ok with reason 1.0 MB · 2s", acts)
+	}
+	if got := c.all(); len(got) != 1 || got[0].State != "ok" || got[0].SizeBytes != 1<<20 || got[0].DurationMS != 2000 {
+		t.Errorf("OnEnded = %+v", got)
+	}
+}

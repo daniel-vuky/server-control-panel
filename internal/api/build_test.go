@@ -26,3 +26,12 @@ func TestReleaseHasNoFakeDrive(t *testing.T) {
 		t.Errorf("NewClient = %T, want *drive.Google", drive.NewClient(cfg, t.TempDir()))
 	}
 }
+
+// A release build has no dev outbox: the path is the API's 404.
+func TestReleaseHasNoDevOutbox(t *testing.T) {
+	h := NewRouter(newTestDeps(t))
+	rec := do(h, http.MethodGet, "/api/alerts/dev-outbox")
+	if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != `{"error":"not found"}` {
+		t.Errorf("GET /api/alerts/dev-outbox = %d %s, want the API 404", rec.Code, rec.Body.String())
+	}
+}

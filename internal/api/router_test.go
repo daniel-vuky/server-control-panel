@@ -306,10 +306,13 @@ func configJSON(name string, services map[string]service) string {
 // testPublicURL is the panel's public origin in the test config.
 const testPublicURL = "http://localhost:5173"
 
+// testKey is PANEL_SECRET_KEY in the API tests.
+var testKey = bytes.Repeat([]byte{7}, 32)
+
 // testDriveConfig is a config whose DriveReason() is "" in both tag sets.
 func testDriveConfig() config.Config {
 	return config.Config{
-		SecretKey: bytes.Repeat([]byte{7}, 32), PublicURL: testPublicURL,
+		SecretKey: testKey, PublicURL: testPublicURL,
 		GoogleClientID: "client-id", GoogleClientSecret: "client-secret",
 	}
 }
@@ -318,8 +321,8 @@ func testDriveConfig() config.Config {
 // always allowed, a temp store, a guard over one temp root (resolved, so it
 // compares equal to stored paths), a fakeDocker, a scan manager, the
 // lifecycle controller and live hub on the same fake, a Drive service over
-// the fake Drive (not connected) and a started backup manager, wired as in
-// cmd/panel.
+// the fake Drive (not connected), a started backup manager and the alerts
+// service over the fake senders, wired as in cmd/panel.
 func newTestDeps(t *testing.T) Deps {
 	t.Helper()
 	return newTestDepsWith(t, nil)
@@ -396,6 +399,7 @@ func newTestDepsWith(t *testing.T, wrap func(drive.Client) drive.Client) Deps {
 		Drive:    drv,
 		Backups:  backups,
 		Metrics:  &fakeMonitor{},
+		Alerts:   alertsService(t, st, testKey),
 	}
 }
 

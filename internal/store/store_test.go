@@ -25,6 +25,44 @@ func open(t *testing.T) *Store {
 	return s
 }
 
+// openAt builds a database as it was at the given migration version: the
+// migrations up to it applied by hand and listed in schema_migrations, the
+// store not opened. The caller inserts rows with the returned handle, closes it
+// and opens the store to apply what is pending.
+func openAt(t *testing.T, version int) (*sql.DB, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "panel.db")
+	db, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, e := range entries { // ReadDir sorts by name, so by version
+		v := i + 1
+		if v > version {
+			break
+		}
+		body, err := migrationFS.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations VALUES (?, ?)`, v, formatTime(time.Now())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return db, path
+}
+
 func count(t *testing.T, db *sql.DB, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -41,8 +79,8 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open on a missing directory: %v", err)
 	}
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 9 {
-		t.Fatalf("schema_migrations has %d rows, want 9", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 10 {
+		t.Fatalf("schema_migrations has %d rows, want 10", n)
 	}
 	var applied string
 	if err := s.db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&applied); err != nil {
@@ -60,8 +98,8 @@ func TestMigrateFreshAndReopen(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 9 {
-		t.Fatalf("after reopen schema_migrations has %d rows, want 9", n)
+	if n := count(t, s.db, `SELECT count(*) FROM schema_migrations`); n != 10 {
+		t.Fatalf("after reopen schema_migrations has %d rows, want 10", n)
 	}
 	for _, table := range []string{"workspaces", "projects", "databases", "jobs", "activity"} {
 		if n := count(t, s.db, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table); n != 1 {

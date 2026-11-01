@@ -56,6 +56,14 @@ type Config struct {
 	// pinned by the owner: empty (the panel tries cloudflared's default ports),
 	// or 127.0.0.1, localhost or [::1] with a port. It is only ever on loopback.
 	CloudflaredMetrics string
+	// SMTP is the mail server for email alerts (SMTP_HOST, SMTP_PORT,
+	// SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM). It is the zero value, not
+	// Configured, when SMTP_HOST is empty.
+	SMTP SMTP
+	// DevRealAlerts is PANEL_DEV_REAL_ALERTS=1, read only in a dev build (false
+	// otherwise). It makes a dev build send alerts through the real Telegram and
+	// SMTP senders instead of the fake ones.
+	DevRealAlerts bool
 }
 
 // Load reads configuration through getenv (usually os.Getenv). It refuses any
@@ -105,6 +113,10 @@ func Load(getenv func(string) string) (Config, error) {
 	if err := validateCloudflared(cloudflared); err != nil {
 		return Config{}, err
 	}
+	smtp, err := parseSMTP(getenv)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		Addr:               addr,
 		AccessTeamDomain:   getenv("CF_ACCESS_TEAM_DOMAIN"),
@@ -118,6 +130,8 @@ func Load(getenv func(string) string) (Config, error) {
 		DevBackupMinFree:   minFree,
 		Zone:               zone,
 		CloudflaredMetrics: cloudflared,
+		SMTP:               smtp,
+		DevRealAlerts:      devRealAlerts(getenv),
 	}, nil
 }
 
