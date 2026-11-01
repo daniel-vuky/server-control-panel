@@ -38,7 +38,7 @@ That page shows your token in its address, so do not paste it into chats or tick
 2. Paste the **Bot token** and the **Chat ID** and save.
 3. Choose **Send test**. The row answers "Delivered", or says why not: "Telegram refused the bot token.", "Chat not found: send the bot a message first, or add it to the group.", "The bot was blocked or removed from the chat." or "Could not reach Telegram.".
 
-To change the chat later, choose **Edit** and leave the token empty to keep the stored one.
+To change the chat later, choose **Edit** and leave the token empty to keep the stored one. Likewise, leave the Chat ID empty to keep the current chat (its masked number shows in the field) and change only the token. If the panel cannot open the stored token (`PANEL_SECRET_KEY` changed), Edit asks for it again: "Enter the bot token again: the stored one cannot be opened."
 
 ## Email
 
@@ -93,7 +93,7 @@ Each problem alerts **once**. While it lasts nothing more is sent for it; when i
 | --- | --- | --- |
 | **CPU, RAM** of the server | The value stays **above** the threshold for the "Sustained for" time (default 5 minutes). Example: "CPU at 92 % for 5 min (threshold 90 %)". | "CPU back to 41 % (threshold 90 %)" on the first reading at or under the threshold. |
 | **Disk** | A disk is above the disk threshold for the same time, one alert per disk. Example: "Disk /var at 91 % (threshold 85 %)". | "Disk /var back to 80 % (threshold 85 %)" when it is at or under. |
-| **A project's CPU or RAM** | The project is above its own threshold from its Settings tab, or above the server-wide percentage if it has none, for the same time. A project's CPU is a share of the whole server; its RAM is in MB. | Back under the threshold. |
+| **A project's CPU or RAM** | The project is above its own threshold from its Settings tab, or above the server-wide percentage if it has none, for the same time. A project's CPU is a share of the whole server; its RAM is in MB. | Back under the threshold. A project that stops (nothing running) closes the problem silently. |
 | **Cloudflare Tunnel** | The tunnel was seen connected before and then reads disconnected or not running on **two checks in a row** (about 30 to 60 seconds, so a brief reconnect does not page you). A server that never had a tunnel never alerts. | "Cloudflare Tunnel connected again". |
 | **A project is in Error** | The project reads Error on two checks at least 30 seconds apart, for example a container that exited with an error code or keeps restarting. The message names the cause: the highest restart count, else the first exit reason, else "R of N containers running". | "<project> is running again" when it reads Running or Partial. A project that goes Stopped, is not found or is untracked closes the problem silently. |
 | **A public domain does not answer** | `https://<domain>/` fails **3 checks in a row** (one check a minute, only while the project is Running, Partial or Error). | "<domain> (<project>) is answering again" on the first answer. |
@@ -102,8 +102,8 @@ Each problem alerts **once**. While it lasts nothing more is sent for it; when i
 Details worth knowing:
 
 - "Over" means strictly above the threshold. The thresholds are in Settings → Alerts: CPU, RAM and disk percent (1 to 100) and "Sustained for" (1 to 60 minutes). The same values colour the Dashboard tiles and draw the lines on the Server charts.
-- **A project stopped through the panel never alerts.** A project that goes Stopped closes its Error and domain problems silently, and a stopped project's domain is not checked. A container killed for running out of memory exits with code 137 (and `docker stop` with 143), which the panel reads as Stopped, so an OOM-kill does **not** raise an Error alert.
-- **Domain checks** send one HTTPS GET to port 443 with a 10 second timeout, verify the certificate and follow no redirect. Any answer below 500 counts as the site answering (a redirect to the Access login or a 404 is an answer); a timeout, a connection or certificate error, or a 5xx counts as a failure. While the tunnel was seen connected and now reads down, domain failures are not counted, because the tunnel alert already names the cause.
+- **A project stopped through the panel never alerts.** A project that goes Stopped closes its Error and domain problems silently, and so does one whose containers all stop for its CPU and RAM problems (no "back to 0 %" message); a stopped project's domain is not checked. A container killed for running out of memory exits with code 137 (and `docker stop` with 143), which the panel reads as Stopped, so an OOM-kill does **not** raise an Error alert.
+- **Domain checks** send one HTTPS GET to port 443 with a 10 second timeout, verify the certificate and follow no redirect. Any answer below 500 counts as the site answering (a redirect to the Access login or a 404 is an answer); a timeout, a connection or certificate error, or a 5xx counts as a failure. While the tunnel was seen connected and now reads down, the domains are not checked at all, because the tunnel alert already names the cause. The count of failures in a row starts over when the project stops or is started, stopped or restarted through the panel, but not when Docker briefly does not answer.
 - **Scheduled backups only.** A backup someone starts never alerts. A scheduled run that fails or is refused does. An **interrupted** one (the panel was restarted while it ran, which every update does) never alerts, and neither does a run the scheduler skipped without storing a row (Drive not set up, a database that cannot be backed up, a backup of it already running).
 - A Docker that is down is not an alert yet.
 
@@ -117,7 +117,7 @@ At most **10 alerts leave the panel in any 5 minutes**, so a bad moment (every d
 
 - **Alert sent**: delivered to at least one channel (the line says which, and names a channel that failed).
 - **Not delivered**: every channel that was on failed. The reason is on the line. The panel tries a network failure twice, 30 seconds apart, and then gives up; the problem stays open, so it is not sent again.
-- **Not sent**: no channel was on, or the limit above was reached.
+- **Not sent**: no channel was on, the channels that are on cannot be used ("The alert channels that are on cannot be used; check Settings → Alerts.", for example a bot token the panel can no longer open), or the limit above was reached.
 
 Activity also lists backups and what people did, with chips for All, Actions, Backups and Alerts and a project filter.
 
