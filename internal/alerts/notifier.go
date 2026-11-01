@@ -481,12 +481,13 @@ func (n *Notifier) finish(ctx context.Context, d *delivery) {
 	n.end(ctx, d, result, channels, failed...)
 }
 
-// end finishes a delivery's row; the reason is the detail line, then words.
+// end finishes a delivery's row; the reason is the detail line (the title
+// for a one-line message), then words.
 func (n *Notifier) end(ctx context.Context, d *delivery, result string, channels []string, words ...string) {
 	if d.id == 0 {
 		return
 	}
-	reason := joinReason(append([]string{d.a.Message.Detail}, words...)...)
+	reason := joinReason(append([]string{d.a.Message.line()}, words...)...)
 	if err := n.st.FinishActivityWith(ctx, d.id, result, reason, channels); err != nil {
 		n.log.Error("alerts: cannot finish an alert's record", "action", d.a.Action, "error", err)
 	}
@@ -511,7 +512,7 @@ func (n *Notifier) activity(a Alert) store.Activity {
 // incident is left as it is: a raise was never stored, and a recovery's
 // incident stays open so the recovery is sent after the restart.
 func (n *Notifier) interrupt(ctx context.Context, it item) {
-	if err := n.st.RecordActivity(ctx, n.activity(it.a), store.ResultInterrupted, it.a.Message.Detail); err != nil {
+	if err := n.st.RecordActivity(ctx, n.activity(it.a), store.ResultInterrupted, it.a.Message.line()); err != nil {
 		n.log.Error("alerts: cannot record an interrupted alert", "action", it.a.Action, "error", err)
 	}
 }

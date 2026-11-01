@@ -49,6 +49,15 @@ func (m Message) Text() string {
 	return strings.Join(lines, "\n")
 }
 
+// line is the message's detail line for its activity row, or its title when
+// the message has a single line ("CPU at 92 % for 5 min (threshold 90 %)").
+func (m Message) line() string {
+	if m.Detail != "" {
+		return m.Detail
+	}
+	return m.Title
+}
+
 // Subject is the email subject: "[<host>] <title>".
 func (m Message) Subject(host string) string {
 	return "[" + host + "] " + m.Title
