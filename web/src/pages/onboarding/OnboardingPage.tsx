@@ -6,6 +6,7 @@ import type { ScanJob, ScanProgress, ScanResult, TrackItem } from '../../api/typ
 import { listWorkspaces } from '../../api/workspaces'
 import { LiveDim, useLive } from '../../app/live'
 import { BrandRow } from '../../components/PageHeader'
+import Skeleton from '../../components/Skeleton'
 import { useToast } from '../../components/Toast'
 import { plural } from '../../lib/plural'
 import { useRead } from '../../lib/useRead'
@@ -77,9 +78,10 @@ export default function OnboardingPage() {
   const { drive } = useLive()
   const [params, setParams] = useSearchParams()
   const urlStep = setupStep(params)
-  // Until the list answers, and when it fails, the page is the two-step Add a workspace.
-  const workspaces = useRead(listWorkspaces, 'workspaces').data
+  // A failed list read leaves the two-step Add a workspace; until it answers or fails the header is a skeleton.
+  const { data: workspaces, error: listError } = useRead(listWorkspaces, 'workspaces')
   const firstRun = urlStep !== null || workspaces?.length === 0
+  const modeKnown = urlStep !== null || workspaces !== null || listError !== ''
   // The Dashboard sends the id of a first scan that already runs.
   const location = useLocation()
   const [handedOff] = useState(() => handedOffScan(location.state))
@@ -328,8 +330,28 @@ export default function OnboardingPage() {
 
   return (
     <div className="flex flex-col items-center gap-8">
-      <BrandRow label={firstRun ? 'First-time setup' : 'Add a workspace'}>
-        <Stepper steps={firstRun ? FIRST_RUN_STEPS : ADD_STEPS} current={step} />
+      <BrandRow
+        label={
+          modeKnown ? (
+            firstRun ? (
+              'First-time setup'
+            ) : (
+              'Add a workspace'
+            )
+          ) : (
+            // A span, not Skeleton: the label sits inside a paragraph.
+            <span
+              aria-hidden="true"
+              className="inline-block h-3 w-28 animate-scp-pulse rounded bg-border align-middle"
+            />
+          )
+        }
+      >
+        {modeKnown ? (
+          <Stepper steps={firstRun ? FIRST_RUN_STEPS : ADD_STEPS} current={step} />
+        ) : (
+          <Skeleton className="h-6 w-56" />
+        )}
       </BrandRow>
       <LiveDim className="flex w-full flex-col items-center gap-8">{body}</LiveDim>
     </div>

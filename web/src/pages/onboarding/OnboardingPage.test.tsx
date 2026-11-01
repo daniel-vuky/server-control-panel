@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DriveStatus, ScanJob, ScanResult, ScanRow, Workspace } from '../../api/types.gen'
-import { makeDatabase } from '../../test/projects'
+import { makeDatabase, unanswered } from '../../test/projects'
 import { renderApp } from '../../test/renderApp'
 
 type Listener = (e: MessageEvent) => void
@@ -765,7 +765,6 @@ describe('onboarding, first-run setup', () => {
   })
 
   it('connected without a folder shows the folder select; Continue waits for a folder', async () => {
-    const withFolder = connected
     await firstRunAdd(drive({ state: 'connected', email: 'ops.backup@gmail.com' }))
     const select = await screen.findByLabelText('Destination folder')
     expect(screen.getByText('ops.backup@gmail.com')).toBeInTheDocument()
@@ -773,11 +772,50 @@ describe('onboarding, first-run setup', () => {
     expect(screen.getByRole('option', { name: '+ Create new folder…' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
     api((c) =>
-      c.method === 'POST' && c.url === '/api/drive/folder' ? [200, withFolder] : undefined,
+      c.method === 'POST' && c.url === '/api/drive/folder' ? [200, connected] : undefined,
     )
     fireEvent.change(select, { target: { value: 'f1' } })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled())
     expect(posts('/api/drive/folder')[0].body).toEqual({ id: 'f1' })
+  })
+
+  it('shows no header or steps while the workspace read is pending, then the right ones', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => unanswered(init)),
+    )
+    renderPage()
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Add project folder' }),
+    ).toBeInTheDocument()
+    await settled()
+    expect(screen.queryByText('· Add a workspace')).toBeNull()
+    expect(screen.queryByText('· First-time setup')).toBeNull()
+    expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull()
+  })
+
+  it('a failed workspace read falls back to Add a workspace with two steps', async () => {
+    api((c) => (c.url === '/api/workspaces' ? [500, { error: 'boom' }] : undefined))
+    renderPage()
+    expect(await screen.findByText('· Add a workspace')).toBeInTheDocument()
+    expect(steps().getAllByRole('listitem')).toHaveLength(2)
+  })
+
+  it('the Drive step shows a skeleton while the live Drive state is unknown; Continue is disabled', async () => {
+    api(setup([workspace]))
+    renderApp('/onboarding?step=drive&added=3')
+    expect(await screen.findByRole('status', { name: 'Loading Google Drive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Later' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Connect Google Drive' })).toBeNull()
+  })
+
+  it('an expired Drive offers Connect on the Drive step, with Continue disabled', async () => {
+    api(setup([workspace]))
+    renderApp('/onboarding?step=drive&added=3')
+    await pushDrive(drive({ state: 'expired', email: 'ops.backup@gmail.com' }))
+    expect(await screen.findByRole('button', { name: 'Connect Google Drive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
   })
 
   it('Later goes to Done and keeps it in the URL', async () => {

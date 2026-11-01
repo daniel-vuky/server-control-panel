@@ -111,7 +111,9 @@ export default function FolderPicker({
     setFolderIssue(null)
     setSaving(true)
     try {
-      onChange?.(await selectDriveFolder(value))
+      // Awaited first: an optional call skips evaluating its arguments when onChange is absent.
+      const next = await selectDriveFolder(value)
+      onChange?.(next)
     } catch (err) {
       const field = fieldError(err, 'id')
       if (field === null) {

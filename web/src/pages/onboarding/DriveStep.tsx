@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { connectDrive, DOCS_URL, type DriveIssue, driveIssue } from '../../api/drive'
 import type { DriveStatus } from '../../api/types.gen'
 import { useLive } from '../../app/live'
+import Skeleton from '../../components/Skeleton'
 import { usePageRestore } from '../../lib/usePageRestore'
 import FolderPicker, { Issue } from '../settings/FolderPicker'
 
@@ -44,9 +45,14 @@ export default function DriveStep({ added, onFinish }: Props) {
       </div>
 
       {status === null ? (
-        <p role="status" className="text-[13px] text-muted">
-          Loading Google Drive…
-        </p>
+        <div
+          role="status"
+          aria-busy="true"
+          aria-label="Loading Google Drive"
+          className="flex flex-col gap-3"
+        >
+          <Skeleton className="h-12 w-full" />
+        </div>
       ) : status.state === 'not_configured' ? (
         <NotConfigured reason={status.reason} />
       ) : status.state === 'connected' ? (
