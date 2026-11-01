@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -485,7 +484,8 @@ func (c *Controller) execute(ctx context.Context, t store.Tracked, a project.Act
 	if !ok {
 		return Result{Outcome: OutcomeFailed, Status: project.StatusUnknown, Message: "The project has no compose file."}, nil
 	}
-	secrets := scan.SecretValues(scan.ReadDotenv(filepath.Join(t.Path, ".env")))
+	// The masks read runs on the same detached context as the command.
+	secrets := scan.ReadProjectSecrets(ctx, c.cmd, t, c.log)
 	_, runErr := c.cmd.Run(ctx, runner.StackCompose, composeAction(a, override, t.StopTemplate), values, secrets)
 
 	rctx, cancel := context.WithTimeout(ctx, rereadTimeout)

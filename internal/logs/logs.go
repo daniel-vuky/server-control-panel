@@ -9,7 +9,6 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
-	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -294,7 +293,11 @@ func (s *stream) run() {
 	if s.key.service != "" {
 		values["service"] = s.key.service
 	}
-	secrets := scan.SecretValues(scan.ReadDotenv(filepath.Join(s.t.Path, ".env")))
+	secrets := scan.ReadProjectSecrets(s.ctx, s.m.r, s.t, s.m.log)
+	if s.ctx.Err() != nil { // every viewer left during the masks read
+		s.finish(EndReason{Reason: ReasonExited})
+		return
+	}
 
 	tail, follow := actions(override, s.key.service != "")
 	res, err := s.m.r.Run(s.ctx, runner.StackCompose, tail, values, secrets)

@@ -639,7 +639,7 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 	}
 	image := serviceImage(t.ServiceDetails, service)
 	p := plan{service: service, image: image, values: values, tool: dumpTool(db.Type, image),
-		secrets: scan.SecretValues(scan.ReadDotenv(filepath.Join(t.Path, ".env")))}
+		secrets: scan.ReadProjectSecrets(ctx, m.r, t, m.log)}
 	p.dump, p.size = actions(db.Type, byDefault, override)
 	return p, nil
 }

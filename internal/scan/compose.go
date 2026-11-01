@@ -15,13 +15,16 @@ import (
 )
 
 // ComposeService is one service of a compose project. Environment holds the
-// values compose resolved; it is used for database detection and is never
-// stored or returned as it is.
+// values compose resolved; it is used for database detection and masking and
+// is never stored or returned as it is. EnvFiles are the service's env_file
+// paths as compose printed them (absolute); their contents are not in the
+// config.
 type ComposeService struct {
 	Name          string
 	Image         string
 	ContainerName string
 	Environment   map[string]string
+	EnvFiles      []string
 	Ports         []string
 	Volumes       []project.Volume
 }
@@ -41,6 +44,7 @@ type rawService struct {
 	Image         string             `json:"image"`
 	ContainerName string             `json:"container_name"`
 	Environment   map[string]*string `json:"environment"`
+	EnvFile       json.RawMessage    `json:"env_file"`
 	Ports         []rawPort          `json:"ports"`
 	Volumes       []rawVolume        `json:"volumes"`
 }
@@ -85,6 +89,7 @@ func ParseConfig(stdout []byte) (ComposeConfig, error) {
 				svc.Environment[k] = *v
 			}
 		}
+		svc.EnvFiles = parseEnvFiles(s.EnvFile)
 		for _, p := range s.Ports {
 			svc.Ports = append(svc.Ports, formatPort(p))
 		}
@@ -95,6 +100,43 @@ func ParseConfig(stdout []byte) (ComposeConfig, error) {
 	}
 	sort.Slice(cfg.Services, func(i, j int) bool { return cfg.Services[i].Name < cfg.Services[j].Name })
 	return cfg, nil
+}
+
+// parseEnvFiles reads a service's env_file: a list of {"path": …} objects, as
+// compose prints it, or a list of plain strings or one string, as a compose
+// file may write it. Anything else, and an empty path, is left out.
+func parseEnvFiles(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		if one == "" {
+			return nil
+		}
+		return []string{one}
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return nil
+	}
+	var out []string
+	for _, item := range items {
+		var path string
+		if json.Unmarshal(item, &path) != nil {
+			var obj struct {
+				Path string `json:"path"`
+			}
+			if json.Unmarshal(item, &obj) != nil {
+				continue
+			}
+			path = obj.Path
+		}
+		if path != "" {
+			out = append(out, path)
+		}
+	}
+	return out
 }
 
 // formatPort renders published:target/protocol, or target/protocol when the

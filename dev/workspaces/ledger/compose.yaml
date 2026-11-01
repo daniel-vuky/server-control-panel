@@ -8,6 +8,10 @@ services:
     environment:
       POSTGRES_DB: ledger
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # A dev-only secret written in compose itself, not in .env: the panel
+      # masks it too (#14). Postgres ignores it; it shows as •••• wherever a
+      # log line or an error quotes it.
+      LEDGER_API_TOKEN: ledger-literal-dev-token
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init/postgres.sql:/docker-entrypoint-initdb.d/10-ledger.sql:ro

@@ -286,6 +286,50 @@ func TestDoMasksSecrets(t *testing.T) {
 	})
 }
 
+// TestDoMasksComposeSecrets: a value written in compose `environment:` and
+// one in an env_file are masked in the action's error and its activity row,
+// as the .env value is.
+func TestDoMasksComposeSecrets(t *testing.T) {
+	e := newEnv(t)
+	dir := e.dirs["shop"]
+	if err := os.WriteFile(filepath.Join(dir, "db.env"), []byte("API_TOKEN=filesecret3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"name":"shop","services":{"db":{"environment":{"DB_PW":"literal22"},"env_file":[{"path":"` +
+		filepath.Join(dir, "db.env") + `","required":true}]}}}`
+	e.cmd.set(runner.ComposeConfig, reply{stdout: cfg})
+	e.cmd.containers(stoppedOut("shop")).
+		on(runner.ComposeUp, reply{err: &runner.ExitError{Code: 1, Stderr: "bad literal22 and filesecret3 and devpassword"}})
+	res := e.do(t, "shop", project.ActionStart)
+	row := e.lastRow(t)
+	want := "bad •••• and •••• and ••••"
+	if res.Outcome != OutcomeFailed || res.Message != want || row.Reason != want {
+		t.Fatalf("result %+v, reason %q; want %q", res, row.Reason, want)
+	}
+	configs := e.cmd.callsOf(runner.ComposeConfig)
+	if len(configs) != 1 || configs[0].Values["dir"] != dir || !slices.Equal(configs[0].Secrets, []string{"devpassword"}) {
+		t.Fatalf("compose.config calls = %+v, want one masked by .env", configs)
+	}
+	up := e.cmd.callsOf(runner.ComposeUp)
+	for _, s := range []string{"literal22", "filesecret3", "devpassword"} {
+		if len(up) != 1 || !slices.Contains(up[0].Secrets, s) {
+			t.Fatalf("compose.up secrets = %+v, want %s", up, s)
+		}
+	}
+}
+
+// TestDoConfigReadFailsMasksDotenv: when the masks read fails, the action
+// still runs, masked by .env.
+func TestDoConfigReadFailsMasksDotenv(t *testing.T) {
+	e := newEnv(t)
+	e.cmd.set(runner.ComposeConfig, reply{err: &runner.ExitError{Code: 1, Stderr: "broken"}})
+	e.cmd.containers(stoppedOut("shop")).
+		on(runner.ComposeUp, reply{err: &runner.ExitError{Code: 1, Stderr: "bad devpassword"}})
+	if res := e.do(t, "shop", project.ActionStart); res.Message != "bad ••••" {
+		t.Fatalf("result %+v, want the .env value masked", res)
+	}
+}
+
 func TestDoTimeout(t *testing.T) {
 	e := newEnv(t)
 	e.cmd.containers(stoppedOut("shop")).on(runner.ComposeUp, reply{err: &runner.TimeoutError{After: runner.LifecycleTimeout}})

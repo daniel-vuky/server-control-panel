@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,6 +66,10 @@ type fakeRunner struct {
 	dump func(ctx context.Context, c call, w io.Writer) ([]byte, error)
 	// stop, when set, answers the dump stop action (nil: it succeeds).
 	stop func(ctx context.Context, c call) error
+	// config is what compose.config (the masks read) prints; "" is a config
+	// with no service. Those reads are kept in configs, not calls.
+	config  string
+	configs []call
 }
 
 func (r *fakeRunner) record(a runner.Action, v runner.Values, secrets []string) call {
@@ -80,6 +85,16 @@ func (r *fakeRunner) record(a runner.Action, v runner.Values, secrets []string) 
 }
 
 func (r *fakeRunner) Run(ctx context.Context, _ runner.Stack, a runner.Action, v runner.Values, secrets []string) (runner.Result, error) {
+	if a == runner.ComposeConfig || a == runner.ComposeConfigOverride {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.configs = append(r.configs, call{a: a, v: v, secrets: append([]string(nil), secrets...)})
+		out := r.config
+		if out == "" {
+			out = `{"name":"shop","services":{}}`
+		}
+		return runner.Result{Stdout: []byte(out)}, nil
+	}
 	c := r.record(a, v, secrets)
 	if isStopAction(a) {
 		r.mu.Lock()
@@ -606,6 +621,49 @@ func TestDumpFailureHintAndSkippedSteps(t *testing.T) {
 	// Nothing reached Drive.
 	if b.DriveFileID != "" || b.FileName == "" {
 		t.Errorf("drive file = %q, name = %q", b.DriveFileID, b.FileName)
+	}
+}
+
+// TestDumpErrorMasksComposeSecrets: a value written in compose
+// `environment:` and one in an env_file are masked in the dump error, the
+// hint and the activity row, and every command of the backup gets them.
+func TestDumpErrorMasksComposeSecrets(t *testing.T) {
+	e := newEnv(t)
+	if err := os.WriteFile(filepath.Join(e.shop.Path, "db.env"), []byte("API_TOKEN=filesecret3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.r.mu.Lock()
+	e.r.config = `{"name":"shop","services":{"db":{"environment":{"DB_PW":"literal22"},"env_file":[{"path":"` +
+		filepath.Join(e.shop.Path, "db.env") + `"}]}}}`
+	e.r.dump = func(context.Context, call, io.Writer) ([]byte, error) {
+		stderr := "pg_dump: error: password literal22 rejected, token filesecret3, " + devPass + "\n"
+		return []byte(stderr), &runner.ExitError{Code: 1, Stderr: stderr}
+	}
+	e.r.mu.Unlock()
+	b := e.waitDone(t, e.enqueue(t, keyPG))
+	if b.State != "failed" || b.FailedStep != "dump" || !strings.Contains(b.Error, "password •••• rejected, token ••••, ••••") {
+		t.Fatalf("row = %+v", b)
+	}
+	acts := e.activity(t)
+	if len(acts) != 1 || !strings.Contains(acts[0].Reason, "password •••• rejected") {
+		t.Fatalf("activity = %+v", acts)
+	}
+	for _, v := range []string{b.Error, b.Hint, acts[0].Reason} {
+		if strings.Contains(v, "literal22") || strings.Contains(v, "filesecret3") || strings.Contains(v, devPass) {
+			t.Fatalf("%q carries a secret", v)
+		}
+	}
+	for _, c := range e.r.callsOf(func(runner.Action) bool { return true }) {
+		for _, s := range []string{"literal22", "filesecret3", devPass} {
+			if !slices.Contains(c.secrets, s) {
+				t.Errorf("%s secrets = %v, want %s", c.a, c.secrets, s)
+			}
+		}
+	}
+	e.r.mu.Lock()
+	defer e.r.mu.Unlock()
+	if len(e.r.configs) == 0 || e.r.configs[0].a != runner.ComposeConfig || e.r.configs[0].v["dir"] != e.shop.Path {
+		t.Fatalf("config reads = %+v", e.r.configs)
 	}
 }
 
