@@ -635,9 +635,22 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 	}
 	image := serviceImage(t.ServiceDetails, service)
 	p := plan{service: service, image: image, values: values, tool: dumpTool(db.Type, image),
-		secrets: scan.ReadProjectSecrets(ctx, m.r, t, m.log)}
+		secrets: scan.ReadProjectSecrets(ctx, m.r, t, m.log, credentialVars(db)...)}
 	p.dump, p.size = actions(db.Type, byDefault, override)
 	return p, nil
+}
+
+// credentialVars are the names of a hand-added database's user and password
+// variables, whose values are masked whatever the names look like; none for
+// a detected database or the image's standard variables.
+func credentialVars(db project.Database) []string {
+	var out []string
+	for _, n := range []string{db.UserVar, db.PasswordVar} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // notSupportedWords words a not_supported database whose type and location

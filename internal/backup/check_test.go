@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -282,5 +285,58 @@ func TestDumpHintNamesCustomVariable(t *testing.T) {
 	b := e.waitDone(t, id)
 	if b.State != StateFailed || b.Hint != "Check APP_PASSWORD in the container's environment." {
 		t.Errorf("row = %+v", b)
+	}
+}
+
+// A hand-added database's user and password variables are masked whatever
+// their names: their .env values, the literals compose writes for them and
+// their env_file values, each of 4 characters or more, reach every command's
+// secrets even though DB_CRED and DB_LOGIN do not look like secrets. A
+// detected database's commands do not get them.
+func TestPlanMasksManualVariables(t *testing.T) {
+	e := newEnv(t, envOpt{noStart: true})
+	ctx := context.Background()
+	env := "DB_PASSWORD=" + devPass + "\nDB_CRED=dotenvcred1\nDB_LOGIN=abc\n"
+	if err := os.WriteFile(filepath.Join(e.shop.Path, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.shop.Path, "db.env"), []byte("DB_CRED=filecred22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.r.mu.Lock()
+	e.r.config = `{"name":"shop","services":{"db":{"environment":{"DB_CRED":"composecred3","DB_LOGIN":"reportuser","OTHER":"plainvalue"},` +
+		`"env_file":[{"path":"` + filepath.Join(e.shop.Path, "db.env") + `"}]}}}`
+	e.r.mu.Unlock()
+
+	if err := e.m.CheckDatabase(ctx, e.shop, handAdded("postgresql", "shop", "db", "DB_LOGIN", "DB_CRED")); err != nil {
+		t.Fatal(err)
+	}
+	calls := e.r.callsOf(isCheckAction)
+	if len(calls) != 1 {
+		t.Fatalf("checks = %+v", calls)
+	}
+	for _, s := range []string{devPass, "dotenvcred1", "filecred22", "composecred3", "reportuser"} {
+		if !slices.Contains(calls[0].secrets, s) {
+			t.Errorf("secrets = %v, want %s", calls[0].secrets, s)
+		}
+	}
+	for _, s := range []string{"abc", "plainvalue"} {
+		if slices.Contains(calls[0].secrets, s) {
+			t.Errorf("secrets = %v carry %s", calls[0].secrets, s)
+		}
+	}
+
+	detected, ok := findDatabase(e.shop, keyPG)
+	if !ok {
+		t.Fatal("no detected PostgreSQL database")
+	}
+	p, r := e.m.plan(ctx, e.shop, detected)
+	if r != nil {
+		t.Fatalf("refused %+v", r)
+	}
+	for _, s := range []string{"dotenvcred1", "composecred3", "reportuser"} {
+		if slices.Contains(p.secrets, s) {
+			t.Errorf("detected secrets = %v carry %s", p.secrets, s)
+		}
 	}
 }

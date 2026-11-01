@@ -308,3 +308,36 @@ func TestReadProjectSecretsNoComposeFile(t *testing.T) {
 		t.Fatalf("masks = %v, calls = %+v; want the .env masks and no command", got, f.calls)
 	}
 }
+
+// Named variables (a hand-added database's) are masked whatever their names
+// look like: from .env, from compose `environment:` and from an env_file
+// inside the folder, at 4 characters or more; with a failed config read, from
+// .env. Without names nothing changes.
+func TestProjectSecretsNamedVariables(t *testing.T) {
+	dir, _ := masksFixture(t)
+	writeFile(t, filepath.Join(dir, ".env"), "A_PASSWORD="+secretDotenv+"\nDB_CRED=dotenvcred1\nDB_LOGIN=abc\n")
+	writeFile(t, filepath.Join(dir, "db.env"), "TOKEN="+secretEnvFile+"\nDB_CRED=filecred22\n")
+	cfg := ComposeConfig{Services: []ComposeService{{
+		Name:        "db",
+		Environment: map[string]string{"DB_CRED": "composecred3", "DB_LOGIN": "reportuser", "LOG_LEVEL": "info"},
+		EnvFiles:    []string{filepath.Join(dir, "db.env")},
+	}}}
+	log := slog.New(slog.DiscardHandler)
+
+	got := ProjectSecrets(cfg, dir, log, "DB_LOGIN", "DB_CRED")
+	want := []string{"composecred3", "dotenvcred1", secretDotenv, "filecred22", secretEnvFile, "reportuser"}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("masks = %v, want %v", got, want)
+	}
+	if got := ProjectSecrets(cfg, dir, log); slices.Contains(got, "dotenvcred1") || slices.Contains(got, "reportuser") {
+		t.Fatalf("masks without names = %v", got)
+	}
+
+	f := newFakeCmd()
+	f.configs[dir] = fakeReply{err: &runner.ExitError{Code: 1}}
+	got = ReadProjectSecrets(context.Background(), f, trackedAt(dir, "compose.yaml"), log, "DB_CRED", "DB_LOGIN")
+	if !slices.Equal(got, []string{"dotenvcred1", secretDotenv}) {
+		t.Fatalf("fallback masks = %v", got)
+	}
+}

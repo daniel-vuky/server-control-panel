@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -28,8 +29,11 @@ var (
 // resolved) is inside dir, read up to 1 MiB; URL user and password parts
 // count, as SecretValues says. An env_file outside dir, or one that cannot be
 // resolved, is skipped with an Info log of its path only. The result is sorted
-// and has no duplicates; values under 4 characters are left out.
-func ProjectSecrets(cfg ComposeConfig, dir string, log *slog.Logger) []string {
+// and has no duplicates; values under 4 characters are left out. The values
+// of the variables in names (a hand-added database's user and password
+// variables) are masked from the same three sources whatever their names
+// look like.
+func ProjectSecrets(cfg ComposeConfig, dir string, log *slog.Logger, names ...string) []string {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -39,12 +43,15 @@ func ProjectSecrets(cfg ComposeConfig, dir string, log *slog.Logger) []string {
 			set[v] = struct{}{}
 		}
 	}
-	add(SecretValues(ReadDotenv(filepath.Join(dir, ".env"))))
+	dotenv := ReadDotenv(filepath.Join(dir, ".env"))
+	add(SecretValues(dotenv))
+	add(namedValues(dotenv, names))
 	realDir, dirErr := filepath.EvalSymlinks(dir)
 	for _, s := range cfg.Services {
 		for k, v := range s.Environment {
 			for _, lit := range literals(v) {
 				add(SecretValues(map[string]string{k: lit}))
+				add(namedValues(map[string]string{k: lit}, names))
 			}
 		}
 		for _, p := range s.EnvFiles {
@@ -53,7 +60,9 @@ func ProjectSecrets(cfg ComposeConfig, dir string, log *slog.Logger) []string {
 				log.Info("scan: an env_file that is not a file inside the project folder is not read for masks", "path", p)
 				continue
 			}
-			add(SecretValues(ReadDotenv(path)))
+			file := ReadDotenv(path)
+			add(SecretValues(file))
+			add(namedValues(file, names))
 		}
 	}
 	out := make([]string, 0, len(set))
@@ -61,6 +70,18 @@ func ProjectSecrets(cfg ComposeConfig, dir string, log *slog.Logger) []string {
 		out = append(out, v)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// namedValues are the values in env of the variables in names, whatever the
+// names look like, each of minSecretLen characters or more.
+func namedValues(env map[string]string, names []string) []string {
+	var out []string
+	for _, n := range names {
+		if v, ok := env[n]; ok && n != "" && len(v) >= minSecretLen {
+			out = append(out, v)
+		}
+	}
 	return out
 }
 
@@ -107,15 +128,17 @@ func envFileInside(p, dir, realDir string, dirErr error) (string, bool) {
 // it. When the read or the parse fails it returns the .env masks and logs a
 // Warn with the project and a code (exit, timeout, run, truncated or
 // unreadable), never the command's output, which can quote the compose file.
-// A read cut short by ctx is not logged.
-func ReadProjectSecrets(ctx context.Context, cmd Commander, t store.Tracked, log *slog.Logger) []string {
+// A read cut short by ctx is not logged. names are passed to ProjectSecrets
+// (and masked from the .env when the read fails).
+func ReadProjectSecrets(ctx context.Context, cmd Commander, t store.Tracked, log *slog.Logger, names ...string) []string {
 	if log == nil {
 		log = slog.Default()
 	}
-	dotenv := SecretValues(ReadDotenv(filepath.Join(t.Path, ".env")))
+	env := ReadDotenv(filepath.Join(t.Path, ".env"))
+	dotenv := SecretValues(env)
 	values, override, ok := t.ComposeValues()
 	if !ok {
-		return dotenv
+		return withNamed(dotenv, env, names)
 	}
 	action := runner.ComposeConfig
 	if override {
@@ -139,9 +162,21 @@ func ReadProjectSecrets(ctx context.Context, cmd Commander, t store.Tracked, log
 			log.Warn("scan: cannot read the compose config for masks; masking the .env values only",
 				"project", t.ID, "code", code)
 		}
-		return dotenv
+		return withNamed(dotenv, env, names)
 	}
-	return ProjectSecrets(cfg, t.Path, log)
+	return ProjectSecrets(cfg, t.Path, log, names...)
+}
+
+// withNamed is secrets plus the values in env of the variables in names,
+// sorted with no duplicates (the .env masks of a failed config read).
+func withNamed(secrets []string, env map[string]string, names []string) []string {
+	extra := namedValues(env, names)
+	if len(extra) == 0 {
+		return secrets
+	}
+	out := append(slices.Clone(secrets), extra...)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // errorCode names a runner error without its text.
