@@ -724,3 +724,57 @@ func TestRestartIgnoresTemplate(t *testing.T) {
 		t.Fatalf("restart %d, up %d, down %d calls; want 1, 1, 0", r, u, d)
 	}
 }
+
+// cancelAfterLock is a context that is cancelled from the moment project id
+// is locked: before the lock it never ends, after it Done is closed and Err
+// is context.Canceled. It stands for a client that goes away right after Do
+// took the lock, before its store calls.
+type cancelAfterLock struct {
+	context.Context
+	ctl  *Controller
+	id   int64
+	open chan struct{}
+}
+
+var closedDone = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
+
+func (c cancelAfterLock) Done() <-chan struct{} {
+	if _, in := c.ctl.InFlight(c.id); in {
+		return closedDone
+	}
+	return c.open
+}
+
+func (c cancelAfterLock) Err() error {
+	if _, in := c.ctl.InFlight(c.id); in {
+		return context.Canceled
+	}
+	return nil
+}
+
+// A client that goes away right after the lock is taken does not drop the
+// action: the re-read and the activity row run detached from its context, the
+// command runs, records its outcome and releases the lock.
+func TestDoSurvivesCancelRightAfterLock(t *testing.T) {
+	e := newEnv(t)
+	id := e.ids["shop"]
+	gate := make(chan struct{})
+	e.cmd.containers(runningOut("shop"), stoppedOut("shop")).on(runner.ComposeStop, reply{gate: gate})
+	ctx := cancelAfterLock{Context: context.Background(), ctl: e.ctl, id: id, open: make(chan struct{})}
+
+	_, err := e.ctl.Do(ctx, id, project.ActionStop, actor)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Do error = %v, want context.Canceled", err)
+	}
+	e.cmd.waitRunning(t, runner.ComposeStop, 1)
+	close(gate)
+	wctx, wcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer wcancel()
+	if err := e.ctl.Wait(wctx); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	wantRow(t, e, "shop", store.ActProjectStop, store.ResultOK, "")
+	if _, in := e.ctl.InFlight(id); in {
+		t.Fatal("shop is still locked")
+	}
+}
