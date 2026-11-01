@@ -77,8 +77,16 @@ describe('app shell', () => {
     expect(screen.queryByText(/Coming in/)).toBeNull()
   })
 
-  it('keeps the other routes as placeholders', () => {
+  it('maps /activity to the Activity page, not its placeholder', () => {
     renderAt('/activity')
+    // The page shows its header and a skeleton while its first read is on the way.
+    expect(screen.getByRole('heading', { level: 1, name: 'Activity' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+    expect(screen.queryByText(/Coming in/)).toBeNull()
+  })
+
+  it('keeps the other routes as placeholders', () => {
+    renderAt('/projects')
     expect(screen.getByText(/Coming in/)).toBeInTheDocument()
   })
 
