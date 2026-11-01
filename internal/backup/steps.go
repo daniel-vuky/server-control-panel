@@ -293,6 +293,8 @@ func (m *Manager) finish(j *job) {
 	m.mu.Unlock()
 	result, reason := store.ResultOK, ""
 	switch final.State {
+	case StateOK:
+		reason = formatBytes(final.SizeBytes) + " · " + formatDuration(time.Duration((final.DurationMS+500)/1000)*time.Second)
 	case StateFailed:
 		result, reason = store.ResultFailed, final.Error
 		if w := stepWords[final.FailedStep]; w != "" {
@@ -325,6 +327,7 @@ func (m *Manager) finish(j *job) {
 	m.mu.Unlock()
 	// Off the active list, so no batch can join it any more.
 	m.ended(j)
+	m.fireEnded(final)
 	m.fire()
 }
 

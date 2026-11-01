@@ -436,3 +436,67 @@ func TestMonitorLoadAndBootTime(t *testing.T) {
 		t.Error("New left the sampler's Tunnel hook unset")
 	}
 }
+
+// Tunnel is the same 15 s cached probe System reads: two calls within 15 s
+// probe once, and the answer is the cached state.
+func TestMonitorTunnelCached(t *testing.T) {
+	ctx := context.Background()
+	me := newMonitorEnv(t)
+	cs := newCloudflaredServer(t, "ready-200.json", http.StatusOK)
+	me.m.addrs = []string{cs.addr()}
+	me.write(me.proc, "4242/comm", "cloudflared\n")
+
+	if got := me.m.Tunnel(ctx); got.State != TunnelConnected {
+		t.Fatalf("Tunnel = %+v, want connected", got)
+	}
+	me.clock.add(14 * time.Second)
+	if got := me.m.Tunnel(ctx); got.State != TunnelConnected {
+		t.Fatalf("Tunnel within 15 s = %+v, want connected", got)
+	}
+	if n := cs.hitsOf("/ready"); n != 1 {
+		t.Fatalf("%d /ready requests for two calls within 15 s, want 1", n)
+	}
+	// System shares the cache with it.
+	me.m.System(ctx)
+	if n := cs.hitsOf("/ready"); n != 1 {
+		t.Fatalf("%d /ready requests after System, want 1", n)
+	}
+	me.clock.add(2 * time.Second)
+	if me.m.Tunnel(ctx); cs.hitsOf("/ready") != 2 {
+		t.Fatalf("%d /ready requests after 16 s, want 2", cs.hitsOf("/ready"))
+	}
+}
+
+// Hostname is the last good docker.info hostname from the cache: false before
+// any, never a Docker read of its own, and kept while Docker is down.
+func TestMonitorHostname(t *testing.T) {
+	ctx := context.Background()
+	me := newMonitorEnv(t)
+	me.listen()
+	me.cmd.set(runner.DockerInfo, string(fixture(t, "docker/info.json")), nil)
+
+	if h, ok := me.m.Hostname(); ok || h != "" {
+		t.Fatalf("Hostname before any docker.info = %q %v, want none", h, ok)
+	}
+	if n := me.cmd.total(); n != 0 {
+		t.Fatalf("Hostname ran %d commands, want 0", n)
+	}
+
+	me.setLatest(true)
+	me.m.System(ctx)
+	calls := me.cmd.total()
+	if h, ok := me.m.Hostname(); !ok || h != "docker-desktop" {
+		t.Fatalf("Hostname = %q %v, want docker-desktop", h, ok)
+	}
+	if n := me.cmd.total(); n != calls {
+		t.Fatalf("Hostname ran %d commands, want 0", n-calls)
+	}
+
+	// Docker down later: the last good hostname stays.
+	me.clock.add(2 * time.Minute)
+	me.setLatest(false)
+	me.m.System(ctx)
+	if h, ok := me.m.Hostname(); !ok || h != "docker-desktop" {
+		t.Fatalf("Hostname with Docker down = %q %v, want the last good one", h, ok)
+	}
+}

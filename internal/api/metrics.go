@@ -283,7 +283,7 @@ func (s *server) serverUsage(w http.ResponseWriter, r *http.Request) {
 // them, from the hub's container list when it is at most as old as the latest
 // tick may be; empty without one. It never reads Docker.
 func (s *server) cachedStatuses(ts []store.Tracked) map[int64]string {
-	cs, up, ok := s.Hub.CachedContainers(metrics.LatestMaxAge)
+	cs, _, up, ok := s.Hub.CachedContainers(metrics.LatestMaxAge)
 	if !ok {
 		return nil
 	}

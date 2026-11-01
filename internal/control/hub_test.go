@@ -1668,3 +1668,36 @@ func TestStateCarriesBatch(t *testing.T) {
 		t.Fatalf("batch after progress = %+v, want done 2", got.Batch)
 	}
 }
+
+// CachedContainers hands the alert watcher the list with the time it was read,
+// never reads Docker, and says nothing for a list older than maxAge.
+func TestCachedContainersReturnsReadTime(t *testing.T) {
+	e, h := newHubEnv(t, time.Hour)
+	if cs, at, up, ok := h.CachedContainers(time.Hour); ok || up || cs != nil || !at.IsZero() {
+		t.Fatalf("CachedContainers before any read = %v %v %v %v, want nothing", cs, at, up, ok)
+	}
+
+	e.cmd.on(runner.DockerPing, reply{}).containers(runningOut("shop"))
+	before := time.Now()
+	if s := h.Check(context.Background()); !s.DockerUp {
+		t.Fatalf("Check = %+v, want Docker up", s)
+	}
+	after := time.Now()
+	reads := e.cmd.count(runner.DockerPing) + e.cmd.count(runner.DockerContainers)
+
+	cs, at, up, ok := h.CachedContainers(time.Hour)
+	if !ok || !up || project.StatusOf(cs, "shop", []string{"app", "db"}) != project.StatusRunning {
+		t.Fatalf("CachedContainers = %v %v %v, want the running list", cs, up, ok)
+	}
+	if at.Before(before) || at.After(after) {
+		t.Fatalf("read at %s, want between %s and %s", at, before, after)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	if cs, at, _, ok := h.CachedContainers(time.Millisecond); ok || cs != nil || !at.IsZero() {
+		t.Fatalf("stale CachedContainers = %v %v %v, want nothing", cs, at, ok)
+	}
+	if n := e.cmd.count(runner.DockerPing) + e.cmd.count(runner.DockerContainers); n != reads {
+		t.Fatalf("%d Docker reads by CachedContainers, want none", n-reads)
+	}
+}

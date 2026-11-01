@@ -381,12 +381,17 @@ func (h *Hub) RecentContainers(ctx context.Context, maxAge time.Duration) (cs []
 	return h.Containers(ctx)
 }
 
-// CachedContainers returns the cached container list and whether Docker
-// answered, when the last read is at most maxAge old; ok is false otherwise
-// (or after a failed read). Like RecentStats it never reads Docker or waits
-// for a read. Callers must not modify cs.
-func (h *Hub) CachedContainers(maxAge time.Duration) (cs []project.Container, dockerUp, ok bool) {
-	return h.recent(maxAge)
+// CachedContainers returns the cached container list, when it was read, and
+// whether Docker answered, when the last read is at most maxAge old; ok is
+// false otherwise (or after a failed read), and at is then the zero time. Like
+// RecentStats it never reads Docker or waits for a read. Callers must not
+// modify cs.
+func (h *Hub) CachedContainers(maxAge time.Duration) (cs []project.Container, at time.Time, dockerUp, ok bool) {
+	cs, at, dockerUp, ok = h.recentAt(maxAge)
+	if !ok {
+		at = time.Time{}
+	}
+	return cs, at, dockerUp, ok
 }
 
 // Subscribe returns the current state and a channel of later ones. The
@@ -902,18 +907,24 @@ func (h *Hub) RecentInspect(maxAge time.Duration) (insp map[string]project.Inspe
 // When the last check found Docker down, it returns dockerUp false and ok. A
 // failed read is not reused: ok is false.
 func (h *Hub) recent(maxAge time.Duration) (cs []project.Container, dockerUp bool, ok bool) {
+	cs, _, dockerUp, ok = h.recentAt(maxAge)
+	return cs, dockerUp, ok
+}
+
+// recentAt is recent with the time the list was read.
+func (h *Hub) recentAt(maxAge time.Duration) (cs []project.Container, at time.Time, dockerUp bool, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.at.IsZero() || time.Since(h.at) > maxAge {
-		return nil, false, false
+		return nil, time.Time{}, false, false
 	}
 	if !h.dockerUp {
-		return nil, false, true
+		return nil, h.at, false, true
 	}
 	if !h.csOK {
-		return nil, false, false
+		return nil, time.Time{}, false, false
 	}
-	return h.cs, true, true
+	return h.cs, h.at, true, true
 }
 
 // lockChanged is called by the Controller after a lock take (fresh nil) or a
