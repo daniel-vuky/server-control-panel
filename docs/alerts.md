@@ -92,11 +92,11 @@ Each problem alerts **once**. While it lasts nothing more is sent for it; when i
 | Alert | When it is sent | Recovery |
 | --- | --- | --- |
 | **CPU, RAM** of the server | The value stays **above** the threshold for the "Sustained for" time (default 5 minutes). Example: "CPU at 92 % for 5 min (threshold 90 %)". | "CPU back to 41 % (threshold 90 %)" on the first reading at or under the threshold. |
-| **Disk** | A disk is above the disk threshold for the same time, one alert per disk. Example: "Disk /var at 91 % (threshold 85 %)". | "Disk /var back to 80 %" when it is at or under. |
+| **Disk** | A disk is above the disk threshold for the same time, one alert per disk. Example: "Disk /var at 91 % (threshold 85 %)". | "Disk /var back to 80 % (threshold 85 %)" when it is at or under. |
 | **A project's CPU or RAM** | The project is above its own threshold from its Settings tab, or above the server-wide percentage if it has none, for the same time. A project's CPU is a share of the whole server; its RAM is in MB. | Back under the threshold. |
 | **Cloudflare Tunnel** | The tunnel was seen connected before and then reads disconnected or not running on **two checks in a row** (about 30 to 60 seconds, so a brief reconnect does not page you). A server that never had a tunnel never alerts. | "Cloudflare Tunnel connected again". |
 | **A project is in Error** | The project reads Error on two checks at least 30 seconds apart, for example a container that exited with an error code or keeps restarting. The message names the cause: the highest restart count, else the first exit reason, else "R of N containers running". | "<project> is running again" when it reads Running or Partial. A project that goes Stopped, is not found or is untracked closes the problem silently. |
-| **A public domain does not answer** | `https://<domain>/` fails **3 checks in a row** (one check a minute, only while the project is Running, Partial or Error). | "<domain> is answering again" on the first answer. |
+| **A public domain does not answer** | `https://<domain>/` fails **3 checks in a row** (one check a minute, only while the project is Running, Partial or Error). | "<domain> (<project>) is answering again" on the first answer. |
 | **A scheduled backup fails** | A scheduled run fails or is refused. The message names the step, the reason and the hint. | None: each failed backup is its own event. |
 
 Details worth knowing:
