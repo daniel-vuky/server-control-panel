@@ -88,3 +88,13 @@ Server and project metrics (#59 to #63, #36) refine decision 1:
 - **Two tiers.** Raw 30-second samples are kept for 25 hours; 5-minute averages (rollups) are kept for the retention period (7 to 30 days, default 7, a Settings value). The 1-hour chart reads raw samples, 24 hours the rollups (288 points) and 7 days 30-minute averages of the rollups (336 points); the bucket containing now always comes from raw samples. A failed read is stored as a gap, never a zero. This keeps the database to a few MB.
 - **Pruning every hour, not daily.** The sampler rolls up once a 5-minute boundary has passed and prunes every hour from the same loop, always rolling up first, so no bucket is pruned before it is rolled. Saving a lower retention prunes at once and is recorded as `metrics.retention`.
 - **Disk usage every hour.** The disk use per app (`docker system df -v` for the volumes, then a capped walk of each project folder, one at a time) runs 2 minutes after start and then 60 minutes after each read ends, because the daemon walks every volume and layer for it. It is kept in memory only.
+
+## Note (2026-11-01, alerts)
+
+The alerts (#64 to #70) add two more loops to the panel process, with the same rules as the others: no process of their own, a mutex only around in-memory state and a clean stop at shutdown.
+
+- **The watcher** ticks every 30 s start to start, whether or not anyone watches. It reads the sampler's latest tick, the live disks, the tunnel, and the hub's cached container list (the sampler keeps that cache fresh), never Docker; every other pass it checks each public domain. It raises through the notifier and sweeps the stored incidents whose problem is no longer watched.
+- **The notifier** has one worker that takes alerts from a 100-alert queue, records each in `activity`, sends it and retries a network failure once. Callers never wait on it.
+- **Shutdown order**: the watcher, then the Monitor, the scheduler and the backup manager's drain (a backup ending there can still raise), then the notifier, which records what is still queued as interrupted, then the store. A raise after the notifier closed does nothing.
+
+Open incidents are stored (`alert_incidents`), not only held in memory, so a release that restarts the panel does not repeat an alert for a project that is still in Error. ADR 12 has the decision.
