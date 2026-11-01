@@ -504,7 +504,7 @@ func TestHappyPathStepsSizesFileActivityTempGone(t *testing.T) {
 	if len(sizes) != 2 || len(dumps) != 1 || dumps[0].a != runner.DBPgDump {
 		t.Fatalf("sizes = %+v, dumps = %+v", sizes, dumps)
 	}
-	want := runner.Values{"dir": e.shop.Path, "file": filepath.Join(e.shop.Path, "compose.yaml"), "service": "db", "dbname": "shop"}
+	want := runner.Values{"dir": e.shop.Path, "file": filepath.Join(e.shop.Path, "compose.yaml"), "service": "db", "dbname": "shop", "uservar": "", "passvar": ""}
 	if fmt.Sprint(dumps[0].v) != fmt.Sprint(want) {
 		t.Errorf("dump values = %v, want %v", dumps[0].v, want)
 	}
@@ -713,7 +713,7 @@ func TestDumpStoppedUnlessItExited(t *testing.T) {
 }
 
 func TestStopCall(t *testing.T) {
-	base := runner.Values{"dir": "/w/shop", "file": "/w/shop/compose.yaml", "service": "db", "dbname": "shop"}
+	base := runner.Values{"dir": "/w/shop", "file": "/w/shop/compose.yaml", "service": "db", "dbname": "shop", "uservar": "", "passvar": ""}
 	a, v := stopCall(plan{values: base})
 	if a != runner.DBDumpStop || fmt.Sprint(v) != fmt.Sprint(runner.Values{"dir": "/w/shop", "file": "/w/shop/compose.yaml", "service": "db"}) {
 		t.Errorf("plain: %s %v", a, v)
@@ -724,6 +724,38 @@ func TestStopCall(t *testing.T) {
 	over := runner.Values{"dir": "/w/shop", "file": "/w/shop/compose.yaml", "override": "/w/shop/o.yaml", "service": "db"}
 	if a, v := stopCall(plan{values: over}); a != runner.DBDumpStopOverride || len(v) != 4 {
 		t.Errorf("override: %s %v", a, v)
+	}
+}
+
+// The values a plan builds fill the real runner's templates exactly: argv
+// refuses a missing or an extra slot before anything runs, so the size read,
+// the dump and the stop all reach the (no-op) binary, the named actions with
+// the empty variable names and the default ones without them.
+func TestPlanValuesFitTheRunner(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r := &runner.Runner{Bin: "/bin/true", DataDir: t.TempDir()}
+	for _, k := range []string{keyPG, keyMySQL, keyMongo, keyPGPlace, keyMaria} {
+		var db project.Database
+		for _, d := range e.shop.Databases {
+			if project.DatabaseKey(d) == k {
+				db = d
+			}
+		}
+		p, refusal := e.m.plan(ctx, e.shop, db)
+		if refusal != nil {
+			t.Fatalf("%s: refused %+v", k, refusal)
+		}
+		if _, err := r.Run(ctx, runner.StackCompose, p.size, p.values, nil); err != nil {
+			t.Errorf("%s size %s: %v", k, p.size, err)
+		}
+		if _, err := r.RunTo(ctx, runner.StackCompose, p.dump, p.values, nil, io.Discard); err != nil {
+			t.Errorf("%s dump %s: %v", k, p.dump, err)
+		}
+		a, v := stopCall(p)
+		if _, err := r.Run(ctx, runner.StackCompose, a, v, nil); err != nil {
+			t.Errorf("%s stop %s: %v", k, a, err)
+		}
 	}
 }
 
@@ -1354,8 +1386,10 @@ func TestPlaceholderNames(t *testing.T) {
 	if len(dumps) != 1 || dumps[0].a != runner.DBPgDumpDefault || len(sizes) == 0 || sizes[0].a != runner.DBPgSizeDefault {
 		t.Fatalf("dumps = %+v, sizes = %+v", dumps, sizes)
 	}
-	if _, ok := dumps[0].v["dbname"]; ok {
-		t.Errorf("the default action got a dbname: %v", dumps[0].v)
+	for _, slot := range []string{"dbname", "uservar", "passvar"} {
+		if _, ok := dumps[0].v[slot]; ok {
+			t.Errorf("the default action got a %s: %v", slot, dumps[0].v)
+		}
 	}
 	if dumps[0].v["service"] != "pg2" {
 		t.Errorf("service = %q", dumps[0].v["service"])

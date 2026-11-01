@@ -632,7 +632,10 @@ func (m *Manager) plan(ctx context.Context, t store.Tracked, db project.Database
 	values["service"] = service
 	byDefault := db.Type == "postgresql" && project.NameIsPlaceholder(db, service)
 	if !byDefault {
+		// The named actions also take the user and password variable names;
+		// empty is the image's standard variables.
 		values["dbname"] = db.Name
+		values["uservar"], values["passvar"] = "", ""
 	}
 	image := serviceImage(t.ServiceDetails, service)
 	p := plan{service: service, image: image, values: values, tool: dumpTool(db.Type, image),
