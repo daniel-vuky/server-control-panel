@@ -41,6 +41,18 @@ func TestLoadSMTP(t *testing.T) {
 		}
 	})
 
+	t.Run("the host is lower-cased", func(t *testing.T) {
+		for in, want := range map[string]string{" Mail.X.IO ": "mail.x.io", "LOCALHOST": "localhost"} {
+			cfg, err := envLoad(map[string]string{"SMTP_HOST": in, "SMTP_FROM": "panel@x.io"})
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.SMTP.Host != want {
+				t.Errorf("SMTP_HOST %q: Host = %q, want %q", in, cfg.SMTP.Host, want)
+			}
+		}
+	})
+
 	t.Run("a from with a display name is accepted", func(t *testing.T) {
 		if _, err := envLoad(map[string]string{"SMTP_HOST": "h", "SMTP_FROM": "Panel <panel@x.io>"}); err != nil {
 			t.Errorf("Load: %v", err)

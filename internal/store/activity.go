@@ -85,11 +85,14 @@ type ActivityRow struct {
 	Channels       []string // the channels an alert went to; nil for other rows
 }
 
+// maxActivityPage is the largest page ListActivity returns.
+const maxActivityPage = 100
+
 // ActivityFilter selects rows for ListActivity. Kind is "" (everything),
 // "action" (not a backup or an alert), "backup" (backup.run, backup.all) or
 // "alert" (alert.*; alerts.channel and alerts.thresholds are actions).
 // ProjectID 0 means any project, Before 0 means from the newest, and Limit is
-// the page size.
+// the page size (1 to 100).
 type ActivityFilter struct {
 	Kind      string
 	ProjectID int64
@@ -202,8 +205,10 @@ func (s *Store) RecentActivity(ctx context.Context, limit int) ([]ActivityRow, e
 }
 
 // ListActivity returns one page of records, newest first by id, and whether
-// older ones match. An unknown Kind matches everything.
+// older ones match. An unknown Kind matches everything; Limit is clamped to 1
+// to 100.
 func (s *Store) ListActivity(ctx context.Context, f ActivityFilter) ([]ActivityEntry, bool, error) {
+	f.Limit = min(max(f.Limit, 1), maxActivityPage)
 	kind := f.Kind
 	if kind != "action" && kind != "backup" && kind != "alert" {
 		kind = ""

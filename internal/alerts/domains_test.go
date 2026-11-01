@@ -273,6 +273,9 @@ func TestDomainPausedOnlyWhileSeenTunnelDown(t *testing.T) {
 		if wr.isOpen(projectKey(wr.ids["shop-api"], "domain")) {
 			t.Fatal("domain failures were counted while the seen tunnel was down")
 		}
+		if got := ds.requests(); len(got) != 0 {
+			t.Fatalf("requests = %q while the seen tunnel was down, want none", got)
+		}
 		if !wr.isOpen(keyTunnel) {
 			t.Fatal("no tunnel alert")
 		}
@@ -318,5 +321,28 @@ func TestNewDomainClient(t *testing.T) {
 	}
 	if c.CheckRedirect == nil || !errors.Is(c.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Fatal("a redirect would be followed")
+	}
+}
+
+// Docker not answering (Unknown) is a blip, not a stop: the domain's count is
+// kept, while Stopped starts it over (TestDomainStoppedClosesSilently).
+func TestDomainUnknownKeepsCount(t *testing.T) {
+	wr, ds := domainRig(t, true)
+	key := projectKey(wr.ids["shop-api"], "domain")
+	ds.setStatus(http.StatusServiceUnavailable)
+	for range 2 {
+		wr.check()
+	}
+	wr.src.set(func(f *fakeSources) { f.dockerUp, f.cs = false, nil }) // Unknown
+	for range 2 {
+		wr.check()
+	}
+	if got := len(ds.requests()); got != 2 {
+		t.Fatalf("requests = %d, want 2 (none while Unknown)", got)
+	}
+	wr.setApp("shop-api", wr.clock.Now(), "running", shopDomain)
+	wr.check()
+	if !wr.isOpen(key) {
+		t.Fatal("the Unknown passes reset the failure count")
 	}
 }

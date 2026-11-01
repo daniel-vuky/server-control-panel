@@ -106,16 +106,18 @@ func (s *recSender) delivered() []Message {
 	return append([]Message(nil), s.got...)
 }
 
-// testTargets is the Targets seam, changed by the test.
+// testTargets is the Targets seam, changed by the test. unusable counts
+// channels that are on but could not be built (no Target for them).
 type testTargets struct {
-	mu   sync.Mutex
-	list []Target
+	mu       sync.Mutex
+	list     []Target
+	unusable int
 }
 
 func (t *testTargets) Targets() ([]Target, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return append([]Target(nil), t.list...), len(t.list)
+	return append([]Target(nil), t.list...), len(t.list) + t.unusable
 }
 
 func (t *testTargets) set(list ...Target) {
@@ -627,7 +629,7 @@ func TestCloseFinishesParkedAndQueued(t *testing.T) {
 	if rows[0].Result != store.ResultFailed || !strings.Contains(rows[0].Reason, "Telegram: The panel stopped before the retry.") {
 		t.Fatalf("parked row = %+v", rows[0])
 	}
-	if rows[1].Result != store.ResultFailed || !strings.Contains(rows[1].Reason, "Telegram: The panel stopped before the retry.") {
+	if rows[1].Result != store.ResultFailed || !strings.Contains(rows[1].Reason, "Telegram: The panel stopped before sending.") {
 		t.Fatalf("in-flight row = %+v", rows[1])
 	}
 	if rows[2].Result != store.ResultInterrupted || rows[2].Reason != "queued detail" {
@@ -674,5 +676,43 @@ func TestQueueFullDrops(t *testing.T) {
 	// The key stays open in memory, so the watcher does not raise it again.
 	if got := r.n.OpenKeys(); !slices.Equal(got, []string{"tunnel"}) {
 		t.Fatalf("OpenKeys = %v", got)
+	}
+}
+
+// A channel that is on but cannot be used (its token cannot be opened) is not
+// "no channel": the row says the channels that are on cannot be used.
+func TestNotifierChannelsOnButUnusable(t *testing.T) {
+	r := newRig(t, Frame{})
+	r.targets.unusable = 1
+	r.start(t)
+	r.n.Raise(oneOff("stuck"))
+	row := r.waitRows(t, "the not sent row", finished(1))[0]
+	want := "stuck detail · The alert channels that are on cannot be used; check Settings → Alerts."
+	if row.Result != store.ResultNotSent || row.Reason != want || len(row.Channels) != 0 {
+		t.Fatalf("row = %+v, want not_sent %q", row, want)
+	}
+}
+
+// A channel Close kept from being tried at all says so, not "before the
+// retry" (there was no retry).
+func TestCloseBeforeAChannelWasTried(t *testing.T) {
+	tg, em := &recSender{}, &recSender{}
+	blocked := make(chan struct{})
+	tg.setFn(func(ctx context.Context, _ Message) error {
+		close(blocked)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	r := newRig(t, Frame{}, Target{Name: ChannelTelegram, Sender: tg}, Target{Name: ChannelEmail, Sender: em})
+	r.start(t)
+	r.n.Raise(oneOff("cut"))
+	<-blocked
+	r.n.Close()
+	row := r.waitRows(t, "the finished row", finished(1))[0]
+	if row.Result != store.ResultFailed || !strings.Contains(row.Reason, "Email: The panel stopped before sending.") {
+		t.Fatalf("row = %+v", row)
+	}
+	if em.callCount() != 0 {
+		t.Fatalf("email was tried %d times", em.callCount())
 	}
 }

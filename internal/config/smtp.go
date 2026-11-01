@@ -24,11 +24,13 @@ type SMTP struct {
 func (s SMTP) Configured() bool { return s.Host != "" }
 
 // parseSMTP reads SMTP_HOST, SMTP_PORT (default 587), SMTP_USERNAME,
-// SMTP_PASSWORD and SMTP_FROM, all trimmed. Everything empty means email is not
-// set up. A host needs a valid SMTP_FROM; any other SMTP_* value without a host
-// is an error naming SMTP_HOST. No error contains the password.
+// SMTP_PASSWORD and SMTP_FROM, all trimmed, the host lower-cased once (so the
+// local-relay check and smtp.PlainAuth's host check see the same name).
+// Everything empty means email is not set up. A host needs a valid SMTP_FROM;
+// any other SMTP_* value without a host is an error naming SMTP_HOST. No error
+// contains the password.
 func parseSMTP(getenv func(string) string) (SMTP, error) {
-	host := strings.TrimSpace(getenv("SMTP_HOST"))
+	host := strings.ToLower(strings.TrimSpace(getenv("SMTP_HOST")))
 	portValue := strings.TrimSpace(getenv("SMTP_PORT"))
 	user := strings.TrimSpace(getenv("SMTP_USERNAME"))
 	pass := strings.TrimSpace(getenv("SMTP_PASSWORD"))

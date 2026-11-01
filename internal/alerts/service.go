@@ -23,6 +23,7 @@ const (
 	wordsMinutes     = "Enter a whole number from 1 to 60."
 	wordsBot         = "Enter the bot token from BotFather, like 123456789:AAH…"
 	wordsChat        = "Enter the numeric chat id, like -1001234567890."
+	wordsBotAgain    = "Enter the bot token again: the stored one cannot be opened."
 	wordsRecipients  = "Enter 1 to 10 email addresses, separated by commas or new lines."
 
 	testTimeout  = 20 * time.Second
@@ -233,10 +234,11 @@ func (s *Service) Sustained() time.Duration {
 }
 
 // SaveTelegram stores the bot token (sealed) and the chat id. An empty token
-// keeps the stored one; a given one is always sealed again and reads "token
-// changed". A new channel starts on. changes is "" when nothing
-// changed (nothing is written), else the reason text for activity; it never
-// holds the token.
+// keeps the stored one, unless it cannot be opened (the key changed): then it
+// must be entered again. A given one is always sealed again and reads "token
+// changed". An empty chat id keeps the stored one (a new channel needs one).
+// A new channel starts on. changes is "" when nothing changed (nothing is
+// written), else the reason text for activity; it never holds the token.
 func (s *Service) SaveTelegram(ctx context.Context, token, chatID string) (string, error) {
 	if !s.canSeal() {
 		return "", ErrNoSecretKey
@@ -245,11 +247,16 @@ func (s *Service) SaveTelegram(ctx context.Context, token, chatID string) (strin
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	cur := s.state(store.ChannelTelegram)
+	if chatID == "" && cur.exists {
+		chatID = cur.ch.ChatID
+	}
 	switch {
 	case token != "" && !tokenPattern.MatchString(token):
 		return "", &FieldError{Field: "token", Code: FieldInvalid, Message: wordsBot}
 	case token == "" && (!cur.exists || cur.ch.SealedToken == ""):
 		return "", &FieldError{Field: "token", Code: FieldRequired, Message: wordsBot}
+	case token == "" && cur.hint == "": // the stored seal cannot be opened
+		return "", &FieldError{Field: "token", Code: FieldRequired, Message: wordsBotAgain}
 	case !chatPattern.MatchString(chatID):
 		code := FieldInvalid
 		if chatID == "" {
@@ -450,22 +457,21 @@ func (s *Service) sender(kind string, c store.AlertChannel) (Sender, bool) {
 }
 
 // Targets returns the channels a message goes to now (set up and on, Telegram
-// first) and how many channels are set up at all.
-func (s *Service) Targets() (enabled []Target, configured int) {
+// first) and how many channels are set up and on, including any that cannot
+// be built (a token that cannot be opened), so the notifier can tell "no
+// channel is on" from "the channels that are on cannot be used".
+func (s *Service) Targets() (enabled []Target, on int) {
 	for _, kind := range []string{store.ChannelTelegram, store.ChannelEmail} {
 		st := s.state(kind)
-		if !st.exists {
+		if !st.exists || !st.ch.Enabled {
 			continue
 		}
-		configured++
-		if !st.ch.Enabled {
-			continue
-		}
+		on++
 		if snd, ok := s.sender(kind, st.ch); ok {
 			enabled = append(enabled, Target{Name: kind, Sender: snd})
 		}
 	}
-	return enabled, configured
+	return enabled, on
 }
 
 // Test sends a test message through a channel, on or off. ErrNotConfigured

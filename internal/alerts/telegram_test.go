@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const testToken = "123456789:AAHsecretsecretsecretsecretsecret_-x"
@@ -227,5 +228,48 @@ func TestTelegramDefaultClient(t *testing.T) {
 	}
 	if tr == http.DefaultTransport {
 		t.Fatal("the shared default transport was changed")
+	}
+}
+
+// Telegram refuses a text over 4096 characters: a longer message is cut to
+// 4000 runes, its beginning kept, ending with "…".
+func TestTelegramCutsLongText(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		text string
+	)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		text = r.PostForm.Get("text")
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	tg := NewTelegram(srv.URL, testToken, "1", srv.Client())
+
+	long := Message{Title: "Scheduled backup failed: crm · crm_db", Detail: strings.Repeat("é", 5000)}
+	if err := tg.Send(context.Background(), long); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	mu.Lock()
+	got := text
+	mu.Unlock()
+	if n := utf8.RuneCountInString(got); n != 4000 {
+		t.Fatalf("text has %d runes, want 4000", n)
+	}
+	if !strings.HasPrefix(got, "🔴 Scheduled backup failed: crm · crm_db\n") || !strings.HasSuffix(got, "é…") {
+		t.Fatalf("text = %q…%q", got[:60], got[len(got)-10:])
+	}
+
+	short := testMessage()
+	if err := tg.Send(context.Background(), short); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	mu.Lock()
+	got = text
+	mu.Unlock()
+	if got != short.Text() {
+		t.Fatalf("a short text was changed: %q", got)
 	}
 }

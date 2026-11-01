@@ -353,6 +353,25 @@ func TestListActivityFilters(t *testing.T) {
 	}
 }
 
+// The page size is clamped to 1 to 100, whatever the caller passes.
+func TestListActivityClampsLimit(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	rows := make([]Activity, 102)
+	for i := range rows {
+		rows[i] = Activity{Action: ActScanStart, Target: "/srv"}
+	}
+	seedActivity(t, s, rows)
+	for _, c := range []struct {
+		limit, want int
+	}{{0, 1}, {-5, 1}, {1000, 100}, {100, 100}} {
+		got, more, err := s.ListActivity(ctx, ActivityFilter{Limit: c.limit})
+		if err != nil || len(got) != c.want || !more {
+			t.Errorf("Limit %d: %d rows more=%v err=%v, want %d and more", c.limit, len(got), more, err, c.want)
+		}
+	}
+}
+
 func TestListActivityProjectTracked(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)

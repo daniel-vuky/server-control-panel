@@ -182,15 +182,15 @@ func (w *Watcher) safePass(ctx context.Context) {
 	w.Pass(ctx)
 }
 
-// Pass is one pass: read every source, check the domains on every other pass,
-// decide, then raise, recover and close. A pass cut short by ctx decides
-// nothing.
+// Pass is one pass: read every source, check the domains on every other pass
+// (not while a seen tunnel is down: nothing would be counted), decide, then
+// raise, recover and close. A pass cut short by ctx decides nothing.
 func (w *Watcher) Pass(ctx context.Context) {
 	in := w.read(ctx)
 	if ctx.Err() != nil {
 		return
 	}
-	if in.domainPass {
+	if in.domainPass && !in.domainsPaused {
 		in.domains = w.checkDomains(ctx, in.views)
 		if ctx.Err() != nil {
 			return
@@ -208,6 +208,7 @@ type observed struct {
 	tick       metrics.Tick
 	tickOK     bool // a tick at most metrics.LatestMaxAge old
 	disks      []metrics.Disk
+	disksReal  bool // disks is the mount table's list, not the fallback row
 	tunnel     metrics.TunnelState
 	settings   *store.AlertSettings // read until it has been once
 	tracked    []store.Tracked
@@ -217,7 +218,10 @@ type observed struct {
 	readAt     time.Time // when the hub read the containers
 	open       map[string]bool
 	domainPass bool
-	domains    map[int64]domainResult
+	// domainsPaused: the tunnel, seen connected, reads down, so domain
+	// failures are not counted and the domains are not checked.
+	domainsPaused bool
+	domains       map[int64]domainResult
 }
 
 // read reads every source, outside mu.
@@ -233,12 +237,14 @@ func (w *Watcher) read(ctx context.Context) observed {
 		in.tickOK = in.tickOK && !in.tick.At.IsZero() && in.now.Sub(in.tick.At) <= metrics.LatestMaxAge
 	}
 	if w.src.Disks != nil {
-		in.disks, _ = w.src.Disks()
+		var fallback bool
+		in.disks, fallback = w.src.Disks()
+		in.disksReal = !fallback && len(in.disks) > 0
 	}
 	in.tunnel = w.readTunnel(ctx)
 
 	w.mu.Lock()
-	loaded := w.seenLoaded
+	loaded, seen := w.seenLoaded, w.seen
 	in.domainPass = w.passes%2 == 0
 	w.passes++
 	w.mu.Unlock()
@@ -247,8 +253,10 @@ func (w *Watcher) read(ctx context.Context) observed {
 			w.log.Warn("alerts: cannot read the alert settings", "error", err)
 		} else {
 			in.settings = &s
+			seen = seen || s.TunnelSeenConnected
 		}
 	}
+	in.domainsPaused = seen && tunnelIsDown(in.tunnel)
 
 	if w.src.Tracked != nil {
 		if ts, err := w.src.Tracked(ctx); err != nil {
@@ -428,6 +436,7 @@ func (w *Watcher) decideResources(in observed, d *decision) {
 		rs = append(rs, serverReadings(in)...)
 		if in.trackedOK {
 			rs = append(rs, projectReadings(in)...)
+			w.stoppedProjects(in, d)
 		}
 	}
 	rs = append(rs, diskReadings(in)...)
@@ -444,6 +453,24 @@ func (w *Watcher) decideResources(in observed, d *decision) {
 		}
 		if r.at.Sub(first) >= in.sustained {
 			d.raise(r.key, r.alert)
+		}
+	}
+}
+
+// stoppedProjects drops the CPU and RAM timers of each present project the
+// tick read with nothing running, and closes their incidents silently: a
+// project stopped on purpose is not a recovery (decisions 14 and 15), and its
+// zeros are no reading. Called only for a tick just evaluated.
+func (w *Watcher) stoppedProjects(in observed, d *decision) {
+	for _, t := range in.tracked {
+		p, ok := in.tick.Projects[t.ID]
+		if !ok || p.Running || t.MissingSince != nil {
+			continue
+		}
+		for _, kind := range []string{"cpu", "ram"} {
+			key := projectKey(t.ID, kind)
+			delete(w.over, key)
+			d.close(key)
 		}
 	}
 }
@@ -493,9 +520,10 @@ func diskReadings(in observed) []reading {
 	return rs
 }
 
-// projectReadings are each present project's CPU as a share of the server
-// (Docker's % over the cores) and its RAM, against its own thresholds or the
-// server-wide percentages (decision 10).
+// projectReadings are each present, running project's CPU as a share of the
+// server (Docker's % over the cores) and its RAM, against its own thresholds
+// or the server-wide percentages (decision 10). A project the tick read with
+// nothing running has no reading (stoppedProjects closes its incidents).
 func projectReadings(in observed) []reading {
 	cores := float64(max(1, in.tick.Cores))
 	sus := minutes(in.sustained)
@@ -506,7 +534,7 @@ func projectReadings(in observed) []reading {
 	var rs []reading
 	for _, t := range in.tracked {
 		p, ok := in.tick.Projects[t.ID]
-		if !ok || t.MissingSince != nil {
+		if !ok || !p.Running || t.MissingSince != nil {
 			continue
 		}
 		alert := func(title string) Alert {
@@ -578,10 +606,10 @@ func (w *Watcher) decideTunnel(in observed, d *decision) {
 	}
 }
 
-// tunnelDown is whether the tunnel, once seen connected, reads down now:
-// domain failures are then not counted (the tunnel alert names the cause).
-func (w *Watcher) tunnelDown(in observed) bool {
-	return w.seen && (in.tunnel == metrics.TunnelDisconnected || in.tunnel == metrics.TunnelNotRunning)
+// tunnelIsDown is whether a tunnel read counts as down: disconnected or not
+// running, as the Dashboard treats it.
+func tunnelIsDown(s metrics.TunnelState) bool {
+	return s == metrics.TunnelDisconnected || s == metrics.TunnelNotRunning
 }
 
 // decideProjects raises Error when a project is Error on two reads at least
@@ -611,12 +639,12 @@ func (w *Watcher) decideProjects(in observed, d *decision) {
 	}
 }
 
-// decideDomains counts each checked domain's failures in a row (not while a
-// seen tunnel is down), raises at 3 and recovers on the first answer. A
-// project that is not checked starts over; one Stopped or Not found closes
-// its incident silently, and so does a changed domain.
+// decideDomains counts each checked domain's failures in a row (no domain
+// is checked while a seen tunnel is down), raises at 3 and recovers on the
+// first answer. A project Stopped, Not found or in flight starts over, and
+// one Stopped or Not found closes its incident silently, as does a changed
+// domain; Unknown (Docker not answering) keeps the count.
 func (w *Watcher) decideDomains(in observed, d *decision) {
-	paused := w.tunnelDown(in)
 	for _, v := range in.views {
 		key := projectKey(v.ID, "domain")
 		domain, name := v.PublicDomain, v.DisplayName
@@ -633,9 +661,13 @@ func (w *Watcher) decideDomains(in observed, d *decision) {
 			w.domains[v.ID] = st
 		}
 		if !domainChecked(v.Status) {
-			st.fails = 0
-			if v.Status == project.StatusStopped || v.Status == project.StatusNotFound {
+			switch v.Status {
+			case project.StatusUnknown: // Docker did not answer: a blip, the count is kept
+			case project.StatusStopped, project.StatusNotFound:
+				st.fails = 0
 				d.close(key)
+			default: // in flight
+				st.fails = 0
 			}
 			continue
 		}
@@ -648,9 +680,6 @@ func (w *Watcher) decideDomains(in observed, d *decision) {
 			d.recover(key, Alert{ProjectID: v.ID, Target: name, Message: Message{Title: domain + " (" + name + ") is answering again"}})
 			continue
 		}
-		if paused {
-			continue
-		}
 		st.fails++
 		if st.fails >= domainFailures {
 			d.raise(key, Alert{ProjectID: v.ID, Action: store.ActAlertDomain, Target: name,
@@ -661,10 +690,11 @@ func (w *Watcher) decideDomains(in observed, d *decision) {
 
 // sweep closes, silently, the open incidents nothing watches any more: a disk
 // that left the list, a project no longer tracked and present, a public
-// domain cleared. A source that could not be read sweeps nothing.
+// domain cleared. A source that could not be read sweeps nothing, and the
+// fallback disk row counts as an unread disk list.
 func (w *Watcher) sweep(in observed, d *decision) {
 	var mounts map[string]bool
-	if len(in.disks) > 0 {
+	if in.disksReal {
 		mounts = map[string]bool{}
 		for _, dk := range in.disks {
 			mounts[dk.Mount] = true
@@ -714,7 +744,7 @@ func (w *Watcher) forget(in observed) {
 					delete(w.over, key)
 				}
 			}
-		case strings.HasPrefix(key, keyDiskPfx) && len(in.disks) > 0:
+		case strings.HasPrefix(key, keyDiskPfx) && in.disksReal:
 			if !hasMount(in.disks, strings.TrimPrefix(key, keyDiskPfx)) {
 				delete(w.over, key)
 			}

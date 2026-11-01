@@ -269,8 +269,9 @@ func TestSetEnabledOffLeavesTargetsEmpty(t *testing.T) {
 	if err != nil || changes != "on → off" {
 		t.Fatalf("changes %q err %v", changes, err)
 	}
-	if targets, configured := svc.Targets(); len(targets) != 0 || configured != 1 {
-		t.Errorf("targets = %v configured = %d", targets, configured)
+	// Off: neither a target nor counted as on.
+	if targets, on := svc.Targets(); len(targets) != 0 || on != 0 {
+		t.Errorf("targets = %v on = %d", targets, on)
 	}
 	if v := svc.View(); v.Telegram.Enabled || !v.Telegram.Configured {
 		t.Errorf("view = %+v", v.Telegram)
@@ -473,5 +474,74 @@ func TestTestUsesChannelEvenWhenOff(t *testing.T) {
 	}
 	if _, err := svc.Test(ctx, "sms"); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("unknown kind: err = %v", err)
+	}
+}
+
+// Editing with the chat id empty keeps the stored chat; a new channel still
+// needs one.
+func TestSaveTelegramEmptyChatKeepsStored(t *testing.T) {
+	ctx := context.Background()
+	svc, st, f := newTestService(t, testKey, "")
+	_, err := svc.SaveTelegram(ctx, svcToken, "")
+	if fe := fieldOf(t, err); fe.Field != "chatId" || fe.Code != FieldRequired {
+		t.Fatalf("new channel without a chat: %+v", fe)
+	}
+	if _, err := svc.SaveTelegram(ctx, svcToken, svcChat); err != nil {
+		t.Fatal(err)
+	}
+	before := channelsOf(t, st)[store.ChannelTelegram]
+
+	changes, err := svc.SaveTelegram(ctx, "", "  ")
+	if err != nil || changes != "" {
+		t.Fatalf("nothing given: changes %q err %v", changes, err)
+	}
+	if after := channelsOf(t, st)[store.ChannelTelegram]; after.ChatID != svcChat || after.SealedToken != before.SealedToken {
+		t.Fatalf("stored = %+v, want it unchanged", after)
+	}
+
+	other := "987654321:BBBdqTcvCH1vGWJxfSeofSAs0K5PALDsawX"
+	changes, err = svc.SaveTelegram(ctx, other, "")
+	if err != nil || changes != "token changed" {
+		t.Fatalf("token only: changes %q err %v", changes, err)
+	}
+	if got := channelsOf(t, st)[store.ChannelTelegram].ChatID; got != svcChat {
+		t.Fatalf("chat = %q, want the stored one kept", got)
+	}
+	if v := svc.View(); v.Telegram.ChatID != "-100••••4821" || v.Telegram.TokenHint != "••••••:BBB…" {
+		t.Errorf("view = %+v", v.Telegram)
+	}
+	if _, _ = svc.Targets(); f.token != other || f.chat != svcChat {
+		t.Errorf("sender built with token %q chat %q", f.token, f.chat)
+	}
+}
+
+// A stored token that cannot be opened (the key changed) cannot be kept: an
+// edit must enter it again.
+func TestSaveTelegramUnopenableNeedsToken(t *testing.T) {
+	ctx := context.Background()
+	svc, st, f := newTestService(t, testKey, "")
+	if _, err := svc.SaveTelegram(ctx, svcToken, svcChat); err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewService(st, f, []byte("ffffffffffffffffffffffffffffffff"), discardLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chat := range []string{"", "-1001234561177"} {
+		_, err := other.SaveTelegram(ctx, "", chat)
+		fe := fieldOf(t, err)
+		if fe.Field != "token" || fe.Code != FieldRequired || fe.Message != "Enter the bot token again: the stored one cannot be opened." {
+			t.Fatalf("chat %q: %+v", chat, fe)
+		}
+	}
+	changes, err := other.SaveTelegram(ctx, svcToken, "")
+	if err != nil || changes != "token changed" {
+		t.Fatalf("token given again: changes %q err %v", changes, err)
+	}
+	if v := other.View(); v.Telegram.TokenHint != "••••••:AAH…" {
+		t.Errorf("hint = %q", v.Telegram.TokenHint)
+	}
+	if targets, on := other.Targets(); len(targets) != 1 || on != 1 {
+		t.Errorf("targets = %v on = %d", targets, on)
 	}
 }

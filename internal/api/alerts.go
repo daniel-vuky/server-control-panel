@@ -110,7 +110,8 @@ func (s *server) notConfigured(target string) AlertRefused {
 }
 
 // saveTelegram is POST /api/alerts/telegram {token, chatId}: an empty token
-// keeps the stored one. 409 no_secret_key without PANEL_SECRET_KEY, 422 on
+// keeps the stored one (422 on token when it cannot be opened), an empty
+// chatId the stored chat. 409 no_secret_key without PANEL_SECRET_KEY, 422 on
 // token or chatId. The save outlives the request, so a stored change keeps its
 // activity row.
 func (s *server) saveTelegram(w http.ResponseWriter, r *http.Request) {

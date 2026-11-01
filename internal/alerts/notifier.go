@@ -28,6 +28,8 @@ const (
 	wordsNoChannel = "No alert channel is on."
 	wordsCapped    = "Too many alerts in 5 minutes; see Activity."
 	wordsStopped   = "The panel stopped before the retry."
+	wordsUnsent    = "The panel stopped before sending."
+	wordsUnusable  = "The alert channels that are on cannot be used; check Settings → Alerts."
 	wordsTurnedOff = "The channel was turned off before the retry."
 	wordsNotSent   = "Could not send the alert."
 )
@@ -47,7 +49,8 @@ type Alert struct {
 	Message              Message
 }
 
-// Targets gives the channels a message goes to now (Service.Targets).
+// Targets gives the channels a message goes to now and how many channels are
+// set up and on, usable or not (Service.Targets).
 type Targets interface {
 	Targets() ([]Target, int)
 }
@@ -159,7 +162,8 @@ func (n *Notifier) Start(ctx context.Context) error {
 }
 
 // Close stops the worker and sends nothing more: a send in flight is cut
-// short, a parked channel counts as failed ("The panel stopped before the
+// short and a channel not tried yet is not ("The panel stopped before
+// sending."), a parked channel counts as failed ("The panel stopped before the
 // retry.") and the alerts still queued are recorded as interrupted. A keyed
 // alert left queued was never stored as an incident, so after a restart it
 // may alert once more. Raise and Recover after Close do nothing.
@@ -356,9 +360,13 @@ func (n *Notifier) handle(ctx context.Context, it item) {
 			n.log.Error("alerts: cannot store an incident", "key", a.Key, "error", err)
 		}
 	}
-	targets, _ := n.targets.Targets()
+	targets, on := n.targets.Targets()
 	if len(targets) == 0 {
-		n.end(sctx, d, store.ResultNotSent, nil, wordsNoChannel)
+		words := wordsNoChannel
+		if on > 0 { // on, but none could be built (a token that cannot be opened)
+			words = wordsUnusable
+		}
+		n.end(sctx, d, store.ResultNotSent, nil, words)
 		return
 	}
 	if !n.allow() {
@@ -393,11 +401,16 @@ func (n *Notifier) allow() bool {
 
 // send delivers through one channel and records its result. A network
 // failure on the first try parks the channel for one retry; any other
-// failure, or one on the retry, is final.
+// failure, or one on the retry, is final. Close cutting a first try short, or
+// landing before it, reads "before sending"; a retry, "before the retry".
 func (n *Notifier) send(ctx context.Context, d *delivery, i int, s Sender, first bool) {
 	r := &d.results[i]
+	stopped := wordsStopped
+	if first {
+		stopped = wordsUnsent
+	}
 	if ctx.Err() != nil {
-		r.words = wordsStopped
+		r.words = stopped
 		return
 	}
 	err := n.deliver(ctx, s, d.a.Message)
@@ -406,7 +419,7 @@ func (n *Notifier) send(ctx context.Context, d *delivery, i int, s Sender, first
 		r.ok, r.words = true, ""
 		return
 	case ctx.Err() != nil: // cut short by Close, not an outage
-		r.words = wordsStopped
+		r.words = stopped
 		return
 	}
 	var se *SendError

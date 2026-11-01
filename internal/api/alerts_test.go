@@ -216,6 +216,14 @@ func TestAlertsRecordsActivity(t *testing.T) {
 	post("/api/alerts/telegram", TelegramRequest{ChatID: "-1001234561177"})
 	want = append(want, row{store.ActAlertsChannel, "Telegram", "chat -100••••4821 → -100••••1177"})
 	check("telegram chat")
+	cfg = post("/api/alerts/telegram", TelegramRequest{})
+	if cfg.Telegram.ChatID != "-100••••1177" {
+		t.Errorf("chat = %q, want the stored one kept", cfg.Telegram.ChatID)
+	}
+	check("telegram unchanged with the token and the chat kept")
+	post("/api/alerts/telegram", TelegramRequest{Token: testBotToken})
+	want = append(want, row{store.ActAlertsChannel, "Telegram", "token changed"})
+	check("telegram token with the chat kept")
 
 	cfg = post("/api/alerts/telegram/enabled", AlertEnabledRequest{Enabled: false})
 	if cfg.Telegram.Enabled || !cfg.Telegram.Configured {

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/daniel-vuky/server-control-panel/internal/runner"
 )
@@ -20,6 +21,9 @@ const (
 	telegramTimeout = 10 * time.Second
 	telegramMaxBody = 64 << 10
 	descriptionMax  = 200
+	// textMax is where a message is cut: Telegram refuses a text over 4096
+	// characters.
+	textMax = 4000
 )
 
 // The Telegram words.
@@ -70,11 +74,11 @@ func NewTelegram(baseURL, token, chatID string, c *http.Client) *Telegram {
 }
 
 // Send posts the message as plain text (no parse mode, so nothing needs
-// escaping) with link previews off.
+// escaping) with link previews off, cut to 4000 characters.
 func (t *Telegram) Send(ctx context.Context, m Message) error {
 	form := url.Values{
 		"chat_id":                  {t.chatID},
-		"text":                     {m.Text()},
+		"text":                     {cutText(m.Text())},
 		"disable_web_page_preview": {"true"},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.base+"/bot"+t.token+"/sendMessage", strings.NewReader(form.Encode()))
@@ -123,6 +127,15 @@ func (t *Telegram) answer(status int, ok bool, description string) error {
 	default:
 		return &SendError{Code: CodeFailed, Words: fmt.Sprintf("Telegram answered HTTP %d.", status)}
 	}
+}
+
+// cutText keeps the beginning of a text longer than textMax runes and ends it
+// with "…", textMax runes in all.
+func cutText(s string) string {
+	if utf8.RuneCountInString(s) <= textMax {
+		return s
+	}
+	return string([]rune(s)[:textMax-1]) + "…"
 }
 
 // clean makes Telegram's description one short line with the token masked.

@@ -884,7 +884,8 @@ type AlertsConfig struct {
 }
 
 // TelegramRequest is the body of POST /api/alerts/telegram: an empty Token
-// keeps the stored one; ChatID is the numeric chat id.
+// keeps the stored one; ChatID is the numeric chat id, and an empty one keeps
+// the stored chat (a new channel needs both).
 type TelegramRequest struct {
 	Token  string `json:"token"`
 	ChatID string `json:"chatId"`

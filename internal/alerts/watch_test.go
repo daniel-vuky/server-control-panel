@@ -31,6 +31,7 @@ type fakeSources struct {
 	tick       metrics.Tick
 	tickOK     bool
 	disks      []metrics.Disk
+	fallback   bool // Disks gave the one "/ (panel data)" row
 	tunnel     metrics.TunnelState
 	seen       bool
 	setSeen    []bool
@@ -79,7 +80,7 @@ func (f *fakeSources) sources() Sources {
 		Disks: func() ([]metrics.Disk, bool) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			return slices.Clone(f.disks), false
+			return slices.Clone(f.disks), f.fallback
 		},
 		Tunnel: func(context.Context) metrics.Tunnel {
 			f.mu.Lock()
@@ -865,4 +866,96 @@ func TestAlertReasonFallsBackToTitle(t *testing.T) {
 	if !strings.HasPrefix(row.Reason, "CPU at 95 % for 5 min (threshold 90 %) · ") {
 		t.Fatalf("reason = %q", row.Reason)
 	}
+}
+
+// A project whose containers all stopped reads Running false with CPU and RAM
+// at 0 in the tick: that is no reading, so its resource incidents close
+// silently and send no "back to 0 %" recovery.
+func TestProjectStoppedClosesResourceSilently(t *testing.T) {
+	wr := newWatchRig(t, nil, "shop")
+	wr.start(t)
+	shop := wr.ids["shop"]
+	wr.src.set(func(f *fakeSources) {
+		f.tracked = []store.Tracked{{ID: shop, DisplayName: "shop", ComposeProject: "shop"}}
+	})
+	tickWith := func(p metrics.ProjectNow) {
+		at := wr.clock.Now()
+		wr.src.set(func(f *fakeSources) {
+			f.tick, f.tickOK = serverTick(at, 10, 8*gib), true
+			f.tick.Projects = map[int64]metrics.ProjectNow{shop: p}
+		})
+		wr.pass()
+		wr.clock.Add(30 * time.Second)
+	}
+	for range 11 { // 95 % of 4 cores and 15 GiB of 16 for 5 minutes
+		tickWith(metrics.ProjectNow{CPU: f64p(380), Mem: i64p(15 * gib), Running: true})
+	}
+	cpu, ram := projectKey(shop, "cpu"), projectKey(shop, "ram")
+	if !wr.isOpen(cpu) || !wr.isOpen(ram) {
+		t.Fatalf("open keys = %q, want the CPU and RAM incidents", wr.n.OpenKeys())
+	}
+	wantTitles(t, wr.settle(t),
+		"shop CPU at 95 % of server for 5 min (threshold 90 %)",
+		"shop RAM at 94 % of server for 5 min (threshold 90 %)")
+
+	tickWith(metrics.ProjectNow{CPU: f64p(0), Mem: i64p(0), Running: false})
+	if wr.isOpen(cpu) || wr.isOpen(ram) {
+		t.Fatalf("open keys = %q after the project stopped", wr.n.OpenKeys())
+	}
+	if ms := wr.settle(t); len(ms) != 2 {
+		t.Fatalf("messages = %q, want no recovery", titles(ms))
+	}
+	waitFor(t, "the stored incidents closed", func() bool {
+		in, err := wr.st.OpenIncidents(context.Background())
+		return err == nil && len(in) == 0
+	})
+
+	// Started again and hot: the timer starts over, it was not kept.
+	for range 10 {
+		tickWith(metrics.ProjectNow{CPU: f64p(380), Mem: i64p(1 * gib), Running: true})
+	}
+	if wr.isOpen(cpu) {
+		t.Fatal("the timer from before the stop was kept")
+	}
+	tickWith(metrics.ProjectNow{CPU: f64p(380), Mem: i64p(1 * gib), Running: true})
+	if !wr.isOpen(cpu) {
+		t.Fatal("no CPU alert 5 minutes after the restart")
+	}
+}
+
+// The fallback disk list ("/ (panel data)", no host root) says nothing about
+// the real disks: it neither closes their incidents nor drops their timers.
+func TestDiskFallbackSweepsNothing(t *testing.T) {
+	wr := newWatchRig(t, nil)
+	if err := wr.st.OpenIncident(context.Background(), store.Incident{Key: "server:disk:/old", OpenedAt: wr.clock.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	wr.start(t)
+	// /old is still listed (and still over) before the fallback pass.
+	before := []metrics.Disk{{Mount: "/", Used: 50, Total: 100}, {Mount: "/old", Used: 90, Total: 100}, {Mount: "/var", Used: 91, Total: 100}}
+	after := []metrics.Disk{{Mount: "/", Used: 50, Total: 100}, {Mount: "/var", Used: 91, Total: 100}}
+	fallback := []metrics.Disk{{Mount: "/ (panel data)", Used: 50, Total: 100}}
+	passWith := func(disks []metrics.Disk, fb bool) {
+		wr.src.set(func(f *fakeSources) { f.disks, f.fallback = slices.Clone(disks), fb })
+		wr.pass()
+		wr.clock.Add(30 * time.Second)
+	}
+	for range 6 {
+		passWith(before, false)
+	}
+	passWith(fallback, true)
+	if !wr.isOpen("server:disk:/old") {
+		t.Fatal("the fallback list closed a real disk's incident")
+	}
+	for i := range 4 {
+		passWith(after, false)
+		if open, want := wr.isOpen("server:disk:/var"), i == 3; open != want {
+			t.Fatalf("pass %d after the fallback: open = %v, want %v (the timer was dropped)", i, open, want)
+		}
+	}
+	// The real list sweeps as before, silently.
+	if wr.isOpen("server:disk:/old") {
+		t.Fatal("a real list did not close the disk that left it")
+	}
+	wantTitles(t, wr.settle(t), "Disk /var at 91 % (threshold 85 %)")
 }
