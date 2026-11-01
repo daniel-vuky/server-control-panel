@@ -73,6 +73,7 @@ func (s *server) toProjects(vs []control.ProjectView) []Project {
 			UpSince:         formatTime(v.UpSince),
 			Containers:      toContainers(v.Components),
 			DriveFolder:     backup.ProjectFolder(v.DisplayName),
+			ServiceNames:    nonNil(v.Services),
 		}
 		out = append(out, p)
 	}

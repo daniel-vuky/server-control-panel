@@ -394,8 +394,8 @@ func toDatabases(ds []project.Database) []Database {
 	return out
 }
 
-// toDatabase maps a detected database to the API type with its key and no
-// backup rule (a scan row's).
+// toDatabase maps a detected or hand-added database to the API type with its
+// key and no backup rule (a scan row's).
 func toDatabase(d project.Database) Database {
 	return Database{
 		Type:         d.Type,
@@ -404,6 +404,10 @@ func toDatabase(d project.Database) Database {
 		Location:     d.Location,
 		Sources:      nonNil(d.Sources),
 		Key:          project.DatabaseKey(d),
+		Manual:       d.Manual,
+		ManualID:     d.ManualID,
+		UserVar:      d.UserVar,
+		PasswordVar:  d.PasswordVar,
 	}
 }
 

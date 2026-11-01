@@ -20,6 +20,7 @@ function notSupported(db: Database): string {
     return 'Backups of databases outside a container are not supported yet'
   }
   if (!SUPPORTED.has(db.type)) return 'Backups of this database type are not supported yet'
+  if (db.manual) return `The service ${db.location} is not in the project any more.`
   return "The database's service could not be found"
 }
 

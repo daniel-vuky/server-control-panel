@@ -34,6 +34,7 @@ const projects: Project[] = [
     upSince: '',
     containers: [],
     driveFolder: 'shop',
+    serviceNames: [],
   },
   {
     id: 2,
@@ -55,6 +56,7 @@ const projects: Project[] = [
     upSince: '',
     containers: [],
     driveFolder: 'panel',
+    serviceNames: [],
   },
 ]
 

@@ -46,7 +46,8 @@ func webStub() http.Handler {
 // configErrs, docker.containers with canned lines,
 // docker.ping with pingErr, and the lifecycle commands with lifecycleErr. A
 // lifecycle command that succeeds replaces the container lines with after,
-// when set. The compose.logs.tail* backlog commands answer backlog, and each
+// when set. The db.*.check actions succeed, or fail with checkErr, and are
+// kept in checks. The compose.logs.tail* backlog commands answer backlog, and each
 // Stream (the compose.logs follow) delivers the lines sent on follow until
 // follow is closed (it then exits 0) or its context ends. It logs every action
 // it is asked to run.
@@ -77,6 +78,15 @@ type fakeDocker struct {
 	dumpErr *runner.ExitError // when set, the dumps fail with it and its stderr
 	dgate   chan struct{}     // when set, the dumps wait for it to close
 	donce   sync.Once
+
+	checkErr *runner.ExitError // when set, the db.*.check actions fail with it and its stderr
+	checks   []call            // the db.*.check actions run, in order
+}
+
+// call is one command the fake ran, with its values.
+type call struct {
+	a runner.Action
+	v runner.Values
 }
 
 // dumpData is what a dump writes by default.
@@ -145,6 +155,18 @@ func (f *fakeDocker) Run(_ context.Context, s runner.Stack, a runner.Action, v r
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		return runner.Result{Stdout: []byte("29.0.0\n")}, f.pingErr
+	case isDBAction(a, "check"):
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		cp := runner.Values{}
+		for k, val := range v {
+			cp[k] = val
+		}
+		f.checks = append(f.checks, call{a: a, v: cp})
+		if f.checkErr != nil {
+			return runner.Result{Stderr: []byte(f.checkErr.Stderr), ExitCode: f.checkErr.Code}, f.checkErr
+		}
+		return runner.Result{}, nil
 	case isDBAction(a, "size"):
 		f.mu.Lock()
 		defer f.mu.Unlock()

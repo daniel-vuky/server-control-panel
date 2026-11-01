@@ -17,6 +17,10 @@
 
 
 //////////
+// source: databases.go
+
+
+//////////
 // source: drive.go
 
 
@@ -199,10 +203,13 @@ export interface ScanRow {
 /**
  * Database is a database a project uses. It holds names only, never values:
  * Sources lists the variables or services it was found in. Key identifies it
- * within its project (type:location:name). Backup says whether a backup may
- * start now and Schedule is its backup schedule; both are null on a scan row
- * and set on a tracked project's row (Schedule stays null for a database with
- * no schedule row).
+ * within its project (type:location:name, or manual:<id> for one added by
+ * hand). Backup says whether a backup may start now and Schedule is its backup
+ * schedule; both are null on a scan row and set on a tracked project's row
+ * (Schedule stays null for a database with no schedule row). Manual marks a
+ * database added by hand, ManualID its id (0 for a detected one), and UserVar
+ * and PasswordVar are the names of the variables its credentials are read
+ * from inside the container ("" for the image's standard ones).
  */
 export interface Database {
   type: string; // postgresql | mysql | mongodb | sqlite
@@ -213,6 +220,10 @@ export interface Database {
   key: string;
   backup: BackupRule | null;
   schedule: DatabaseSchedule | null;
+  manual: boolean;
+  manualId: number /* int64 */;
+  userVar: string;
+  passwordVar: string;
 }
 /**
  * DatabaseSchedule is a database's backup schedule. Frequency is off, daily or
@@ -345,7 +356,8 @@ export interface Workspace {
  * metrics are null, UpSince is "" and each container has no restart count,
  * start time or health; the live state fills them in.
  * DriveFolder is the project's sub-folder on Drive, under the destination
- * folder, that its backups go to (the slugged display name).
+ * folder, that its backups go to (the slugged display name). ServiceNames are
+ * its compose services, the ones a database can be added by hand to.
  */
 export interface Project {
   id: number /* int64 */;
@@ -367,6 +379,7 @@ export interface Project {
   upSince: string;
   containers: Container[];
   driveFolder: string;
+  serviceNames: string[];
 }
 /**
  * Container is one row of Project.Containers. Status is the word for the
@@ -571,6 +584,20 @@ export interface BackupRequest {
   database: string;
 }
 /**
+ * AddDatabaseRequest is the body of POST /api/projects/{id}/databases: a
+ * database to add by hand. Type is postgresql, mysql or mongodb; Service is one
+ * of the project's compose services; Name the database name. UserVar and
+ * PasswordVar name the variables that hold the credentials inside the
+ * container: both empty for the image's standard variables, or both set.
+ */
+export interface AddDatabaseRequest {
+  type: string;
+  service: string;
+  name: string;
+  userVar: string;
+  passwordVar: string;
+}
+/**
  * BackupStarted is the 202 body of POST /api/projects/{id}/backups and POST
  * /api/backups/{id}/retry: the queued backup.
  */
@@ -581,7 +608,8 @@ export interface BackupStarted {
  * BackupRefused is the 409 body of a backup that was not queued. Error is the
  * code: not_found, not_supported, no_db_name, drive_not_connected,
  * drive_expired, folder_missing, already_running, docker_down,
- * db_not_running, disk_short or not_retryable; Message its words. ID is the
+ * db_not_running, disk_short or not_retryable (busy for the removal of a
+ * hand-added database a backup is using); Message its words. ID is the
  * backup already running (only for already_running), NeedBytes and FreeBytes
  * are set for disk_short, and Service is the database's compose service once
  * it is resolved.

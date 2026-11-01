@@ -66,6 +66,8 @@ type fakeRunner struct {
 	dump func(ctx context.Context, c call, w io.Writer) ([]byte, error)
 	// stop, when set, answers the dump stop action (nil: it succeeds).
 	stop func(ctx context.Context, c call) error
+	// check, when set, answers the db.*.check actions (nil: they succeed).
+	check func(c call) (runner.Result, error)
 	// config is what compose.config (the masks read) prints; "" is a config
 	// with no service. Those reads are kept in configs, not calls.
 	config  string
@@ -102,6 +104,15 @@ func (r *fakeRunner) Run(ctx context.Context, _ runner.Stack, a runner.Action, v
 		r.mu.Unlock()
 		if stop != nil {
 			return runner.Result{}, stop(ctx, c)
+		}
+		return runner.Result{}, nil
+	}
+	if isCheckAction(a) {
+		r.mu.Lock()
+		check := r.check
+		r.mu.Unlock()
+		if check != nil {
+			return check(c)
 		}
 		return runner.Result{}, nil
 	}
@@ -150,6 +161,10 @@ func (r *fakeRunner) callsOf(pred func(runner.Action) bool) []call {
 
 func isDumpAction(a runner.Action) bool {
 	return strings.Contains(string(a), ".dump") && !isStopAction(a)
+}
+
+func isCheckAction(a runner.Action) bool {
+	return strings.Contains(string(a), ".check")
 }
 
 func isStopAction(a runner.Action) bool {

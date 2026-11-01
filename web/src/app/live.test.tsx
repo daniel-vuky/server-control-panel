@@ -49,6 +49,7 @@ const state: LiveState = {
       upSince: '',
       containers: [],
       driveFolder: 'shop',
+      serviceNames: [],
     },
   ],
 }

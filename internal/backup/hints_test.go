@@ -59,7 +59,7 @@ func TestHintTable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		image := map[string]string{"postgresql": "postgres:17-alpine", "mysql": "mysql:9", "mongodb": "mongo:7"}[tc.typ]
-		if got := Hint(tc.typ, image, "shop", "db", tc.stderr, tc.sources); got != tc.want {
+		if got := Hint(tc.typ, image, "shop", "db", tc.stderr, tc.sources, "", ""); got != tc.want {
 			t.Errorf("%s: Hint = %q, want %q", tc.name, got, tc.want)
 		}
 	}
@@ -88,7 +88,7 @@ func TestHintMySQLFamilies(t *testing.T) {
 			"mysqldump is not installed in the db container.", "mysql:9"},
 	}
 	for _, tc := range cases {
-		if got := Hint("mysql", tc.image, "shop", "db", tc.stderr, nil); got != tc.want {
+		if got := Hint("mysql", tc.image, "shop", "db", tc.stderr, nil, "", ""); got != tc.want {
 			t.Errorf("%s: Hint = %q, want %q", tc.name, got, tc.want)
 		}
 	}
@@ -107,11 +107,40 @@ func TestHintMySQLFamilies(t *testing.T) {
 	}
 }
 
+// TestHintCustomVariables names the variables a hand-added database was given
+// instead of the image's: the password one for a failed login, the user one
+// for an unknown user or an empty user variable.
+func TestHintCustomVariables(t *testing.T) {
+	cases := []struct{ name, typ, image, stderr, want string }{
+		{"pg password", "postgresql", "postgres:17", `psql: error: FATAL:  password authentication failed for user "app"`,
+			"Check APP_PASSWORD in the container's environment."},
+		{"pg no password", "postgresql", "postgres:17", `fe_sendauth: no password supplied`,
+			"Check APP_PASSWORD in the container's environment."},
+		{"pg role", "postgresql", "postgres:17", `FATAL:  role "app" does not exist`,
+			"Check APP_USER in the container's environment."},
+		{"mysql 1045", "mysql", "mariadb:11", `ERROR 1045 (28000): Access denied for user 'app'@'localhost' (using password: YES)`,
+			"Check APP_PASSWORD in the container's environment."},
+		{"mysql privilege", "mysql", "mysql:9", `Access denied; you need (at least one of) the RELOAD privilege(s) for this operation (1227)`,
+			"The user in APP_USER lacks a privilege the dump needs. Grant the privilege named above."},
+		{"mongo auth", "mongodb", "mongo:7", `MongoServerError: Authentication failed.`,
+			"Check APP_PASSWORD in the container's environment."},
+		{"empty user variable", "postgresql", "postgres:17", `APP_USER is empty in the container's environment`,
+			"Check APP_USER in the container's environment."},
+		{"unknown database keeps its words", "mysql", "mysql:9", `ERROR 1049 (42000): Unknown database 'shop'`,
+			"The database shop was not found in db. Rescan the workspace if it was renamed."},
+	}
+	for _, tc := range cases {
+		if got := Hint(tc.typ, tc.image, "shop", "db", tc.stderr, []string{"added by hand"}, "APP_USER", "APP_PASSWORD"); got != tc.want {
+			t.Errorf("%s: Hint = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestHintNeverHoldsAValue(t *testing.T) {
 	// A source string carries only names; anything that is not a plain variable
 	// name is dropped, so a value can never reach the hint.
 	got := Hint("postgresql", "postgres:17", "shop", "db", "password authentication failed",
-		[]string{".env DATABASE_URL=postgres://u:hunter22@db/shop", "service web s3cr3t!value"})
+		[]string{".env DATABASE_URL=postgres://u:hunter22@db/shop", "service web s3cr3t!value"}, "", "")
 	if strings.Contains(got, "hunter22") || strings.Contains(got, "s3cr3t") || strings.Contains(got, "postgres://") {
 		t.Fatalf("hint holds a value: %q", got)
 	}
