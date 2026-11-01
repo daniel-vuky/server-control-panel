@@ -83,6 +83,13 @@ Added on 2026-10-31 with the Dashboard flow (#27, #28, #29, #30, #73), numbering
 34. The latest backup counts refused and interrupted backups as not OK (E3-F08-US02).
 35. The tunnel tile treats Not running as down (E3-F08-US01).
 
+Added on 2026-11-01 with the final flows (#58, #14, #26, #71, #74), numbering on from the list above:
+
+36. A database added by hand runs in a container of the project: the panel can only dump a database inside a container, so the location is a choice of the project's compose services and there is no "host" (E5-F17-US03).
+37. Credentials of a hand-added database are named by environment variable, never typed: the owner gives the user and password variable names (or the image's standard ones) and the panel reads their values inside the container, so it holds only names (E5-F17-US03, E1-F02-US03).
+38. A secret shorter than 4 characters is not masked (it would garble ordinary log text), and Docker `*_FILE` secrets are not known to the panel, so they are not masked either; secrets in `.env`, in a compose `environment:` and in an `env_file:` inside the project folder are (E1-F02-US03).
+39. The Google Drive and Done steps of the setup show on first run only; adding a workspace later from Settings keeps the two steps, Workspace and Scan results, and ends with the "Added N projects" toast (E2-F07-US01, E2-F04-US01).
+
 <a id="open-questions"></a>
 ## Decisions (2026-10-28)
 
