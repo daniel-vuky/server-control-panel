@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Onboarding – thêm workspace và quét dự án</title>
+<script src="./assets/dc-runtime.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#070A14}
+a{color:#C9CED6}a:hover{color:#FFFFFF}
+button,input,select{font:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #5AA7FF;outline-offset:2px}
+@keyframes scp-spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: radial-gradient(900px 640px at 8% 6%, rgba(56,92,255,0.34), transparent 62%), radial-gradient(760px 560px at 92% 14%, rgba(150,84,246,0.26), transparent 60%), radial-gradient(820px 620px at 70% 92%, rgba(20,184,166,0.22), transparent 60%), radial-gradient(600px 480px at 18% 78%, rgba(236,72,153,0.14), transparent 60%), linear-gradient(160deg, #070A14 0%, #0A0D18 55%, #060810 100%); color: #E7E9EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; display: flex; flex-direction: column; align-items: center; padding: 40px 16px 64px; box-sizing: border-box; gap: 32px">
+
+  <div style="width: 100%; max-width: 980px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <div aria-hidden="true" style="width: 30px; height: 30px; border-radius: 12px; background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(222,228,240,0.88)); color: #0A0C0F; box-shadow: inset 0 1px 0 #FFFFFF, 0 6px 20px rgba(120,150,255,0.22); display: flex; align-items: center; justify-content: center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"></rect><rect x="3" y="13" width="18" height="7" rx="1.5"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+      </div>
+      <span style="font-weight: 600">Server Control Panel</span>
+      <span style="font-size: 12.5px; color: #A6AEBB">· Thiết lập lần đầu</span>
+    </div>
+    <ol aria-label="Các bước thiết lập" style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+      <sc-for list="{{steps}}" as="s" hint-placeholder-count="4">
+        <li style="display: flex; align-items: center; gap: 8px">
+          <span aria-hidden="true" style="{{s.numStyle}}">{{s.mark}}</span>
+          <span style="{{s.labelStyle}}">{{s.label}}</span>
+          <span aria-hidden="true" style="{{s.sepStyle}}"></span>
+        </li>
+      </sc-for>
+    </ol>
+  </div>
+
+  <sc-if value="{{isStep1}}" hint-placeholder-val="{{ true }}">
+    <section aria-labelledby="s1-title" style="width: 100%; max-width: 640px; box-sizing: border-box; padding: 32px; border-radius: 22px; background: rgba(24,30,46,0.46); backdrop-filter: blur(28px) saturate(170%); -webkit-backdrop-filter: blur(28px) saturate(170%); border: 1px solid rgba(255,255,255,0.10); display: flex; flex-direction: column; gap: 22px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.02), 0 10px 30px rgba(0,0,0,0.28)">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h1 id="s1-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Thêm thư mục dự án</h1>
+        <p style="margin: 0; color: #A6AEBB; line-height: 1.55">Nhập thư mục gốc chứa các dự án trên server. Tool chỉ đọc trong thư mục này, không di chuyển hay sửa file nào.</p>
+      </div>
+      <label style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #C9CED6">Đường dẫn thư mục gốc
+        <span style="display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid {{pathBorder}}; background: rgba(0,0,0,0.24)">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A6AEBB" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+          <input type="text" value="/home/deploy/projects" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 14px">
+        </span>
+      </label>
+      <sc-if value="{{showPathError}}" hint-placeholder-val="{{ false }}">
+        <p role="alert" style="margin: -12px 0 0; display: flex; align-items: center; gap: 7px; font-size: 13px; color: #FF8C8F">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>
+          Thư mục không nằm trong danh sách được phép quét (<span style="font-family: 'JetBrains Mono', ui-monospace, monospace">/home/deploy</span>, <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">/srv</span>).
+        </p>
+      </sc-if>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <span id="depth-label" style="font-size: 13px; color: #C9CED6">Độ sâu quét</span>
+        <div role="radiogroup" aria-labelledby="depth-label" style="display: flex; padding: 3px; border-radius: 12px; background: rgba(0,0,0,0.24); border: 1px solid rgba(255,255,255,0.16); width: fit-content">
+          <sc-for list="{{depths}}" as="d" hint-placeholder-count="3">
+            <button type="button" role="radio" aria-checked="{{d.sel}}" onClick="{{d.pick}}" style="{{d.style}}">{{d.label}}</button>
+          </sc-for>
+        </div>
+        <span style="font-size: 12.5px; color: #A6AEBB">1 cấp: mỗi thư mục con là một dự án. Tăng lên nếu dự án nằm sâu hơn, vd. <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">clients/acme/web</span>.</span>
+      </div>
+
+      <sc-if value="{{scanning}}" hint-placeholder-val="{{ false }}">
+        <div role="status" style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 16px; background: rgba(0,0,0,0.24); border: 1px solid rgba(255,255,255,0.10)">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <span aria-hidden="true" style="width: 14px; height: 14px; box-sizing: border-box; border: 2px solid #5AA7FF; border-right-color: transparent; border-radius: 50%; animation: scp-spin 0.8s linear infinite"></span>
+            <span>Đang quét… <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">12/30</span> thư mục</span>
+          </div>
+          <span aria-hidden="true" style="height: 4px; border-radius: 2px; background: rgba(255,255,255,0.10); display: flex"><span style="width: 40%; border-radius: 2px; background: #5AA7FF"></span></span>
+          <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #A6AEBB">đang đọc /home/deploy/projects/crm/docker-compose.yml</span>
+        </div>
+      </sc-if>
+
+      <div style="display: flex; align-items: center; gap: 12px">
+        <button type="button" onClick="{{startScan}}" style="height: 42px; padding: 0 22px; border-radius: 999px; border: 0; background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(222,228,240,0.88)); color: #0A0C0F; box-shadow: inset 0 1px 0 #FFFFFF, 0 6px 20px rgba(120,150,255,0.22); font-weight: 600; display: flex; align-items: center; gap: 8px; cursor: pointer">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>Quét
+        </button>
+        <span style="font-size: 12.5px; color: #A6AEBB">Nhận diện: docker compose, Next.js (pm2 / node), Node (pm2)</span>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isStep2}}" hint-placeholder-val="{{ false }}">
+    <section aria-labelledby="s2-title" style="width: 100%; max-width: 980px; box-sizing: border-box; border-radius: 22px; background: rgba(24,30,46,0.46); backdrop-filter: blur(28px) saturate(170%); -webkit-backdrop-filter: blur(28px) saturate(170%); border: 1px solid rgba(255,255,255,0.10); display: flex; flex-direction: column; box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.02), 0 10px 30px rgba(0,0,0,0.28)">
+      <div style="padding: 24px 24px 18px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <h1 id="s2-title" style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em">Tìm thấy 6 dự án</h1>
+          <p style="margin: 0; color: #A6AEBB">Trong <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #C9CED6">/home/deploy/projects</span> · độ sâu 1 · 30 thư mục đã quét</p>
+        </div>
+        <span style="display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: #F2CF6B"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 2px; background: #E5B93B"></span>1 dự án chưa nhận diện được stack</span>
+      </div>
+      <div style="overflow-x: auto; border-top: 1px solid rgba(255,255,255,0.10)">
+        <div style="min-width: 880px">
+          <div style="display: grid; grid-template-columns: 44px 1.2fr 1.8fr 1.3fr 0.9fr 1.2fr; gap: 12px; padding: 10px 24px 10px 16px; font-size: 12px; color: #A6AEBB; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.10)">
+            <span></span><span>Tên hiển thị</span><span>Đường dẫn</span><span>Stack</span><span>Trạng thái</span><span>Database</span>
+          </div>
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+            <div style="{{r.rowStyle}}">
+              <span style="display: flex; justify-content: center"><input type="checkbox" checked="{{r.checked}}" onChange="{{r.toggle}}" aria-label="Theo dõi {{r.name}}" style="width: 18px; height: 18px; accent-color: #E7E9EC; cursor: pointer"></span>
+              <span style="display: flex; align-items: center; gap: 8px">
+                <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600">{{r.name}}</span>
+                <button type="button" aria-label="Đổi tên hiển thị {{r.name}}" style="width: 30px; height: 30px; border: 0; border-radius: 999px; background: transparent; color: #A6AEBB; display: flex; align-items: center; justify-content: center; cursor: pointer">
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg>
+                </button>
+              </span>
+              <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: #A6AEBB; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{r.path}}</span>
+              <span>
+                <sc-if value="{{r.known}}" hint-placeholder-val="{{ true }}">
+                  <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.16); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #C9CED6">{{r.stack}}</span>
+                </sc-if>
+                <sc-if value="{{r.unknown}}" hint-placeholder-val="{{ false }}">
+                  <label style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: 10px; border: 1px solid rgba(229,185,59,0.5); background: rgba(229,185,59,0.11); color: #F2CF6B; font-size: 12px">
+                    <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Chọn stack cho {{r.name}}</span>
+                    <select style="background: transparent; border: 0; color: #F2CF6B; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px">
+                      <option>unknown – chọn stack</option>
+                      <option>docker-compose</option>
+                      <option>nextjs-pm2</option>
+                      <option>nextjs-node</option>
+                      <option>node-pm2</option>
+                    </select>
+                  </label>
+                </sc-if>
+              </span>
+              <span style="{{r.stStyle}}"><span aria-hidden="true" style="{{r.dot}}"></span>{{r.status}}</span>
+              <span style="font-size: 13px; color: {{r.dbColor}}">{{r.db}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="padding: 16px 24px; border-top: 1px solid rgba(255,255,255,0.10); display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+        <button type="button" onClick="{{back}}" style="height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16); background: transparent; color: #E7E9EC; cursor: pointer">Quét lại</button>
+        <span style="margin-left: auto; font-size: 13px; color: #A6AEBB">Đã chọn <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #E7E9EC">{{checkedCount}}</span>/6</span>
+        <button type="button" onClick="{{toDrive}}" style="height: 40px; padding: 0 20px; border-radius: 999px; border: 0; background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(222,228,240,0.88)); color: #0A0C0F; box-shadow: inset 0 1px 0 #FFFFFF, 0 6px 20px rgba(120,150,255,0.22); font-weight: 600; cursor: pointer">Thêm {{checkedCount}} dự án</button>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isStep3}}" hint-placeholder-val="{{ false }}">
+    <section aria-labelledby="s3-title" style="width: 100%; max-width: 640px; box-sizing: border-box; padding: 32px; border-radius: 22px; background: rgba(24,30,46,0.46); backdrop-filter: blur(28px) saturate(170%); -webkit-backdrop-filter: blur(28px) saturate(170%); border: 1px solid rgba(255,255,255,0.10); display: flex; flex-direction: column; gap: 22px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.02), 0 10px 30px rgba(0,0,0,0.28)">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h1 id="s3-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">Kết nối Google Drive</h1>
+        <p style="margin: 0; color: #A6AEBB; line-height: 1.55">Backup database sẽ được nén và tải lên thư mục bạn chọn. Tool chỉ xin quyền trên các file do chính nó tạo.</p>
+      </div>
+      <sc-if value="{{driveOff}}" hint-placeholder-val="{{ true }}">
+        <button type="button" onClick="{{connectDrive}}" style="height: 48px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16); background: rgba(30,37,56,0.62); backdrop-filter: blur(44px) saturate(190%); -webkit-backdrop-filter: blur(44px) saturate(190%); color: #E7E9EC; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 24px 64px rgba(0,0,0,0.5)">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8.5 3h7l6 10.5-3.5 6h-12L2.5 13.5z"></path><path d="M8.5 3l6.5 11.5M15.5 3 9 14.5M2.5 13.5h19"></path></svg>
+          Kết nối Google Drive
+        </button>
+      </sc-if>
+      <sc-if value="{{driveOn}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; background: rgba(63,207,142,0.12); border: 1px solid rgba(63,207,142,0.34)">
+            <span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #3FCF8E"></span>
+            <span>Đã kết nối <span style="font-family: 'JetBrains Mono', ui-monospace, monospace">ops.backup@gmail.com</span></span>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: 0; background: transparent; color: #C9CED6; text-decoration: underline; cursor: pointer">Đổi tài khoản</button>
+          </div>
+          <label style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #C9CED6">Thư mục đích
+            <select style="height: 42px; padding: 0 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.16); background: rgba(0,0,0,0.24); color: #E7E9EC; font-family: 'JetBrains Mono', ui-monospace, monospace">
+              <option>My Drive / server-backups</option>
+              <option>+ Tạo thư mục mới…</option>
+            </select>
+          </label>
+          <span style="font-size: 12.5px; color: #A6AEBB">Cấu trúc file: <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; color: #C9CED6">server-backups/&lt;project&gt;/&lt;project&gt;_&lt;db&gt;_YYYYMMDD-HHmm.sql.gz</span></span>
+        </div>
+      </sc-if>
+      <div style="display: flex; align-items: center; gap: 12px">
+        <button type="button" onClick="{{finish}}" style="height: 42px; padding: 0 16px; border-radius: 999px; border: 0; background: transparent; color: #C9CED6; cursor: pointer">Để sau</button>
+        <button type="button" onClick="{{finish}}" style="{{continueStyle}}">Tiếp tục</button>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{isStep4}}" hint-placeholder-val="{{ false }}">
+    <section aria-labelledby="s4-title" style="width: 100%; max-width: 560px; box-sizing: border-box; padding: 40px 32px; border-radius: 22px; background: rgba(24,30,46,0.46); backdrop-filter: blur(28px) saturate(170%); -webkit-backdrop-filter: blur(28px) saturate(170%); border: 1px solid rgba(255,255,255,0.10); display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.02), 0 10px 30px rgba(0,0,0,0.28)">
+      <div aria-hidden="true" style="width: 56px; height: 56px; border-radius: 50%; background: rgba(63,207,142,0.12); color: #3FCF8E; display: flex; align-items: center; justify-content: center">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"></path></svg>
+      </div>
+      <h1 id="s4-title" style="margin: 0; font-size: 22px; font-weight: 600">Đã thêm {{checkedCount}} dự án</h1>
+      <p style="margin: 0; color: #A6AEBB; line-height: 1.55; max-width: 400px">Trạng thái và tài nguyên sẽ cập nhật realtime. Đặt lịch backup trong tab Database &amp; Backup của từng dự án.</p>
+      <a href="Main.html" style="height: 42px; padding: 0 22px; border-radius: 12px; background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(222,228,240,0.88)); color: #0A0C0F; box-shadow: inset 0 1px 0 #FFFFFF, 0 6px 20px rgba(120,150,255,0.22); text-decoration: none; font-weight: 600; display: flex; align-items: center">Vào Dashboard</a>
+    </section>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"step":{"editor":"enum","options":["1","2","3","4"],"default":"1"},"pathError":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: null, depth: 1, scanning: false, drive: false, unchecked: { 'old-tools': true } };
+    this._t = [];
+  }
+  componentWillUnmount() { this._t.forEach(clearTimeout); }
+  renderVals() {
+    const step = this.state.step || Number(this.props.step ?? '1');
+    const LABELS = ['Workspace', 'Kết quả quét', 'Google Drive', 'Xong'];
+    const steps = LABELS.map((label, i) => {
+      const n = i + 1, done = n < step, cur = n === step;
+      return {
+        label, mark: done ? '✓' : String(n),
+        numStyle: `width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; font-family: JetBrains Mono, monospace; background: ${cur ? '#E7E9EC' : done ? 'rgba(63,207,142,0.34)' : 'transparent'}; color: ${cur ? '#0A0C0F' : done ? '#3FCF8E' : '#A6AEBB'}; border: 1px solid ${cur ? '#E7E9EC' : done ? 'rgba(63,207,142,0.34)' : 'rgba(255,255,255,0.16)'}`,
+        labelStyle: `font-size: 13px; color: ${cur ? '#FFFFFF' : '#A6AEBB'}; font-weight: ${cur ? 600 : 400}`,
+        sepStyle: n === 4 ? 'display: none' : 'width: 28px; height: 1px; background: rgba(255,255,255,0.16)'
+      };
+    });
+    const depths = [1, 2, 3].map(d => ({
+      label: d + ' cấp', sel: this.state.depth === d ? 'true' : 'false', pick: () => this.setState({ depth: d }),
+      style: `height: 32px; padding: 0 16px; border-radius: 10px; border: 0; cursor: pointer; font-size: 13px; background: ${this.state.depth === d ? 'rgba(255,255,255,0.15)' : 'transparent'}; color: ${this.state.depth === d ? '#FFFFFF' : '#A6AEBB'}`
+    }));
+    const ST = { Running: '#3FCF8E', Partial: '#E5B93B', Stopped: '#9AA3AF', Error: '#FF6B6E', '—': '#6B7380' };
+    const R = [
+      ['shop-api', '/home/deploy/projects/shop-api', 'docker-compose', 'Running', 'PostgreSQL · container'],
+      ['shop-web', '/home/deploy/projects/shop-web', 'nextjs-pm2', 'Running', 'Không phát hiện'],
+      ['crm', '/home/deploy/projects/crm', 'docker-compose', 'Partial', 'MySQL · container'],
+      ['landing', '/home/deploy/projects/landing', 'nextjs-node', 'Stopped', 'Không phát hiện'],
+      ['blog', '/home/deploy/projects/blog', 'docker-compose', 'Error', 'MariaDB · container'],
+      ['old-tools', '/home/deploy/projects/old-tools', 'unknown', '—', 'Không phát hiện']
+    ];
+    const un = this.state.unchecked;
+    const rows = R.map(([name, path, stack, status, db]) => {
+      const checked = !un[name];
+      const unknown = stack === 'unknown';
+      return {
+        name, path, stack, status: status === '—' ? 'Không rõ' : status, db, checked, known: !unknown, unknown,
+        dbColor: db === 'Không phát hiện' ? '#A6AEBB' : '#E7E9EC',
+        toggle: () => this.setState({ unchecked: Object.assign({}, un, { [name]: checked }) }),
+        rowStyle: `display: grid; grid-template-columns: 44px 1.2fr 1.8fr 1.3fr 0.9fr 1.2fr; gap: 12px; align-items: center; padding: 8px 24px 8px 16px; min-height: 52px; border-bottom: 1px solid rgba(255,255,255,0.07); background: ${unknown ? 'rgba(229,185,59,0.06)' : 'transparent'}; opacity: ${checked ? 1 : 0.55}`,
+        stStyle: `display: flex; align-items: center; gap: 7px; font-size: 13px; color: ${ST[status]}`,
+        dot: `width: 7px; height: 7px; border-radius: 50%; background: ${ST[status]}`
+      };
+    });
+    const checkedCount = rows.filter(r => r.checked).length;
+    return {
+      steps, depths, rows, checkedCount,
+      isStep1: step === 1, isStep2: step === 2, isStep3: step === 3, isStep4: step === 4,
+      showPathError: !!this.props.pathError,
+      pathBorder: this.props.pathError ? '#B5373E' : 'rgba(255,255,255,0.16)',
+      scanning: this.state.scanning,
+      startScan: () => {
+        this.setState({ scanning: true });
+        this._t.push(setTimeout(() => this.setState({ scanning: false, step: 2 }), 1500));
+      },
+      back: () => this.setState({ step: 1 }),
+      toDrive: () => this.setState({ step: 3 }),
+      driveOff: !this.state.drive, driveOn: this.state.drive,
+      connectDrive: () => this.setState({ drive: true }),
+      continueStyle: `height: 42px; padding: 0 22px; border-radius: 12px; border: 0; font-weight: 600; cursor: pointer; background: ${this.state.drive ? '#E7E9EC' : 'rgba(255,255,255,0.15)'}; color: ${this.state.drive ? '#0A0C0F' : '#A6AEBB'}`,
+      finish: () => this.setState({ step: 4 })
+    };
+  }
+}
+</script>
+</body>
+</html>
